@@ -13,19 +13,57 @@ local HttpService = game:GetService("HttpService")
 
 local Config = {}
 
--- Pull the globals through the environment so --!strict doesn't flag unknowns.
-local env: any = getfenv and getfenv() or (_G :: any)
-local g_writefile = env.writefile
-local g_readfile = env.readfile
-local g_isfile = env.isfile
-local g_delfile = env.delfile
-local g_isfolder = env.isfolder
-local g_makefolder = env.makefolder
-local g_listfiles = env.listfiles
+-- Resolve executor file globals. Executors put these on the SHARED global env
+-- (getgenv) — not the chunk env — so prefer that, then fall back to the ambient
+-- global / _G. Everything is pcall-guarded: some sandboxes throw merely on
+-- touching getgenv/getfenv, and a raw error here would kill the whole library at
+-- require time (this module is required by Window).
+local genv: any = nil
+pcall(function()
+	if type(getgenv) == "function" then
+		genv = getgenv()
+	end
+end)
+
+local function g(name: string): any
+	-- 1) shared global env (getgenv)
+	if type(genv) == "table" then
+		local ok, v = pcall(function()
+			return genv[name]
+		end)
+		if ok and v ~= nil then
+			return v
+		end
+	end
+	-- 2) ambient global identifier (works when funcs are plain globals)
+	local ok2, v2 = pcall(function()
+		return (_G :: any)[name]
+	end)
+	if ok2 and v2 ~= nil then
+		return v2
+	end
+	return nil
+end
+
+local g_writefile = g("writefile")
+local g_readfile = g("readfile")
+local g_isfile = g("isfile")
+local g_delfile = g("delfile")
+local g_isfolder = g("isfolder")
+local g_makefolder = g("makefolder")
+local g_listfiles = g("listfiles")
 
 Config.supported = type(g_writefile) == "function"
 	and type(g_readfile) == "function"
 	and type(g_isfile) == "function"
+
+-- Surface what was detected so executor file-API gaps are obvious in the console.
+print(("[coreui] config: supported=%s  writefile=%s readfile=%s isfile=%s listfiles=%s delfile=%s")
+	:format(
+		tostring(Config.supported),
+		type(g_writefile), type(g_readfile), type(g_isfile),
+		type(g_listfiles), type(g_delfile)
+	))
 
 -- Strip path separators so a config name can't escape its folder.
 local function sanitize(name: string): string

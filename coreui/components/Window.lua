@@ -765,10 +765,18 @@ return function(opts: any)
 	window.ConfigSupported = Config.supported
 
 	function window:SaveConfig(name: string): boolean
-		return Config.save(configFolder, name, ctx:GetConfig())
+		local snapshot = ctx:GetConfig()
+		local ok = Config.save(configFolder, name, snapshot)
+		local n = 0
+		for _ in snapshot do
+			n += 1
+		end
+		print(("[coreui] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
+		return ok
 	end
 	function window:LoadConfig(name: string): boolean
 		local data = Config.load(configFolder, name)
+		print(("[coreui] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
 		if data then
 			ctx:LoadConfig(data)
 			return true
@@ -805,6 +813,7 @@ return function(opts: any)
 	-- auto-load pass sees every flagged control your other tabs registered.
 	function window:CreateSettingsTab(settingsOpts: any?)
 		settingsOpts = settingsOpts or {}
+		print(("[coreui] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
 		local tab = window:CreateTab({
 			Name = settingsOpts.Name or "Settings",
 			Icon = settingsOpts.Icon or "gear",
@@ -936,6 +945,11 @@ return function(opts: any)
 			end,
 		})
 
+		local flagCount = 0
+		for _ in ctx.Flags do
+			flagCount += 1
+		end
+		print(("[coreui] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
 		return tab
 	end
 
