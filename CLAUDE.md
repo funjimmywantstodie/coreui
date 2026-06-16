@@ -56,9 +56,31 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.lua` — it's the spec, written in the target
 API; build until it runs and matches `reference/coreui-demo.html`):
-- `coreui:CreateWindow{Title,Subtitle,Version}` → `:CreateTab` · `:Notify` · `:Select(i)` · `:SetAccent(Color3)`
+- `coreui:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?}` →
+  `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
+  `:SetAccent(Color3)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
+  `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
+  `:ListConfigs()` · `:Destroy()`
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player`
+- Stateful controls take an optional `Flag = "id"` → captured by config save/load.
+
+## Config & settings (Flag system)
+
+Any stateful control built with `Flag = "id"` is registered in `ctx.Flags` by
+`Controls.mount` (`util/Context.lua` → `RegisterFlag/GetConfig/LoadConfig`).
+`GetConfig` snapshots every flag to a JSON-safe table via per-kind codecs (Color3
+→ hex, `Enum.KeyCode` → name); `LoadConfig` decodes + `:Set`s them (firing
+callbacks). `util/Config.lua` is the executor filesystem layer — feature-detected
+(`Config.supported`) and fully pcall-guarded so it no-ops in Studio. Configs are
+JSON at `<ConfigFolder>/configs/<name>.json`; `<ConfigFolder>/autoload.txt` holds
+the auto-load pointer.
+
+`Window:CreateSettingsTab()` is a drop-in panel (accent picker, the toggle
+keybind, notifications switch, config save/load/delete + auto-load, Unload). Its
+controls are themselves flagged, so saving a config captures them too. **Call it
+LAST** — its deferred auto-load pass only sees flags registered before it runs.
+Dropdown gained `handle:SetOptions(list)` for refreshing the saved-config list.
 
 ## Key utilities
 

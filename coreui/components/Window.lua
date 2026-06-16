@@ -12,6 +12,7 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Context = require(script.Parent.Parent.util.Context)
+local Config = require(script.Parent.Parent.util.Config)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 
@@ -20,6 +21,14 @@ local M = Theme.Metrics
 return function(opts: any)
 	opts = opts or {}
 	local colors = Theme.Colors
+
+	-- where configs are saved on disk + which key shows/hides the window
+	local configFolder = opts.ConfigFolder or "coreui"
+	local toggleKey: Enum.KeyCode = opts.ToggleKey or Enum.KeyCode.RightShift
+	local notificationsEnabled = true
+	-- UserInputService connections live past the ScreenGui's lifetime, so they're
+	-- tracked here and disconnected by Window:Destroy.
+	local connections: { RBXScriptConnection } = {}
 
 	-- ── ScreenGui + window frame ────────────────────────────────────────────
 	local screenGui = Create("ScreenGui", {
@@ -456,7 +465,7 @@ return function(opts: any)
 			startPos = main.Position
 		end
 	end)
-	UserInputService.InputChanged:Connect(function(input)
+	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
@@ -465,13 +474,13 @@ return function(opts: any)
 				startPos.Y.Scale, startPos.Y.Offset + delta.Y
 			)
 		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
+	end))
+	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
-	end)
+	end))
 
 	-- ── public API ───────────────────────────────────────────────────────────
 	local tabs = {}
@@ -571,7 +580,7 @@ return function(opts: any)
 		end
 	end)
 
-	-- ── minimize / restore (RightShift) ────────────────────────────────────────
+	-- ── minimize / restore (toggle key) ────────────────────────────────────────
 	local restoreHint = Create("Frame", {
 		Name = "MinimizedHint",
 		Visible = false,
@@ -600,12 +609,12 @@ return function(opts: any)
 		LayoutOrder = 1,
 		Parent = restoreHint,
 	})
-	Create("TextLabel", {
+	local restoreHintText = Create("TextLabel", {
 		Name = "Text",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Text = "Press RightShift to show it again.",
+		Text = ("Press %s to show it again."):format(toggleKey.Name),
 		TextColor3 = colors.text_muted,
 		TextSize = 12,
 		FontFace = Theme.Font.Regular,
@@ -644,11 +653,16 @@ return function(opts: any)
 	winBtns.min.Activated:Connect(function()
 		setMinimized(true)
 	end)
-	UserInputService.InputBegan:Connect(function(input)
-		if minimized and input.KeyCode == Enum.KeyCode.RightShift then
-			setMinimized(false)
+	-- The toggle key hides AND restores (a single press flips the window's state),
+	-- ignored while the player is typing into a textbox / capturing a keybind.
+	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then
+			return
 		end
-	end)
+		if toggleKey ~= Enum.KeyCode.Unknown and input.KeyCode == toggleKey then
+			setMinimized(not minimized)
+		end
+	end))
 
 	-- ── maximize toggle ─────────────────────────────────────────────────────────
 	local maximized = false
@@ -724,11 +738,205 @@ return function(opts: any)
 	end
 
 	function window:Notify(notifyOpts: any)
+		if not notificationsEnabled then
+			return
+		end
 		Notify(ctx, toasts, notifyOpts)
 	end
 
 	function window:SetAccent(color: Color3)
 		ctx:SetAccent(color)
+	end
+
+	-- ── settings: theme / keybind / notifications ─────────────────────────────
+	function window:SetToggleKey(key: Enum.KeyCode)
+		toggleKey = key or Enum.KeyCode.Unknown
+		restoreHintText.Text = toggleKey ~= Enum.KeyCode.Unknown
+			and ("Press %s to show it again."):format(toggleKey.Name)
+			or "Re-bind a toggle key to show it again."
+	end
+
+	function window:SetNotificationsEnabled(enabled: boolean)
+		notificationsEnabled = enabled ~= false
+	end
+
+	-- ── settings: config persistence ──────────────────────────────────────────
+	-- These read/write the flag registry (any control built with a `Flag`).
+	window.ConfigSupported = Config.supported
+
+	function window:SaveConfig(name: string): boolean
+		return Config.save(configFolder, name, ctx:GetConfig())
+	end
+	function window:LoadConfig(name: string): boolean
+		local data = Config.load(configFolder, name)
+		if data then
+			ctx:LoadConfig(data)
+			return true
+		end
+		return false
+	end
+	function window:DeleteConfig(name: string): boolean
+		return Config.delete(configFolder, name)
+	end
+	function window:ListConfigs(): { string }
+		return Config.list(configFolder)
+	end
+
+	-- ── teardown ───────────────────────────────────────────────────────────────
+	-- Disconnect the lingering UserInputService listeners, then fade the window
+	-- out and destroy the ScreenGui (close() only hides it; this fully unloads).
+	function window:Destroy()
+		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
+		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
+		t.Completed:Once(function()
+			for _, conn in connections do
+				conn:Disconnect()
+			end
+			table.clear(connections)
+			ctx:ClosePopover()
+			screenGui:Destroy()
+		end)
+	end
+
+	-- ── built-in Settings tab ───────────────────────────────────────────────────
+	-- A drop-in panel: accent color, the toggle keybind, a notifications switch,
+	-- and full config save / load / delete + auto-load. Call it LAST so the
+	-- auto-load pass sees every flagged control your other tabs registered.
+	function window:CreateSettingsTab(settingsOpts: any?)
+		settingsOpts = settingsOpts or {}
+		local tab = window:CreateTab({
+			Name = settingsOpts.Name or "Settings",
+			Icon = settingsOpts.Icon or "gear",
+		})
+
+		-- Interface ──────────────────────────────────────────────────────────────
+		local iface = tab:CreateGroup({ Title = "Interface", Column = 1 })
+		iface:Colorpicker({
+			Name = "Accent Color",
+			Desc = "Re-themes the whole UI.",
+			Flag = "coreui_accent",
+			Default = ctx.Accent,
+			Callback = function(c)
+				window:SetAccent(c)
+			end,
+		})
+		iface:Keybind({
+			Name = "Toggle UI",
+			Desc = "Show or hide the window.",
+			Flag = "coreui_togglekey",
+			Default = toggleKey,
+			Callback = function(k)
+				window:SetToggleKey(k)
+			end,
+		})
+		iface:Toggle({
+			Name = "Notifications",
+			Desc = "Show toast notifications.",
+			Flag = "coreui_notifications",
+			Default = true,
+			Callback = function(on)
+				window:SetNotificationsEnabled(on)
+			end,
+		})
+
+		-- Configuration ────────────────────────────────────────────────────────────
+		local cfg = tab:CreateGroup({ Title = "Configuration", Column = 2 })
+		if not Config.supported then
+			cfg:Paragraph({
+				Title = "Unavailable",
+				Body = "Your executor doesn't expose file functions, so configs can't "
+					.. "be saved. Everything else here still works.",
+			})
+		else
+			local nameBox = cfg:Input({ Name = "Config Name", Placeholder = "my config" })
+			local list = cfg:Dropdown({
+				Name = "Saved Configs",
+				Placeholder = "None saved",
+				Stack = true,
+				Options = window:ListConfigs(),
+			})
+			local function refresh()
+				list:SetOptions(window:ListConfigs())
+			end
+
+			cfg:ButtonRow({
+				{
+					Label = "Save",
+					Callback = function()
+						local n = nameBox:Get()
+						if n == nil or n == "" then
+							window:Notify({ Title = "Config", Text = "Enter a name first." })
+							return
+						end
+						if window:SaveConfig(n) then
+							refresh()
+							list:Set(n)
+							window:Notify({ Title = "Config", Text = ('Saved "%s".'):format(n) })
+						else
+							window:Notify({ Title = "Config", Text = "Save failed." })
+						end
+					end,
+				},
+				{
+					Label = "Load",
+					Callback = function()
+						local n = list:Get()
+						if not n then
+							window:Notify({ Title = "Config", Text = "Pick a config to load." })
+							return
+						end
+						if window:LoadConfig(n) then
+							window:Notify({ Title = "Config", Text = ('Loaded "%s".'):format(n) })
+						end
+					end,
+				},
+			})
+			cfg:ButtonRow({
+				{
+					Label = "Delete",
+					Callback = function()
+						local n = list:Get()
+						if not n then
+							return
+						end
+						window:DeleteConfig(n)
+						refresh()
+						window:Notify({ Title = "Config", Text = ('Deleted "%s".'):format(n) })
+					end,
+				},
+				{ Label = "Refresh", Callback = refresh },
+			})
+			cfg:Toggle({
+				Name = "Auto Load",
+				Desc = "Apply the selected config on launch.",
+				Default = Config.getAutoload(configFolder) ~= nil,
+				Callback = function(on)
+					Config.setAutoload(configFolder, on and list:Get() or nil)
+				end,
+			})
+
+			-- Apply the auto-load config once the rest of the UI has finished
+			-- building (this tab is meant to be created last, so all flags exist).
+			task.defer(function()
+				local auto = Config.getAutoload(configFolder)
+				if auto then
+					list:Set(auto)
+					window:LoadConfig(auto)
+				end
+			end)
+		end
+
+		cfg:Divider()
+		cfg:Button({
+			Name = "Danger Zone",
+			Label = "Unload coreui",
+			Callback = function()
+				window:Destroy()
+			end,
+		})
+
+		return tab
 	end
 
 	-- mount — pop the window in from a touch smaller and faded so it eases in

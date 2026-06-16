@@ -256,6 +256,32 @@ local function build(ctx: any, opts: any, multi: boolean)
 			opts.Callback(multi and fireMulti() or single)
 		end
 	end
+	-- Replace the option list at runtime (e.g. a refreshed saved-config list).
+	-- Drops any selection that's no longer present so the label stays honest.
+	function handle:SetOptions(list: { string })
+		options = list or {}
+		local function present(v: string): boolean
+			for _, o in options do
+				if o == v then
+					return true
+				end
+			end
+			return false
+		end
+		if multi then
+			for key in selected do
+				if not present(key) then
+					selected[key] = nil
+				end
+			end
+		elseif single ~= nil and not present(single) then
+			single = nil
+		end
+		relabel()
+		if ctx:IsOpen(menu) then
+			rebuild()
+		end
+	end
 
 	return f.field, handle, true
 end

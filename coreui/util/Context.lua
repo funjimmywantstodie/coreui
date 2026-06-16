@@ -2,9 +2,10 @@
 -- util/Context.lua — the object threaded through every component.
 --
 -- Carries the live accent color (themeable via Window:SetAccent), an accent
--- subscription registry, and the single-popover manager used by dropdowns and
+-- subscription registry, the single-popover manager used by dropdowns and
 -- color pickers (menus mount into a high-ZIndex overlay so they escape the
--- scrolling content's clipping).
+-- scrolling content's clipping), and the flag registry that backs config
+-- save / load (any control given a `Flag` is captured by GetConfig/LoadConfig).
 
 local Create = require(script.Parent.Create)
 local Tween = require(script.Parent.Tween)
@@ -18,6 +19,7 @@ export type Context = typeof(setmetatable(
 		Accent: Color3,
 		AccentHover: Color3,
 		overlay: Frame,
+		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
 		_popover: { menu: Instance, catcher: Instance, conns: { RBXScriptConnection }, onClose: (() -> ())? }?,
 	},
@@ -34,6 +36,7 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		Accent = accent,
 		AccentHover = hover(accent),
 		overlay = overlay,
+		Flags = {},
 		_consumers = {},
 		_popover = nil,
 	}, Context)
@@ -51,6 +54,89 @@ function Context:SetAccent(color: Color3)
 	self.AccentHover = hover(color)
 	for _, fn in self._consumers do
 		fn(self.Accent, self.AccentHover)
+	end
+end
+
+-- ── Flags / config ──────────────────────────────────────────────────────────
+-- Each control kind serializes its value to a JSON-safe form and back. Color3 /
+-- Enum.KeyCode aren't JSON-encodable, so they round-trip through hex / name.
+local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
+	toggle = {
+		encode = function(v) return v == true end,
+		decode = function(v) return v == true end,
+	},
+	slider = {
+		encode = function(v) return v end,
+		decode = function(v) return tonumber(v) or 0 end,
+	},
+	input = {
+		encode = function(v) return tostring(v) end,
+		decode = function(v) return tostring(v) end,
+	},
+	dropdown = {
+		encode = function(v) return v end, -- string | { string } — both JSON-safe
+		decode = function(v) return v end,
+	},
+	keybind = {
+		encode = function(v) return (typeof(v) == "EnumItem" and v.Name) or "Unknown" end,
+		decode = function(v)
+			local ok, key = pcall(function()
+				return (Enum.KeyCode :: any)[v]
+			end)
+			return (ok and key) or Enum.KeyCode.Unknown
+		end,
+	},
+	colorpicker = {
+		encode = function(v) return typeof(v) == "Color3" and v:ToHex() or tostring(v) end,
+		decode = function(v)
+			local ok, color = pcall(Color3.fromHex, v)
+			return (ok and color) or Color3.new(1, 1, 1)
+		end,
+	},
+}
+
+-- Register a stateful control's handle under `name` so config save/load can
+-- read (:Get) and write (:Set) it. `kind` selects the codec. No-op without both.
+function Context:RegisterFlag(name: string?, handle: any, kind: string?)
+	if not name or not kind or not Codec[kind] or not handle then
+		return
+	end
+	self.Flags[name] = { handle = handle, kind = kind }
+end
+
+-- Snapshot every flagged control into a JSON-safe table.
+function Context:GetConfig(): { [string]: any }
+	local data = {}
+	for name, entry in self.Flags do
+		local codec = Codec[entry.kind]
+		local ok, value = pcall(function()
+			return entry.handle:Get()
+		end)
+		if ok and codec then
+			data[name] = codec.encode(value)
+		end
+	end
+	return data
+end
+
+-- Apply a saved table back onto the flagged controls (fires their callbacks).
+function Context:LoadConfig(data: { [string]: any })
+	if type(data) ~= "table" then
+		return
+	end
+	for name, raw in data do
+		local entry = self.Flags[name]
+		if entry then
+			local codec = Codec[entry.kind]
+			if codec then
+				local okDecode, value = pcall(codec.decode, raw)
+				if okDecode then
+					pcall(function()
+						entry.handle:Set(value)
+					end)
+				end
+			end
+		end
 	end
 end
 

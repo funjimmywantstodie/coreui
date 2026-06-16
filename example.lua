@@ -6,9 +6,11 @@
 local coreui = require(script.Parent.coreui)
 
 local Window = coreui:CreateWindow({
-	Title    = "coreui",
-	Subtitle = "component kit",
-	Version  = "v1.0.0",
+	Title        = "coreui",
+	Subtitle     = "component kit",
+	Version      = "v1.0.0",
+	ConfigFolder = "coreui",            -- where saved configs live on disk
+	ToggleKey    = Enum.KeyCode.RightShift, -- show/hide the window
 	-- ScreenGui is parented to LocalPlayer.PlayerGui
 })
 
@@ -51,19 +53,22 @@ local Components = Window:CreateTab({ Name = "Components", Icon = "layers" })
 
 -- left column ----------------------------------------------------------------
 local Inputs = Components:CreateGroup({ Title = "Inputs", Column = 1 })
+-- A `Flag` makes a control's value persist — it's captured by config save/load
+-- (see the Settings tab) and restored on auto-load.
 Inputs:Input({
 	Name = "Username", Desc = "This is a textbox.", Placeholder = "Enter text...",
+	Flag = "username",
 	Callback = function(text) print("username:", text) end,
 })
-Inputs:Input({ Name = "Webhook URL", Placeholder = "https://..." })
+Inputs:Input({ Name = "Webhook URL", Placeholder = "https://...", Flag = "webhook" })
 Inputs:Slider({
 	Name = "Volume", Desc = "This is a slider — drag the handle.",
-	Min = 0, Max = 100, Default = 50, Suffix = "%",
+	Min = 0, Max = 100, Default = 50, Suffix = "%", Flag = "volume",
 	Callback = function(v) print("volume:", v) end,
 })
 Inputs:Keybind({
 	Name = "Toggle Menu", Desc = "This is a keybind — click, then press a key.",
-	Default = Enum.KeyCode.RightShift,
+	Default = Enum.KeyCode.RightShift, Flag = "menu_key",
 	Callback = function(key) print("bound:", key) end,
 })
 
@@ -71,12 +76,13 @@ local Selection = Components:CreateGroup({ Title = "Selection", Column = 1 })
 Selection:Dropdown({
 	Name = "Single Select", Desc = "This is a dropdown — pick one.", Stack = true,
 	Options = { "Option A", "Option B", "Option C", "Option D" }, Placeholder = "Select...",
+	Flag = "single_select",
 	Callback = function(choice) print("picked:", choice) end,
 })
 Selection:MultiDropdown({
 	Name = "Multi Select", Desc = "This is a multi-select — pick several.", Stack = true,
 	Options = { "Fire", "Water", "Earth", "Air", "Light", "Dark" },
-	Default = { "Fire", "Water" },
+	Default = { "Fire", "Water" }, Flag = "multi_select",
 	Callback = function(list) print("selected:", table.concat(list, ", ")) end,
 })
 Selection:Dropdown({ Name = "Quality", Options = { "Low", "Medium", "High", "Ultra" }, Default = "High", Width = 120 })
@@ -85,9 +91,10 @@ Selection:Dropdown({ Name = "Quality", Options = { "Low", "Medium", "High", "Ult
 local Controls = Components:CreateGroup({ Title = "Controls", Column = 2 })
 Controls:Toggle({
 	Name = "Enable Feature", Desc = "This is a toggle switch.", Default = true,
+	Flag = "enable_feature",
 	Callback = function(on) print("feature:", on) end,
 })
-Controls:Toggle({ Name = "Auto Mode", Default = false })
+Controls:Toggle({ Name = "Auto Mode", Default = false, Flag = "auto_mode" })
 Controls:Button({
 	Name = "Primary Button", Desc = "This is an accent button.",
 	Label = "Confirm", Accent = true,
@@ -107,3 +114,9 @@ Appearance:Colorpicker({
 Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("3b82f6") })
 Appearance:Divider()
 Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for notes and instructions." })
+
+--------------------------------------------------------------------------------
+-- TAB 3 · Settings (built in — accent, toggle key, config save/load)
+-- Create it LAST so its auto-load pass sees every flagged control above.
+--------------------------------------------------------------------------------
+Window:CreateSettingsTab()

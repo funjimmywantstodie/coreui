@@ -56,20 +56,24 @@ function Controls.new(ctx: any, frame: Frame)
 		refresh()
 	end
 
-	-- Build via a component, drop it in, hand back the control's handle.
-	local function mount(builder: (any, any) -> (Instance, any, boolean), opts: any): any
+	-- Build via a component, drop it in, register it as a flag (if it carries one
+	-- and a serializable `kind`), then hand back the control's handle.
+	local function mount(builder: (any, any) -> (Instance, any, boolean), opts: any, kind: string?): any
 		local inst, handle, bordered = builder(ctx, opts)
 		place(inst, bordered)
+		if opts and opts.Flag and kind then
+			ctx:RegisterFlag(opts.Flag, handle, kind)
+		end
 		return handle
 	end
 
 	local api = {}
 
-	function api:Toggle(o) return mount(Toggle, o) end
-	function api:Slider(o) return mount(Slider, o) end
-	function api:Input(o) return mount(Input, o) end
-	function api:Keybind(o) return mount(Keybind, o) end
-	function api:Colorpicker(o) return mount(Colorpicker, o) end
+	function api:Toggle(o) return mount(Toggle, o, "toggle") end
+	function api:Slider(o) return mount(Slider, o, "slider") end
+	function api:Input(o) return mount(Input, o, "input") end
+	function api:Keybind(o) return mount(Keybind, o, "keybind") end
+	function api:Colorpicker(o) return mount(Colorpicker, o, "colorpicker") end
 	function api:Paragraph(o) return mount(Paragraph, o) end
 	function api:Label(o) return mount(Label, o) end
 	function api:Divider() return mount(Divider, {}) end
@@ -79,12 +83,12 @@ function Controls.new(ctx: any, frame: Frame)
 	function api:Dropdown(o)
 		return mount(function(c, opts)
 			return Dropdown(c, opts, false)
-		end, o)
+		end, o, "dropdown")
 	end
 	function api:MultiDropdown(o)
 		return mount(function(c, opts)
 			return Dropdown(c, opts, true)
-		end, o)
+		end, o, "dropdown")
 	end
 
 	function api:Button(o)
