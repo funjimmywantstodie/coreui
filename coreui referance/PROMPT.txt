@@ -1,0 +1,27 @@
+============================================================
+ PROMPT TO GIVE CLAUDE CODE
+ (open this folder in VS Code, then paste the block below)
+============================================================
+
+Read README.md in this folder, then open reference/coreui-demo.html in a
+browser to see the finished UI and reference/coreui.js + reference/coreui.css
+for the exact behavior and styling.
+
+Build "coreui": a reusable Roblox UI component library, written in Luau as a
+ModuleScript that returns a library table. Recreate the look and behavior of the
+HTML reference using native Roblox instances (Frame, TextButton, TextBox,
+UICorner, UIStroke, UIListLayout, TweenService, UserInputService).
+
+The library must expose the API documented in README.md, and example.lua must
+run and look like the HTML reference. Parent the ScreenGui to the LocalPlayer's
+PlayerGui. Match the colors, sizes, radii, fonts and animation timings in
+README.md exactly.
+
+Build it incrementally and verify against example.lua as you go:
+1. Window shell (titlebar + sidebar + content ScrollingFrame + status bar)
+2. Tabs + Groups + collapsible Sections
+3. One control at a time: Toggle, Slider, Dropdown, MultiDropdown, Input,
+   Keybind, Colorpicker, Button/ButtonRow, Paragraph, Label, Divider, Player
+4. Notifications
+
+Suggested module layout is in README.md. Keep each component in its own file.

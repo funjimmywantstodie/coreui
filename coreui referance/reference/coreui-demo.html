@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>coreui — Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="coreui.css" />
+<style> html, body { margin: 0; height: 100%; background: #0a0a0c; } </style>
+</head>
+<body>
+<script src="coreui.js"></script>
+<script>
+/* ============================================================================
+   DEMO — two tabs that showcase every component in the library.
+   Each block reads like the equivalent Luau setup, so it ports directly:
+
+     local Window = CoreUI:CreateWindow({...})
+     local Tab    = Window:CreateTab("Home", "home")
+     local Group  = Tab:CreateGroup("Profile")        -- col 0 = left, 1 = right
+     Group:CreateToggle({Name = "...", Default = true, Callback = fn})
+
+   Add a tab, add a group, add controls — that's the whole mental model.
+   ============================================================================ */
+
+const win = window.CoreUI.createWindow({
+  title: "coreui",
+  subtitle: "<b>coreui</b> · component kit",
+  version: "v1.0.0",
+  active: 0,
+  liveClock: true,
+});
+
+/* ---------- TAB 1 · Home -------------------------------------------------- */
+(function () {
+  const Tab = win.tab({ icon: "home", name: "Home" });
+
+  const Profile = Tab.group({ title: "Profile", col: 0 });
+  Profile.player({ username: "guest", displayName: "Guest", userId: "0", badge: "Free" });
+  Profile.paragraph({
+    title: "Welcome",
+    body: "This is the player / info panel — username, display name and id. Everything you see is a live component from the library.",
+  });
+
+  const Session = Tab.group({ title: "Session", col: 1 });
+  Session.label({ key: "Library", value: "coreui" });
+  Session.label({ key: "Version", value: "1.0.0" });
+  Session.label({ key: "Components", value: "14" });
+  Session.label({ key: "Status", value: "Connected" });
+  Session.divider();
+  Session.button({ label: "Send Notification", accent: true, onClick: () =>
+    win.notify({ title: "Notification", text: "A toast from the coreui library." }) });
+})();
+
+/* ---------- TAB 2 · Components -------------------------------------------- */
+(function () {
+  const Tab = win.tab({ icon: "layers", name: "Components" });
+
+  /* left column ------------------------------------------------------- */
+  const Inputs = Tab.group({ title: "Inputs", col: 0 });
+  Inputs.input({ name: "Username", desc: "This is a textbox.", placeholder: "Enter text..." });
+  Inputs.input({ name: "Webhook URL", placeholder: "https://discord.com/api/..." });
+  Inputs.slider({ name: "Volume", desc: "This is a slider — drag the handle.", min: 0, max: 100, value: 50, suffix: "%" });
+  Inputs.keybind({ name: "Toggle Menu", desc: "This is a keybind — click, then press a key.", value: "RightShift" });
+
+  const Selection = Tab.group({ title: "Selection", col: 0 });
+  Selection.dropdown({ name: "Single Select", desc: "This is a dropdown — pick one.", stack: true,
+    options: ["Option A", "Option B", "Option C", "Option D"], placeholder: "Select..." });
+  Selection.multi({ name: "Multi Select", desc: "This is a multi-select — pick several.", stack: true,
+    options: ["Fire", "Water", "Earth", "Air", "Light", "Dark"], value: ["Fire", "Water"] });
+  Selection.dropdown({ name: "Quality", options: ["Low", "Medium", "High", "Ultra"], value: "High", width: 120 });
+
+  /* right column ------------------------------------------------------ */
+  const Controls = Tab.group({ title: "Controls", col: 1 });
+  Controls.toggle({ name: "Enable Feature", desc: "This is a toggle switch.", value: true });
+  Controls.toggle({ name: "Auto Mode", value: false });
+  Controls.button({ name: "Primary Button", desc: "This is an accent button.", label: "Confirm", accent: true,
+    onClick: () => win.notify({ title: "Button", text: "Primary button clicked." }) });
+  Controls.buttonRow([{ label: "Save" }, { label: "Load" }]);
+
+  const Appearance = Tab.group({ title: "Appearance", col: 1 });
+  Appearance.color({ name: "Accent", desc: "This is a color picker — it re-themes the UI.", value: "#f2680c",
+    onChange: (c) => document.documentElement.style.setProperty("--coreui-accent", c) });
+  Appearance.color({ name: "Highlight", value: "#3b82f6" });
+  Appearance.divider();
+  Appearance.paragraph({ title: "Paragraph", body: "Title plus body text for notes and instructions." });
+})();
+</script>
+</body>
+</html>

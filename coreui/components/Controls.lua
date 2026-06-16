@@ -1,0 +1,110 @@
+--!strict
+-- components/Controls.lua — the control surface shared by Group cards and
+-- Sections. Owns the container, dispatches to component builders, and manages
+-- the 1px "between-field" separators (drawn after every bordered item except
+-- the last, mirroring the CSS `:last-child` border rule).
+
+local Create = require(script.Parent.Parent.util.Create)
+local Theme = require(script.Parent.Parent.Theme)
+
+local Toggle = require(script.Parent.Toggle)
+local Slider = require(script.Parent.Slider)
+local Dropdown = require(script.Parent.Dropdown)
+local Input = require(script.Parent.Input)
+local Keybind = require(script.Parent.Keybind)
+local Colorpicker = require(script.Parent.Colorpicker)
+local Button = require(script.Parent.Button)
+local Paragraph = require(script.Parent.Paragraph)
+local Label = require(script.Parent.Label)
+local Divider = require(script.Parent.Divider)
+local List = require(script.Parent.List)
+local Player = require(script.Parent.Player)
+local Section = require(script.Parent.Section)
+
+local Controls = {}
+
+function Controls.new(ctx: any, frame: Frame)
+	local items: { { inst: Instance, sep: Frame?, bordered: boolean } } = {}
+	local count = 0
+
+	local function refresh()
+		local n = #items
+		for i, entry in items do
+			if entry.sep then
+				entry.sep.Visible = entry.bordered and i < n
+			end
+		end
+	end
+
+	local function place(inst: Instance, bordered: boolean)
+		count += 1
+		;(inst :: any).LayoutOrder = count * 2
+		inst.Parent = frame
+
+		local sep: Frame? = nil
+		if bordered then
+			sep = Create("Frame", {
+				Name = "Separator",
+				Size = UDim2.new(1, 0, 0, 1),
+				BackgroundColor3 = Theme.Colors.border_soft,
+				BorderSizePixel = 0,
+				LayoutOrder = count * 2 + 1,
+				Parent = frame,
+			})
+		end
+		table.insert(items, { inst = inst, sep = sep, bordered = bordered })
+		refresh()
+	end
+
+	-- Build via a component, drop it in, hand back the control's handle.
+	local function mount(builder: (any, any) -> (Instance, any, boolean), opts: any): any
+		local inst, handle, bordered = builder(ctx, opts)
+		place(inst, bordered)
+		return handle
+	end
+
+	local api = {}
+
+	function api:Toggle(o) return mount(Toggle, o) end
+	function api:Slider(o) return mount(Slider, o) end
+	function api:Input(o) return mount(Input, o) end
+	function api:Keybind(o) return mount(Keybind, o) end
+	function api:Colorpicker(o) return mount(Colorpicker, o) end
+	function api:Paragraph(o) return mount(Paragraph, o) end
+	function api:Label(o) return mount(Label, o) end
+	function api:Divider() return mount(Divider, {}) end
+	function api:Player(o) return mount(Player, o) end
+	function api:List(o) return mount(List, o) end
+
+	function api:Dropdown(o)
+		return mount(function(c, opts)
+			return Dropdown(c, opts, false)
+		end, o)
+	end
+	function api:MultiDropdown(o)
+		return mount(function(c, opts)
+			return Dropdown(c, opts, true)
+		end, o)
+	end
+
+	function api:Button(o)
+		local inst, handle, bordered = Button.single(ctx, o)
+		place(inst, bordered)
+		return handle
+	end
+	function api:ButtonRow(list)
+		local inst, handle, bordered = Button.row(ctx, list)
+		place(inst, bordered)
+		return handle
+	end
+
+	function api:Section(o)
+		local section, body = Section(ctx, o)
+		place(section, true)
+		return Controls.new(ctx, body)
+	end
+
+	return api
+end
+
+return Controls

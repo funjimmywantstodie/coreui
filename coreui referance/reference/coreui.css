@@ -1,0 +1,362 @@
+/* ============================================================================
+   CoreUI UI — stylesheet
+   A versatile dark GUI kit for a Roblox-style menu library.
+   Token names mirror component concepts so they translate to Lua theme tables.
+   ============================================================================ */
+
+:root {
+  /* surfaces */
+  --coreui-bg:          #0c0c0e;
+  --coreui-chrome:      #131315;
+  --coreui-card:        #161618;
+  --coreui-pop:         #18181b;   /* popovers / menus */
+  --coreui-control:     #1b1b1f;
+  --coreui-control-hi:  #232328;
+  --coreui-toggle-off:  #2c2c31;
+  --coreui-knob:        #d6d6db;
+
+  /* lines */
+  --coreui-border:      #262629;
+  --coreui-border-soft: #1f1f22;
+
+  /* text */
+  --coreui-text:        #ededf0;
+  --coreui-text-muted:  #8c8c94;
+  --coreui-text-dim:    #5f5f67;
+
+  /* accent (themeable) */
+  --coreui-accent:      #f2680c;
+  --coreui-accent-2:    #ff8a3d;
+  --coreui-accent-soft: rgba(242, 104, 12, 0.14);
+
+  /* metrics */
+  --coreui-radius:      9px;
+  --coreui-radius-sm:   7px;
+  --coreui-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --coreui-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* ---- box model reset (prevents inputs/dropdowns overflowing their card) -- */
+.coreui-backdrop, .coreui-backdrop *, .coreui-backdrop *::before, .coreui-backdrop *::after { box-sizing: border-box; }
+
+/* ---- backdrop ------------------------------------------------------------- */
+.coreui-backdrop {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(1100px 700px at 28% 18%, #20232c 0%, transparent 60%),
+    radial-gradient(900px 800px at 82% 82%, #1c1f28 0%, transparent 55%),
+    linear-gradient(160deg, #121318 0%, #0d0e12 100%);
+}
+.coreui-backdrop::after {
+  content: ""; position: absolute; inset: -40px;
+  background:
+    repeating-linear-gradient(115deg, rgba(255,255,255,0.012) 0 22px, transparent 22px 60px),
+    radial-gradient(620px 420px at 62% 32%, var(--coreui-accent-soft), transparent 70%);
+  filter: blur(10px); pointer-events: none;
+}
+
+/* ============================ WINDOW ====================================== */
+.coreui-window {
+  position: relative;
+  width: 780px; height: 560px;
+  display: grid;
+  grid-template-rows: 50px 1fr 34px;
+  background: var(--coreui-bg);
+  border: 1px solid #000;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    0 30px 80px -20px rgba(0,0,0,0.8),
+    0 8px 24px rgba(0,0,0,0.5);
+  color: var(--coreui-text);
+  font-family: var(--coreui-font);
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- titlebar ------------------------------------------------------------- */
+.coreui-titlebar {
+  display: grid; grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  background: var(--coreui-chrome);
+  border-bottom: 1px solid var(--coreui-border-soft);
+  user-select: none;
+}
+.coreui-logo { display: grid; place-items: center; }
+.coreui-logo svg { width: 26px; height: 26px; display: block; }
+.coreui-title { grid-column: 2; text-align: center; font-weight: 700; font-size: 16px; letter-spacing: 0.2px; }
+.coreui-winbtns { display: flex; align-items: center; gap: 15px; padding-right: 18px; }
+.coreui-winbtn {
+  background: none; border: none; padding: 0;
+  color: var(--coreui-text-muted); cursor: pointer;
+  display: grid; place-items: center; transition: color 0.12s ease;
+}
+.coreui-winbtn svg { width: 16px; height: 16px; display: block; }
+.coreui-winbtn:hover { color: var(--coreui-text); }
+.coreui-winbtn.is-close:hover { color: #ff6b6b; }
+
+/* ---- body ----------------------------------------------------------------- */
+.coreui-body { display: grid; grid-template-columns: 64px 1fr; min-height: 0; }
+
+/* ---- sidebar -------------------------------------------------------------- */
+.coreui-sidebar {
+  background: var(--coreui-chrome);
+  border-right: 1px solid var(--coreui-border-soft);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; padding: 16px 0;
+}
+.coreui-navbtn {
+  width: 40px; height: 40px; border-radius: 11px;
+  border: none; background: transparent; color: var(--coreui-text-dim);
+  display: grid; place-items: center; cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease; position: relative;
+}
+.coreui-navbtn svg { width: 20px; height: 20px; display: block; }
+.coreui-navbtn:hover { color: var(--coreui-text-muted); background: rgba(255,255,255,0.04); }
+.coreui-navbtn.is-active {
+  background: var(--coreui-accent); color: #fff;
+  box-shadow: 0 6px 16px -4px var(--coreui-accent);
+}
+.coreui-navbtn.is-active:hover { background: var(--coreui-accent); color: #fff; }
+.coreui-navbtn[data-tip]:hover::after {
+  content: attr(data-tip); position: absolute;
+  left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+  background: #000; color: var(--coreui-text); font-size: 11px;
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap;
+  border: 1px solid var(--coreui-border); z-index: 90; pointer-events: none;
+}
+
+/* ---- content -------------------------------------------------------------- */
+.coreui-content { min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 18px 22px 26px; }
+.coreui-content::-webkit-scrollbar { width: 8px; }
+.coreui-content::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 8px; }
+.coreui-content::-webkit-scrollbar-track { background: transparent; }
+
+.coreui-page { display: none; }
+.coreui-page.is-active { display: block; }
+
+.coreui-columns { display: flex; align-items: flex-start; }
+.coreui-col { flex: 1 1 0; min-width: 0; padding-right: 24px; }
+.coreui-col + .coreui-col { border-left: 1px solid var(--coreui-border-soft); padding-right: 0; padding-left: 24px; }
+.coreui-page.is-single .coreui-col { padding: 0; }
+
+/* ============================ GROUP / SUBSECTION ========================== */
+.coreui-group { margin-bottom: 18px; }
+.coreui-group:last-child { margin-bottom: 4px; }
+.coreui-group-head, .coreui-sub-head {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.coreui-group-head { padding: 2px 4px 8px; }
+.coreui-group-title { font-size: 13px; font-weight: 500; color: var(--coreui-text-muted); white-space: nowrap; }
+.coreui-chev { color: var(--coreui-text-dim); display: grid; place-items: center; transition: transform 0.18s ease; }
+.coreui-chev svg { width: 14px; height: 14px; display: block; }
+.is-collapsed > .coreui-group-head .coreui-chev,
+.is-collapsed > .coreui-sub-head .coreui-chev { transform: rotate(180deg); }
+
+.coreui-card {
+  border: 1px solid var(--coreui-border); border-radius: var(--coreui-radius);
+  background: var(--coreui-card); padding: 2px 14px; overflow: visible;
+}
+.coreui-group.is-collapsed > .coreui-card { display: none; }
+
+.coreui-sub { border-bottom: 1px solid var(--coreui-border-soft); }
+.coreui-sub:last-child { border-bottom: none; }
+.coreui-sub-head { padding: 9px 2px; }
+.coreui-sub-title { font-size: 13px; font-weight: 500; color: var(--coreui-text); white-space: nowrap; }
+.coreui-sub-body { padding: 1px 0 8px 14px; margin-left: 2px; border-left: 1px solid var(--coreui-border); }
+.coreui-sub.is-collapsed > .coreui-sub-body { display: none; }
+
+/* ============================ FIELD (base for every control) ============== */
+.coreui-field { padding: 10px 2px; border-bottom: 1px solid var(--coreui-border-soft); }
+.coreui-field:last-child { border-bottom: none; }
+.coreui-field-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.coreui-field-main { min-width: 0; }
+.coreui-field-name { font-size: 13px; color: var(--coreui-text); line-height: 1.3; }
+.coreui-field-desc { font-size: 11.5px; color: var(--coreui-text-muted); margin-top: 3px; line-height: 1.45; }
+.coreui-field-control { flex: none; }
+.coreui-field.is-stack .coreui-field-control { width: 100%; margin-top: 9px; }
+
+/* ---- toggle --------------------------------------------------------------- */
+.coreui-toggle {
+  width: 42px; height: 23px; border-radius: 999px;
+  background: var(--coreui-toggle-off); border: none; padding: 0;
+  position: relative; cursor: pointer; flex: none; transition: background 0.18s ease;
+}
+.coreui-toggle::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--coreui-knob); box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.coreui-toggle.is-on { background: var(--coreui-accent); }
+.coreui-toggle.is-on::after { transform: translateX(19px); background: #fff; }
+
+/* ---- dropdown (single + multi) ------------------------------------------- */
+.coreui-dropdown { position: relative; display: inline-block; }
+.coreui-page.is-single .coreui-dropdown, .coreui-field.is-stack .coreui-dropdown { display: block; }
+.coreui-dd-box {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-width: 110px; width: 100%; height: 32px; padding: 0 8px 0 12px;
+  background: var(--coreui-control); border: 1px solid var(--coreui-border);
+  border-radius: var(--coreui-radius-sm); color: var(--coreui-text-muted);
+  font-size: 12.5px; font-family: inherit; cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.coreui-dd-box:hover { background: var(--coreui-control-hi); }
+.coreui-dd-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coreui-dd-val.has-val { color: var(--coreui-text); }
+.coreui-dd-chev { color: var(--coreui-text-dim); display: grid; place-items: center; transition: transform 0.18s ease; flex: none; }
+.coreui-dd-chev svg { width: 14px; height: 14px; }
+.coreui-dropdown.is-open .coreui-dd-box { border-color: var(--coreui-accent); }
+.coreui-dropdown.is-open .coreui-dd-chev { transform: rotate(180deg); }
+.coreui-dd-menu {
+  position: absolute; z-index: 70; top: calc(100% + 6px); right: 0; left: 0;
+  min-width: 150px; background: var(--coreui-pop);
+  border: 1px solid var(--coreui-border); border-radius: 8px; padding: 5px;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.55); max-height: 210px; overflow-y: auto; overflow-x: hidden;
+  display: none;
+}
+.coreui-dropdown.is-open .coreui-dd-menu { display: block; }
+.coreui-dd-opt {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+  border-radius: 6px; font-size: 12.5px; color: var(--coreui-text-muted); cursor: pointer; white-space: nowrap;
+}
+.coreui-dd-opt:hover { background: var(--coreui-control-hi); color: var(--coreui-text); }
+.coreui-dd-opt.is-sel { color: var(--coreui-text); }
+.coreui-dd-tick { width: 15px; height: 15px; flex: none; display: grid; place-items: center; color: var(--coreui-accent); opacity: 0; }
+.coreui-dd-tick svg { width: 14px; height: 14px; }
+.coreui-dd-opt.is-sel .coreui-dd-tick { opacity: 1; }
+.coreui-dd-box.is-multi { color: var(--coreui-text); }
+
+/* ---- text input ----------------------------------------------------------- */
+.coreui-input {
+  width: 100%; height: 36px; background: var(--coreui-control);
+  border: 1px solid var(--coreui-border); border-radius: var(--coreui-radius-sm);
+  color: var(--coreui-text); font-size: 13px; font-family: inherit;
+  padding: 0 12px; outline: none; transition: border-color 0.12s ease;
+}
+.coreui-input::placeholder { color: var(--coreui-text-dim); }
+.coreui-input:focus { border-color: var(--coreui-accent); }
+
+/* ---- slider --------------------------------------------------------------- */
+.coreui-slider-val {
+  font-size: 12px; color: var(--coreui-text-muted); font-variant-numeric: tabular-nums;
+  background: var(--coreui-control); border: 1px solid var(--coreui-border);
+  padding: 2px 9px; border-radius: 6px; min-width: 38px; text-align: center;
+}
+.coreui-slider { position: relative; height: 6px; border-radius: 999px; background: var(--coreui-toggle-off); cursor: pointer; touch-action: none; }
+.coreui-slider-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--coreui-accent); }
+.coreui-slider-knob {
+  position: absolute; top: 50%; width: 15px; height: 15px; border-radius: 50%;
+  background: #fff; transform: translate(-50%, -50%); box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+/* ---- keybind -------------------------------------------------------------- */
+.coreui-keybind {
+  min-width: 70px; height: 32px; padding: 0 14px; background: var(--coreui-control);
+  border: 1px solid var(--coreui-border); border-radius: var(--coreui-radius-sm);
+  color: var(--coreui-text); font-size: 12px; font-family: var(--coreui-mono);
+  cursor: pointer; transition: border-color 0.12s ease, color 0.12s ease;
+}
+.coreui-keybind:hover { background: var(--coreui-control-hi); }
+.coreui-keybind.is-listening { border-color: var(--coreui-accent); color: var(--coreui-accent); }
+
+/* ---- color picker --------------------------------------------------------- */
+.coreui-color { position: relative; }
+.coreui-color-sw {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--coreui-border);
+  background: var(--cc, #2a2a2e); cursor: pointer; padding: 0;
+}
+.coreui-color-sw:hover { border-color: var(--coreui-text-dim); }
+.coreui-color-menu {
+  position: absolute; z-index: 70; top: calc(100% + 6px); right: 0;
+  background: var(--coreui-pop); border: 1px solid var(--coreui-border); border-radius: 10px;
+  padding: 10px; box-shadow: 0 14px 34px rgba(0,0,0,0.55); display: none; width: 168px;
+}
+.coreui-color.is-open .coreui-color-menu { display: block; }
+.coreui-color-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 9px; }
+.coreui-color-chip { width: 100%; aspect-ratio: 1; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08); cursor: pointer; }
+.coreui-color-chip:hover { transform: scale(1.08); }
+.coreui-color-native { display: flex; align-items: center; gap: 8px; }
+.coreui-color-native input[type="color"] { width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer; }
+.coreui-color-native input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.coreui-color-native input[type="color"]::-webkit-color-swatch { border: 1px solid var(--coreui-border); border-radius: 6px; }
+.coreui-color-hex { font-family: var(--coreui-mono); font-size: 11.5px; color: var(--coreui-text-muted); }
+
+/* ---- buttons -------------------------------------------------------------- */
+.coreui-btnrow { display: flex; gap: 10px; padding: 8px 2px; }
+.coreui-btnrow.is-single { display: block; }
+.coreui-field + .coreui-btnrow, .coreui-btnrow + .coreui-field { border-top: 1px solid var(--coreui-border-soft); }
+.coreui-btn {
+  flex: 1 1 0; width: 100%; height: 36px; background: var(--coreui-control);
+  border: 1px solid var(--coreui-border); border-radius: var(--coreui-radius-sm);
+  color: var(--coreui-text); font-size: 13px; font-family: inherit; font-weight: 500;
+  cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease;
+}
+.coreui-btn:hover { background: var(--coreui-control-hi); }
+.coreui-btn:active { transform: translateY(1px); }
+.coreui-btn.is-accent { background: var(--coreui-accent); border-color: transparent; color: #fff; }
+.coreui-btn.is-accent:hover { background: var(--coreui-accent-2); }
+
+/* ---- paragraph / label / divider / list ---------------------------------- */
+.coreui-paragraph { padding: 11px 2px; border-bottom: 1px solid var(--coreui-border-soft); }
+.coreui-paragraph:last-child { border-bottom: none; }
+.coreui-paragraph .coreui-p-title { font-size: 13px; color: var(--coreui-text); font-weight: 500; margin-bottom: 5px; }
+.coreui-paragraph .coreui-p-body { font-size: 12px; color: var(--coreui-text-muted); line-height: 1.55; }
+
+.coreui-labelrow { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 2px; border-bottom: 1px solid var(--coreui-border-soft); }
+.coreui-labelrow:last-child { border-bottom: none; }
+.coreui-labelrow .k { font-size: 12.5px; color: var(--coreui-text-muted); }
+.coreui-labelrow .v { font-size: 12.5px; color: var(--coreui-text); font-variant-numeric: tabular-nums; }
+
+.coreui-divider { height: 1px; background: var(--coreui-border-soft); margin: 6px 0; }
+
+.coreui-list { list-style: none; margin: 6px 0 10px; padding: 0 2px; }
+.coreui-list li { position: relative; padding: 3px 0 3px 16px; font-size: 12.5px; color: var(--coreui-text-muted); line-height: 1.35; }
+.coreui-list li::before { content: ""; position: absolute; left: 3px; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: var(--coreui-text-muted); }
+.coreui-list b { color: var(--coreui-text); font-weight: 600; }
+.coreui-list li.is-dim { color: var(--coreui-text-dim); }
+.coreui-list li.is-dim::before { background: var(--coreui-text-dim); }
+
+/* ---- player / info card --------------------------------------------------- */
+.coreui-player { display: flex; align-items: center; gap: 14px; padding: 12px 2px; }
+.coreui-avatar {
+  width: 56px; height: 56px; border-radius: 14px; flex: none; overflow: hidden;
+  display: grid; place-items: center; color: #fff; position: relative;
+  background: linear-gradient(135deg, var(--coreui-accent-2), var(--coreui-accent));
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.coreui-avatar svg { width: 34px; height: 34px; }
+.coreui-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.coreui-player-info { min-width: 0; flex: 1 1 auto; }
+.coreui-player-name { font-size: 16px; font-weight: 600; color: var(--coreui-text); display: flex; align-items: center; gap: 8px; }
+.coreui-player-sub { font-size: 12px; color: var(--coreui-text-muted); margin-top: 2px; }
+.coreui-badge { font-size: 9.5px; font-weight: 700; letter-spacing: 0.4px; color: var(--coreui-accent); border: 1px solid var(--coreui-accent); padding: 1px 6px; border-radius: 999px; text-transform: uppercase; }
+
+/* ---- notifications -------------------------------------------------------- */
+.coreui-toasts { position: absolute; right: 16px; bottom: 46px; display: flex; flex-direction: column; gap: 9px; z-index: 95; pointer-events: none; }
+.coreui-toast {
+  background: var(--coreui-pop); border: 1px solid var(--coreui-border);
+  border-left: 3px solid var(--coreui-accent); border-radius: 9px; padding: 10px 13px;
+  min-width: 200px; max-width: 260px; box-shadow: 0 12px 30px rgba(0,0,0,0.55);
+  animation: coreui-slidein 0.22s cubic-bezier(.2,.8,.2,1);
+}
+.coreui-toast.is-out { animation: coreui-slideout 0.25s ease forwards; }
+.coreui-toast-title { font-size: 12.5px; font-weight: 600; color: var(--coreui-text); }
+.coreui-toast-text { font-size: 11.5px; color: var(--coreui-text-muted); margin-top: 3px; line-height: 1.4; }
+@keyframes coreui-slidein { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+@keyframes coreui-slideout { to { opacity: 0; transform: translateX(20px); } }
+
+/* ============================ STATUS BAR ================================== */
+.coreui-statusbar {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 0 22px; background: var(--coreui-chrome);
+  border-top: 1px solid var(--coreui-border-soft); font-size: 12px; color: var(--coreui-text-muted);
+}
+.coreui-statusbar .coreui-st-mid { text-align: center; white-space: nowrap; }
+.coreui-statusbar .coreui-st-right { text-align: right; }
+.coreui-st-mid b { color: var(--coreui-text); font-weight: 600; }
