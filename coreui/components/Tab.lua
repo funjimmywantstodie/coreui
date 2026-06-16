@@ -81,18 +81,19 @@ return function(ctx: any, opts: any)
 	local col2 = newColumn(2)
 	col2.Parent = columns
 
-	local divider = Create("Frame", {
+	-- Scale height (1,0 on Y) so the divider fills the column block natively.
+	-- Roblox excludes scale-sized children from a parent's AutomaticSize, so this
+	-- can't feed back into `columns` and trigger AbsoluteSizeChanged re-entrancy
+	-- (the old signal-driven offset height oscillated on subpixel rounding).
+	Create("Frame", {
 		Name = "ColDivider",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.fromScale(0.5, 0),
-		Size = UDim2.fromOffset(1, 0),
+		Size = UDim2.new(0, 1, 1, 0),
 		BackgroundColor3 = colors.border_soft,
 		BorderSizePixel = 0,
 		Parent = columns,
 	})
-	columns:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		divider.Size = UDim2.fromOffset(1, columns.AbsoluteSize.Y)
-	end)
 
 	-- nav state ──────────────────────────────────────────────────────────
 	local active = false

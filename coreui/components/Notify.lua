@@ -52,18 +52,18 @@ return function(ctx: any, container: Frame, opts: any)
 		Create.listLayout({ Padding = UDim.new(0, 3) }),
 	})
 
+	-- Scale height (1,0 on Y) fills the card natively. Scale-sized children are
+	-- excluded from AutomaticSize, so the bar never feeds the card's height and
+	-- can't trigger AbsoluteSizeChanged re-entrancy.
 	local bar = Create("Frame", {
 		Name = "AccentBar",
 		Position = UDim2.fromOffset(0, 0),
-		Size = UDim2.fromOffset(3, 0),
+		Size = UDim2.new(0, 3, 1, 0),
 		BackgroundColor3 = ctx.Accent,
 		BorderSizePixel = 0,
 		ZIndex = 2,
 		Parent = card,
 	})
-	content:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		bar.Size = UDim2.fromOffset(3, content.AbsoluteSize.Y)
-	end)
 	ctx:RegisterAccent(function(accent)
 		bar.BackgroundColor3 = accent
 	end)

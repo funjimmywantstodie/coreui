@@ -76,18 +76,17 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Create.listLayout({}),
 	})
 
-	-- left rule, height tracked to the body so AutomaticSize stays stable.
-	local rule = Create("Frame", {
+	-- Left rule. Scale height (1,0 on Y) fills bodyWrap natively; scale-sized
+	-- children are ignored by AutomaticSize, so the rule can't feed back into
+	-- bodyWrap's height and cause AbsoluteSizeChanged re-entrancy.
+	Create("Frame", {
 		Name = "Rule",
 		Position = UDim2.fromOffset(2, 1),
-		Size = UDim2.fromOffset(1, 0),
+		Size = UDim2.new(0, 1, 1, 0),
 		BackgroundColor3 = colors.border,
 		BorderSizePixel = 0,
 		Parent = bodyWrap,
 	})
-	body:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		rule.Size = UDim2.fromOffset(1, body.AbsoluteSize.Y)
-	end)
 
 	head.Activated:Connect(function()
 		collapsed = not collapsed
