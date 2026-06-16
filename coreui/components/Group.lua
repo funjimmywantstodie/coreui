@@ -22,6 +22,10 @@ return function(ctx: any, column: Frame, opts: any)
 		Create.listLayout({}),
 	})
 
+	-- NOTE: the header does NOT use a UIListLayout. A UIListLayout manages its
+	-- children's transforms and suppresses their Rotation, so a chevron laid out
+	-- by one never visually spins. Title + chevron are positioned manually so the
+	-- chevron is free to rotate (matches a bare ImageLabel, which rotates fine).
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -33,30 +37,26 @@ return function(ctx: any, column: Frame, opts: any)
 		Parent = group,
 	}, {
 		Create.padding(2, 4, 8, 4),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-		}),
 	})
 
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -14, 0, 0), -- leaves the 14px chevron flush right
+		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Group",
 		TextColor3 = colors.text_muted,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		LayoutOrder = 1,
 		Parent = head,
 	})
 
-	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0
-	chevron.Parent = head
+	local chevron = Icons.new("chev", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0)
+	chevron.Rotation = collapsed and 180 or 0;
+	(chevron :: any).Parent = head
 
 	local card = Create("Frame", {
 		Name = "Card",

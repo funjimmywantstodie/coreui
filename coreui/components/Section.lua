@@ -20,6 +20,8 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Create.listLayout({}),
 	})
 
+	-- No UIListLayout on the header: a layout-managed child won't render its
+	-- Rotation, so the chevron is positioned manually to keep it free to spin.
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -31,30 +33,26 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Parent = section,
 	}, {
 		Create.padding(9, 2),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-		}),
 	})
 
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -14, 0, 0), -- leaves the 14px chevron flush right
+		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Section",
 		TextColor3 = colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		LayoutOrder = 1,
 		Parent = head,
 	})
 
-	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0
-	chevron.Parent = head
+	local chevron = Icons.new("chev", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0)
+	chevron.Rotation = collapsed and 180 or 0;
+	(chevron :: any).Parent = head
 
 	local bodyWrap = Create("Frame", {
 		Name = "BodyWrap",

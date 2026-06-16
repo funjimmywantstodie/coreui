@@ -48,11 +48,8 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Create.corner(Theme.Metrics.controlRadius),
 		Create.stroke(colors.border),
 		Create.padding(0, 8, 0, 12),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 10),
-		}),
+		-- No UIListLayout: a layout-managed child won't render its Rotation, so
+		-- the caret is positioned manually to keep it free to spin.
 	})
 	local boxStroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
 
@@ -67,13 +64,13 @@ local function build(ctx: any, opts: any, multi: boolean)
 		FontFace = Theme.Font.Regular,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		LayoutOrder = 1,
 		Parent = box,
 	})
 
-	local chevron = Icons.rotatable("caret", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Parent = box
+	local chevron = Icons.new("caret", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0);
+	(chevron :: any).Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
 	local menu = Create("CanvasGroup", {

@@ -20,7 +20,7 @@ __modules[''] = function()
 
 local Window = __require("components.Window")
 
-print("[coreui] build: chevron-spin-3 loaded @ " .. os.time()) -- build marker; remove once verified
+print("[coreui] build: chevron-spin-4 loaded @ " .. os.time()) -- build marker; remove once verified
 
 local coreui = {}
 
@@ -103,25 +103,6 @@ function Icons.new(name: string, size: number, color: Color3): GuiObject
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
 	})
-end
-
--- Wrap an icon in a plain Frame so callers can rotate (spin) the *wrapper*
--- instead of the icon itself. Rotating a spritesheet ImageLabel directly (it's
--- a cropped region via ImageRectOffset/Size) fails to render under several
--- executors — the icon just sits there. Rotating a non-image Frame applies a
--- clean composited transform that spins reliably everywhere. The icon is
--- centered inside, so the wrapper drops into a layout exactly like Icons.new.
-function Icons.rotatable(name: string, size: number, color: Color3): Frame
-	local wrap = Create("Frame", {
-		Name = "Icon",
-		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(size, size),
-	})
-	local icon = Icons.new(name, size, color)
-	icon.AnchorPoint = Vector2.new(0.5, 0.5)
-	icon.Position = UDim2.fromScale(0.5, 0.5);
-	(icon :: any).Parent = wrap
-	return wrap
 end
 
 -- Apply an icon onto an existing ImageLabel/ImageButton (matches the design's
@@ -670,11 +651,8 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Create.corner(Theme.Metrics.controlRadius),
 		Create.stroke(colors.border),
 		Create.padding(0, 8, 0, 12),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 10),
-		}),
+		-- No UIListLayout: a layout-managed child won't render its Rotation, so
+		-- the caret is positioned manually to keep it free to spin.
 	})
 	local boxStroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
 
@@ -689,13 +667,13 @@ local function build(ctx: any, opts: any, multi: boolean)
 		FontFace = Theme.Font.Regular,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		LayoutOrder = 1,
 		Parent = box,
 	})
 
-	local chevron = Icons.rotatable("caret", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Parent = box
+	local chevron = Icons.new("caret", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0);
+	(chevron :: any).Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
 	local menu = Create("CanvasGroup", {
@@ -1043,6 +1021,10 @@ return function(ctx: any, column: Frame, opts: any)
 		Create.listLayout({}),
 	})
 
+	-- NOTE: the header does NOT use a UIListLayout. A UIListLayout manages its
+	-- children's transforms and suppresses their Rotation, so a chevron laid out
+	-- by one never visually spins. Title + chevron are positioned manually so the
+	-- chevron is free to rotate (matches a bare ImageLabel, which rotates fine).
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -1054,30 +1036,26 @@ return function(ctx: any, column: Frame, opts: any)
 		Parent = group,
 	}, {
 		Create.padding(2, 4, 8, 4),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-		}),
 	})
 
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -14, 0, 0), -- leaves the 14px chevron flush right
+		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Group",
 		TextColor3 = colors.text_muted,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		LayoutOrder = 1,
 		Parent = head,
 	})
 
-	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0
-	chevron.Parent = head
+	local chevron = Icons.new("chev", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0)
+	chevron.Rotation = collapsed and 180 or 0;
+	(chevron :: any).Parent = head
 
 	local card = Create("Frame", {
 		Name = "Card",
@@ -1746,6 +1724,8 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Create.listLayout({}),
 	})
 
+	-- No UIListLayout on the header: a layout-managed child won't render its
+	-- Rotation, so the chevron is positioned manually to keep it free to spin.
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -1757,30 +1737,26 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Parent = section,
 	}, {
 		Create.padding(9, 2),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-		}),
 	})
 
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -14, 0, 0), -- leaves the 14px chevron flush right
+		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Section",
 		TextColor3 = colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		LayoutOrder = 1,
 		Parent = head,
 	})
 
-	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
-	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0
-	chevron.Parent = head
+	local chevron = Icons.new("chev", 14, colors.text_dim)
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, 0, 0.5, 0)
+	chevron.Rotation = collapsed and 180 or 0;
+	(chevron :: any).Parent = head
 
 	local bodyWrap = Create("Frame", {
 		Name = "BodyWrap",
