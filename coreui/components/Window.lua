@@ -67,7 +67,7 @@ return function(opts: any)
 	-- solid core, so it reads as a hard dark band that ends abruptly — this fades
 	-- gradually the whole way out instead. Big PAD = the gradient's soft tail is
 	-- what shows past the window edge; the dark middle stays hidden behind it.
-	local SHADOW_PAD = 200 -- how far the soft tail bleeds past each edge (bigger = more gradual falloff)
+	local SHADOW_PAD = 60 -- how far the soft tail bleeds past each edge (bigger = more gradual falloff)
 	local SHADOW_DROP = 8  -- nudge down so the light reads as coming from above (kept small so the bottom doesn't read heavy)
 	local SHADOW_T = 0.82  -- resting image transparency (high = faint, barely-there shadow)
 	local shadow = Create("ImageLabel", {
