@@ -53,8 +53,8 @@ return function(opts: any)
 	-- lives in the ScreenGui (a sibling behind `main`, not a child — `main`
 	-- clips, and the shadow has to bleed past the window edges) and tracks the
 	-- window as it's dragged / resized.
-	local SHADOW_PAD = 70 -- how far the blur bleeds past each edge
-	local SHADOW_T = 0.42 -- resting image transparency
+	local SHADOW_PAD = 100 -- how far the blur bleeds past each edge (wider = softer falloff)
+	local SHADOW_T = 0.82 -- resting image transparency (high = barely-there)
 	local shadow = Create("ImageLabel", {
 		Name = "Shadow",
 		AnchorPoint = Vector2.new(0.5, 0.5),
