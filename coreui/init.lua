@@ -11,7 +11,7 @@
 
 local Window = require(script.components.Window)
 
-print("[coreui] build: chevron-spin-2 loaded @ " .. os.time()) -- build marker; remove once verified
+print("[coreui] build: chevron-spin-3 loaded @ " .. os.time()) -- build marker; remove once verified
 
 local coreui = {}
 

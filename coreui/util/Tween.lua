@@ -14,6 +14,7 @@ Tween.Spin   = TweenInfo.new(0.26, Enum.EasingStyle.Back, DIR) -- collapse chevr
 Tween.Spring = TweenInfo.new(0.28, Enum.EasingStyle.Back, DIR) -- knobs / pops that should overshoot
 Tween.Press  = TweenInfo.new(0.09, Enum.EasingStyle.Quad, DIR) -- button tap squash
 Tween.Pop    = TweenInfo.new(0.16, Enum.EasingStyle.Back, DIR) -- popovers / window in
+Tween.MenuOut = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- window leaving (accelerate + fade away)
 Tween.Toast  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, DIR)
 Tween.ToastOut = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 

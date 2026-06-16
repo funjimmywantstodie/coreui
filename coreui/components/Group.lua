@@ -53,10 +53,10 @@ return function(ctx: any, column: Frame, opts: any)
 		Parent = head,
 	})
 
-	local chevron = Icons.new("chev", 14, colors.text_dim)
+	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
 	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0;
-	(chevron :: any).Parent = head
+	chevron.Rotation = collapsed and 180 or 0
+	chevron.Parent = head
 
 	local card = Create("Frame", {
 		Name = "Card",

@@ -20,7 +20,7 @@ __modules[''] = function()
 
 local Window = __require("components.Window")
 
-print("[coreui] build: chevron-spin-2 loaded @ " .. os.time()) -- build marker; remove once verified
+print("[coreui] build: chevron-spin-3 loaded @ " .. os.time()) -- build marker; remove once verified
 
 local coreui = {}
 
@@ -103,6 +103,25 @@ function Icons.new(name: string, size: number, color: Color3): GuiObject
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
 	})
+end
+
+-- Wrap an icon in a plain Frame so callers can rotate (spin) the *wrapper*
+-- instead of the icon itself. Rotating a spritesheet ImageLabel directly (it's
+-- a cropped region via ImageRectOffset/Size) fails to render under several
+-- executors — the icon just sits there. Rotating a non-image Frame applies a
+-- clean composited transform that spins reliably everywhere. The icon is
+-- centered inside, so the wrapper drops into a layout exactly like Icons.new.
+function Icons.rotatable(name: string, size: number, color: Color3): Frame
+	local wrap = Create("Frame", {
+		Name = "Icon",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(size, size),
+	})
+	local icon = Icons.new(name, size, color)
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5);
+	(icon :: any).Parent = wrap
+	return wrap
 end
 
 -- Apply an icon onto an existing ImageLabel/ImageButton (matches the design's
@@ -674,9 +693,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Parent = box,
 	})
 
-	local chevron = Icons.new("caret", 14, colors.text_dim)
-	chevron.LayoutOrder = 2;
-	(chevron :: any).Parent = box
+	local chevron = Icons.rotatable("caret", 14, colors.text_dim)
+	chevron.LayoutOrder = 2
+	chevron.Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
 	local menu = Create("CanvasGroup", {
@@ -1055,10 +1074,10 @@ return function(ctx: any, column: Frame, opts: any)
 		Parent = head,
 	})
 
-	local chevron = Icons.new("chev", 14, colors.text_dim)
+	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
 	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0;
-	(chevron :: any).Parent = head
+	chevron.Rotation = collapsed and 180 or 0
+	chevron.Parent = head
 
 	local card = Create("Frame", {
 		Name = "Card",
@@ -1758,10 +1777,10 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Parent = head,
 	})
 
-	local chevron = Icons.new("chev", 14, colors.text_dim)
+	local chevron = Icons.rotatable("chev", 14, colors.text_dim)
 	chevron.LayoutOrder = 2
-	chevron.Rotation = collapsed and 180 or 0;
-	(chevron :: any).Parent = head
+	chevron.Rotation = collapsed and 180 or 0
+	chevron.Parent = head
 
 	local bodyWrap = Create("Frame", {
 		Name = "BodyWrap",
@@ -2226,7 +2245,10 @@ return function(opts: any)
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	})
 
-	local main = Create("Frame", {
+	-- CanvasGroup (not Frame) so minimize/close can fade the *entire* window as a
+	-- single unit via GroupTransparency — a plain Frame can only fade its own
+	-- background, which is why scaling-then-hiding looked like a snap.
+	local main = Create("CanvasGroup", {
 		Name = "Window",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -2745,8 +2767,10 @@ return function(opts: any)
 	local function setMinimized(value: boolean)
 		minimized = value
 		if value then
-			-- shrink the window away, then hide it once the tween has played
-			local t = Tween.play(mainScale, Tween.Normal, { Scale = 0.85 })
+			-- shrink + fade the whole window away together, then hide it once the
+			-- fade has fully played (no abrupt cut — it's already invisible).
+			Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+			local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
 			t.Completed:Once(function()
 				if minimized then
 					main.Visible = false
@@ -2754,9 +2778,12 @@ return function(opts: any)
 			end)
 			restoreHint.Visible = true
 		else
+			-- restore from the shrunk/faded state: pop the scale, ease the fade in
 			main.Visible = true
-			mainScale.Scale = 0.85
-			Tween.play(mainScale, Tween.Pop, { Scale = 1 }) -- pop back in
+			mainScale.Scale = 0.9
+			main.GroupTransparency = 1
+			Tween.play(mainScale, Tween.Pop, { Scale = 1 })
+			Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
 			restoreHint.Visible = false
 		end
 	end
@@ -2794,10 +2821,13 @@ return function(opts: any)
 
 	-- ── close ────────────────────────────────────────────────────────────────
 	winBtns.close.Activated:Connect(function()
-		local t = Tween.play(mainScale, Tween.Normal, { Scale = 0.85 })
+		-- same shrink+fade as minimize, but disable the gui once it's gone
+		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
 		t.Completed:Once(function()
 			screenGui.Enabled = false
 			mainScale.Scale = 1 -- reset in case it's ever re-enabled
+			main.GroupTransparency = 0
 		end)
 	end)
 
@@ -2845,10 +2875,13 @@ return function(opts: any)
 		ctx:SetAccent(color)
 	end
 
-	-- mount — pop the window in from a touch smaller so it doesn't just appear
+	-- mount — pop the window in from a touch smaller and faded so it eases in
+	-- rather than just appearing
 	mainScale.Scale = 0.92
+	main.GroupTransparency = 1
 	task.defer(function()
 		Tween.play(mainScale, Tween.Pop, { Scale = 1 })
+		Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
 	end)
 
 	local localPlayer = Players.LocalPlayer
@@ -3105,6 +3138,7 @@ Tween.Spin   = TweenInfo.new(0.26, Enum.EasingStyle.Back, DIR) -- collapse chevr
 Tween.Spring = TweenInfo.new(0.28, Enum.EasingStyle.Back, DIR) -- knobs / pops that should overshoot
 Tween.Press  = TweenInfo.new(0.09, Enum.EasingStyle.Quad, DIR) -- button tap squash
 Tween.Pop    = TweenInfo.new(0.16, Enum.EasingStyle.Back, DIR) -- popovers / window in
+Tween.MenuOut = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- window leaving (accelerate + fade away)
 Tween.Toast  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, DIR)
 Tween.ToastOut = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 

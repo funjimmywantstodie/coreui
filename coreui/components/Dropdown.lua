@@ -71,9 +71,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Parent = box,
 	})
 
-	local chevron = Icons.new("caret", 14, colors.text_dim)
-	chevron.LayoutOrder = 2;
-	(chevron :: any).Parent = box
+	local chevron = Icons.rotatable("caret", 14, colors.text_dim)
+	chevron.LayoutOrder = 2
+	chevron.Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
 	local menu = Create("CanvasGroup", {
