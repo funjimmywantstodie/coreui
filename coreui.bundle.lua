@@ -20,7 +20,7 @@ __modules[''] = function()
 
 local Window = __require("components.Window")
 
-print("[coreui] build: chevron-spin-1 loaded") -- build marker; remove once verified
+print("[coreui] build: chevron-spin-2 loaded @ " .. os.time()) -- build marker; remove once verified
 
 local coreui = {}
 

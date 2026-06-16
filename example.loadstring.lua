@@ -2,7 +2,8 @@
 -- Paste this whole thing into your executor. No instance tree / require needed:
 -- loadstring runs the bundled source and returns the library table.
 
-local coreui = loadstring(game:HttpGet("https://pastebin.com/raw/JsaMb9pN"))()
+local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/heads/main/coreui.bundle.lua"
+local coreui = loadstring(game:HttpGet(URL .. "?v=" .. tick()))()
 
 local Window = coreui:CreateWindow({
 	Title    = "coreui",
