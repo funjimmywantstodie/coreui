@@ -36,6 +36,25 @@ return function(ctx: any, opts: any)
 	}, {
 		Create.corner(M.navRadius),
 	})
+
+	-- Accent glow under the active button — the CSS `box-shadow: 0 6px 16px -4px
+	-- accent`. A soft accent-tinted shadow image sitting behind the button
+	-- (ZIndex 0, so the overflow haloes out past the button's rounded fill).
+	local glow = Create("ImageLabel", {
+		Name = "Glow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.62),
+		Size = UDim2.fromOffset(M.navButton + 26, M.navButton + 26),
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6014261993",
+		ImageColor3 = ctx.Accent,
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(49, 49, 450, 450),
+		ZIndex = 0,
+		Parent = button,
+	})
+
 	local icon = Icons.new(opts.Icon or "gear", M.navIcon, colors.text_dim)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5);
@@ -86,6 +105,7 @@ return function(ctx: any, opts: any)
 	-- colour to flash — the accent simply fades in / out.
 	local function paint(animate: boolean?)
 		local goal
+		local glowGoal = { ImageTransparency = active and 0.45 or 1 }
 		if active then
 			goal = { BackgroundColor3 = ctx.Accent, BackgroundTransparency = 0 }
 			Icons.tint(icon, colors.white)
@@ -102,8 +122,10 @@ return function(ctx: any, opts: any)
 			for key, value in goal do
 				(button :: any)[key] = value
 			end
+			glow.ImageTransparency = glowGoal.ImageTransparency
 		else
 			Tween.play(button, Tween.Fast, goal)
+			Tween.play(glow, Tween.Fast, glowGoal)
 		end
 	end
 	button.MouseEnter:Connect(function()
@@ -119,6 +141,7 @@ return function(ctx: any, opts: any)
 		end
 	end)
 	ctx:RegisterAccent(function()
+		glow.ImageColor3 = ctx.Accent
 		if active then
 			button.BackgroundColor3 = ctx.Accent
 		end

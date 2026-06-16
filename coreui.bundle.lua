@@ -1998,6 +1998,25 @@ return function(ctx: any, opts: any)
 	}, {
 		Create.corner(M.navRadius),
 	})
+
+	-- Accent glow under the active button — the CSS `box-shadow: 0 6px 16px -4px
+	-- accent`. A soft accent-tinted shadow image sitting behind the button
+	-- (ZIndex 0, so the overflow haloes out past the button's rounded fill).
+	local glow = Create("ImageLabel", {
+		Name = "Glow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.62),
+		Size = UDim2.fromOffset(M.navButton + 26, M.navButton + 26),
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6014261993",
+		ImageColor3 = ctx.Accent,
+		ImageTransparency = 1,
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(49, 49, 450, 450),
+		ZIndex = 0,
+		Parent = button,
+	})
+
 	local icon = Icons.new(opts.Icon or "gear", M.navIcon, colors.text_dim)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5);
@@ -2048,6 +2067,7 @@ return function(ctx: any, opts: any)
 	-- colour to flash — the accent simply fades in / out.
 	local function paint(animate: boolean?)
 		local goal
+		local glowGoal = { ImageTransparency = active and 0.45 or 1 }
 		if active then
 			goal = { BackgroundColor3 = ctx.Accent, BackgroundTransparency = 0 }
 			Icons.tint(icon, colors.white)
@@ -2064,8 +2084,10 @@ return function(ctx: any, opts: any)
 			for key, value in goal do
 				(button :: any)[key] = value
 			end
+			glow.ImageTransparency = glowGoal.ImageTransparency
 		else
 			Tween.play(button, Tween.Fast, goal)
+			Tween.play(glow, Tween.Fast, glowGoal)
 		end
 	end
 	button.MouseEnter:Connect(function()
@@ -2081,6 +2103,7 @@ return function(ctx: any, opts: any)
 		end
 	end)
 	ctx:RegisterAccent(function()
+		glow.ImageColor3 = ctx.Accent
 		if active then
 			button.BackgroundColor3 = ctx.Accent
 		end
@@ -2239,6 +2262,38 @@ return function(opts: any)
 	})
 	local mainScale = main:FindFirstChildOfClass("UIScale") :: UIScale
 
+	-- ── drop shadow ─────────────────────────────────────────────────────────
+	-- The reference window floats: `box-shadow: 0 30px 80px -20px rgba(0,0,0,.8)`.
+	-- A 9-sliced soft-shadow image behind the window gives it that elevation. It
+	-- lives in the ScreenGui (a sibling behind `main`, not a child — `main`
+	-- clips, and the shadow has to bleed past the window edges) and tracks the
+	-- window as it's dragged / resized.
+	local SHADOW_PAD = 70 -- how far the blur bleeds past each edge
+	local SHADOW_T = 0.42 -- resting image transparency
+	local shadow = Create("ImageLabel", {
+		Name = "Shadow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = main.Position,
+		Size = UDim2.fromOffset(M.windowWidth + SHADOW_PAD, M.windowHeight + SHADOW_PAD),
+		BackgroundTransparency = 1,
+		Image = "rbxassetid://6014261993",
+		ImageColor3 = Color3.new(0, 0, 0),
+		ImageTransparency = 1, -- faded in on mount, alongside the window
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(49, 49, 450, 450),
+		ZIndex = 0,
+		Parent = screenGui,
+	})
+	local function syncShadow()
+		shadow.Position = main.Position
+		shadow.Size = UDim2.new(
+			main.Size.X.Scale, main.Size.X.Offset + SHADOW_PAD,
+			main.Size.Y.Scale, main.Size.Y.Offset + SHADOW_PAD
+		)
+	end
+	main:GetPropertyChangedSignal("Position"):Connect(syncShadow)
+	main:GetPropertyChangedSignal("Size"):Connect(syncShadow)
+
 	-- Never exceed the viewport — on small screens the window shrinks to fit
 	-- (centered) instead of spilling content off the right/bottom edge.
 	local function fitWindow()
@@ -2279,6 +2334,13 @@ return function(opts: any)
 			Position = UDim2.fromScale(0, 1),
 			Size = UDim2.new(1, 0, 0, 1),
 			BackgroundColor3 = colors.border_soft,
+			BorderSizePixel = 0,
+		}),
+		Create("Frame", { -- top inset highlight — the CSS `inset` lit edge that
+			Name = "Highlight",            -- catches light and lifts the window
+			Size = UDim2.new(1, 0, 0, 1),
+			BackgroundColor3 = colors.white,
+			BackgroundTransparency = 0.94,
 			BorderSizePixel = 0,
 		}),
 	})
@@ -2746,6 +2808,7 @@ return function(opts: any)
 			-- shrink + fade the whole window away together, then hide it once the
 			-- fade has fully played (no abrupt cut — it's already invisible).
 			Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+			Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
 			local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
 			t.Completed:Once(function()
 				if minimized then
@@ -2760,6 +2823,7 @@ return function(opts: any)
 			main.GroupTransparency = 1
 			Tween.play(mainScale, Tween.Pop, { Scale = 1 })
 			Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
+			Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
 			restoreHint.Visible = false
 		end
 	end
@@ -2799,11 +2863,13 @@ return function(opts: any)
 	winBtns.close.Activated:Connect(function()
 		-- same shrink+fade as minimize, but disable the gui once it's gone
 		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
 		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
 		t.Completed:Once(function()
 			screenGui.Enabled = false
 			mainScale.Scale = 1 -- reset in case it's ever re-enabled
 			main.GroupTransparency = 0
+			shadow.ImageTransparency = SHADOW_T
 		end)
 	end)
 
@@ -2855,9 +2921,11 @@ return function(opts: any)
 	-- rather than just appearing
 	mainScale.Scale = 0.92
 	main.GroupTransparency = 1
+	syncShadow()
 	task.defer(function()
 		Tween.play(mainScale, Tween.Pop, { Scale = 1 })
 		Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
+		Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
 	end)
 
 	local localPlayer = Players.LocalPlayer
