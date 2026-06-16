@@ -195,12 +195,16 @@ return function(opts: any)
 		}),
 	})
 
-	-- search field — hidden until the search button is clicked
-	local searchField = Create("Frame", {
+	-- search field — hidden until the search button is clicked. A CanvasGroup so
+	-- its width can slide open while every child fades in together; ClipsDescendants
+	-- keeps the icon/box from spilling out while it's narrower than its content.
+	local SEARCH_W = 180
+	local searchField = Create("CanvasGroup", {
 		Name = "Search",
 		Visible = false,
-		Size = UDim2.fromOffset(180, 30),
+		Size = UDim2.fromOffset(SEARCH_W, 30),
 		BackgroundColor3 = colors.control,
+		ClipsDescendants = true,
 		LayoutOrder = 1,
 		Parent = rightCluster,
 	}, {
@@ -475,8 +479,9 @@ return function(opts: any)
 	local window = {}
 	local applySearch -- forward declaration (used by select)
 
+	local searchOpen = false
 	local function currentQuery(): string
-		return searchField.Visible and searchBox.Text or ""
+		return searchOpen and searchBox.Text or ""
 	end
 
 	local function select(index: number)
@@ -511,7 +516,8 @@ return function(opts: any)
 		for _, group in tab.page:GetDescendants() do
 			if group:IsA("Frame") and group.Name == "Group" then
 				local head = group:FindFirstChild("Head")
-				local card = group:FindFirstChild("Card")
+				-- card now sits inside a collapse holder, so search recursively
+				local card = group:FindFirstChild("Card", true)
 				local titleLabel = head and head:FindFirstChild("Title")
 				local titleText = (titleLabel and titleLabel:IsA("TextLabel"))
 					and string.lower(titleLabel.Text) or ""
@@ -539,11 +545,29 @@ return function(opts: any)
 		applySearch(searchBox.Text)
 	end)
 	winBtns.search.Activated:Connect(function()
-		searchField.Visible = not searchField.Visible
-		if searchField.Visible then
+		searchOpen = not searchOpen
+		if searchOpen then
+			-- slide + fade open from a zero-width sliver, then focus the box
+			searchField.Visible = true
+			searchField.Size = UDim2.fromOffset(0, 30)
+			searchField.GroupTransparency = 1
+			Tween.play(searchField, Tween.Slide, {
+				Size = UDim2.fromOffset(SEARCH_W, 30),
+				GroupTransparency = 0,
+			})
 			searchBox:CaptureFocus()
 		else
 			searchBox.Text = "" -- fires the Text signal → clears the filter
+			-- slide + fade closed, then hide once it's fully collapsed
+			local t = Tween.play(searchField, Tween.Slide, {
+				Size = UDim2.fromOffset(0, 30),
+				GroupTransparency = 1,
+			})
+			t.Completed:Once(function()
+				if not searchOpen then
+					searchField.Visible = false
+				end
+			end)
 		end
 	end)
 

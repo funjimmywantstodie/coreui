@@ -160,6 +160,11 @@ return function(ctx: any, opts: any)
 		if becameActive then
 			iconScale.Scale = 0.8
 			Tween.play(iconScale, Tween.Spring, { Scale = 1 }) -- pop on select
+			-- ease the page up into place so switching tabs settles instead of
+			-- hard-cutting (rest position is set by Window; nudge down, slide back)
+			local rest = page.Position
+			page.Position = rest + UDim2.fromOffset(0, 10)
+			Tween.play(page, Tween.Normal, { Position = rest })
 		end
 	end
 	function tab:CreateGroup(groupOpts: any)

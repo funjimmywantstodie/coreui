@@ -6,6 +6,7 @@ local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
+local Collapse = require(script.Parent.Parent.util.Collapse)
 
 return function(ctx: any, opts: any): (Frame, Frame)
 	local colors = Theme.Colors
@@ -59,9 +60,6 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = not collapsed,
-		LayoutOrder = 2,
-		Parent = section,
 	})
 
 	local body = Create("Frame", {
@@ -88,18 +86,15 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		Parent = bodyWrap,
 	})
 
+	-- Clipping holder owns the body's height so it slides open/closed.
+	local holder, setCollapsed = Collapse.wrap(bodyWrap, collapsed)
+	holder.LayoutOrder = 2
+	holder.Parent = section
+
 	head.Activated:Connect(function()
 		collapsed = not collapsed
 		Tween.play(chevron, Tween.Spin, { Rotation = collapsed and 180 or 0 })
-		if collapsed then
-			task.delay(0.12, function()
-				if collapsed then
-					bodyWrap.Visible = false
-				end
-			end)
-		else
-			bodyWrap.Visible = true
-		end
+		setCollapsed(collapsed, true)
 	end)
 
 	return section, body

@@ -6,6 +6,7 @@ local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
+local Collapse = require(script.Parent.Parent.util.Collapse)
 local Controls = require(script.Parent.Controls)
 
 return function(ctx: any, column: Frame, opts: any)
@@ -63,9 +64,6 @@ return function(ctx: any, column: Frame, opts: any)
 		BackgroundColor3 = colors.card,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = not collapsed,
-		LayoutOrder = 2,
-		Parent = group,
 	}, {
 		Create.corner(Theme.Metrics.cardRadius),
 		Create.stroke(colors.border),
@@ -73,20 +71,16 @@ return function(ctx: any, column: Frame, opts: any)
 		Create.listLayout({}),
 	})
 
+	-- A clipping holder owns the card's height so collapse/expand slides the panel
+	-- open/closed instead of snapping its visibility.
+	local holder, setCollapsed = Collapse.wrap(card, collapsed)
+	holder.LayoutOrder = 2
+	holder.Parent = group
+
 	head.Activated:Connect(function()
 		collapsed = not collapsed
-		-- Spin the chevron; reveal the card on expand, hide it once the spin
-		-- has played on collapse so the rotation reads before it vanishes.
 		Tween.play(chevron, Tween.Spin, { Rotation = collapsed and 180 or 0 })
-		if collapsed then
-			task.delay(0.12, function()
-				if collapsed then
-					card.Visible = false
-				end
-			end)
-		else
-			card.Visible = true
-		end
+		setCollapsed(collapsed, true)
 	end)
 
 	return Controls.new(ctx, card)
