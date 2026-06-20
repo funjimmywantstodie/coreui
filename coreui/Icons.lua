@@ -64,7 +64,7 @@ function Icons.new(name: string, size: number, color: Color3): GuiObject
 		Text = GLYPH[name] or "•",
 		TextColor3 = color,
 		TextSize = size,
-		Font = Theme.Font.Medium,
+		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
 	})
