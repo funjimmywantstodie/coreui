@@ -48,9 +48,16 @@ return function(ctx: any, opts: any)
 				return
 			end
 			conn:Disconnect()
-			key = input.KeyCode
 			listening = false
-			button.Text = key.Name
+			-- Escape cancels (keep the current bind); Backspace/Delete clears it.
+			if input.KeyCode == Enum.KeyCode.Escape then
+				-- leave `key` untouched
+			elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.Delete then
+				key = Enum.KeyCode.Unknown
+			else
+				key = input.KeyCode
+			end
+			button.Text = key ~= Enum.KeyCode.Unknown and key.Name or "None"
 			button.TextColor3 = colors.text
 			stroke.Color = colors.border
 			if opts.Callback then

@@ -80,45 +80,67 @@ return function(ctx: any, opts: any)
 	})
 	local knobScale = knob:FindFirstChildOfClass("UIScale") :: UIScale
 
+	local function snap(v: number): number
+		-- guard a zero step so a bad config can't divide-by-zero. (Explicit if,
+		-- not `and/or` — the snapped value can legitimately be 0, which the idiom
+		-- would mistake for false and fall through to v.)
+		if step > 0 then
+			return math.round(v / step) * step
+		end
+		return v
+	end
+
 	local function render()
-		local pct = (value - min) / (max - min)
+		-- guard min==max (degenerate range) so the ratio never produces NaN
+		local span = max - min
+		local pct = span ~= 0 and (value - min) / span or 0
 		fill.Size = UDim2.fromScale(pct, 1)
 		knob.Position = UDim2.fromScale(pct, 0.5)
 		valBox.Text = format(value, suffix)
 	end
 
 	local function setFromX(x: number)
-		local pct = clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-		local raw = min + pct * (max - min)
-		value = clamp(math.round(raw / step) * step, min, max)
+		local span = track.AbsoluteSize.X
+		local pct = span > 0 and clamp((x - track.AbsolutePosition.X) / span, 0, 1) or 0
+		value = clamp(snap(min + pct * (max - min)), min, max)
 		render()
 		if opts.Callback then
 			opts.Callback(value)
 		end
 	end
 
-	local dragging = false
+	-- The move/release listeners are global (UserInputService), so they're only
+	-- connected for the duration of a drag and torn down on release. That avoids
+	-- N idle sliders each leaking a permanent listener that fires on every mouse
+	-- move and survives Window:Destroy.
+	local dragConns: { RBXScriptConnection } = {}
+	local function endDrag()
+		for _, c in dragConns do
+			c:Disconnect()
+		end
+		table.clear(dragConns)
+		Tween.play(knobScale, Tween.Spring, { Scale = 1 }) -- settle back on release
+	end
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
+			if #dragConns > 0 then
+				return
+			end
 			Tween.play(knobScale, Tween.Spring, { Scale = 1.3 }) -- grow while grabbed
 			setFromX(input.Position.X)
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch) then
-			setFromX(input.Position.X)
-		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			if dragging then
-				Tween.play(knobScale, Tween.Spring, { Scale = 1 }) -- settle back on release
-			end
-			dragging = false
+			table.insert(dragConns, UserInputService.InputChanged:Connect(function(move)
+				if move.UserInputType == Enum.UserInputType.MouseMovement
+					or move.UserInputType == Enum.UserInputType.Touch then
+					setFromX(move.Position.X)
+				end
+			end))
+			table.insert(dragConns, UserInputService.InputEnded:Connect(function(up)
+				if up.UserInputType == Enum.UserInputType.MouseButton1
+					or up.UserInputType == Enum.UserInputType.Touch then
+					endDrag()
+				end
+			end))
 		end
 	end)
 
@@ -132,7 +154,7 @@ return function(ctx: any, opts: any)
 		return value
 	end
 	function handle:Set(v: number)
-		value = clamp(v, min, max)
+		value = clamp(snap(v), min, max)
 		render()
 		if opts.Callback then
 			opts.Callback(value)

@@ -43,10 +43,22 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 end
 
 -- Register a function recolored whenever the accent changes. Called once now
--- with the current accent so callers don't duplicate the initial paint.
-function Context:RegisterAccent(fn: (Color3, Color3) -> ())
+-- with the current accent so callers don't duplicate the initial paint. Returns
+-- an unsubscribe function — transient consumers (e.g. toasts) must call it on
+-- teardown or their dead closures pile up in the registry and fire on every
+-- SetAccent forever.
+function Context:RegisterAccent(fn: (Color3, Color3) -> ()): () -> ()
 	table.insert(self._consumers, fn)
 	fn(self.Accent, self.AccentHover)
+	return function()
+		local list = self._consumers
+		for i = #list, 1, -1 do
+			if list[i] == fn then
+				table.remove(list, i)
+				break
+			end
+		end
+	end
 end
 
 function Context:SetAccent(color: Color3)

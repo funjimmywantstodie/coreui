@@ -64,7 +64,9 @@ return function(ctx: any, container: Frame, opts: any)
 		ZIndex = 2,
 		Parent = card,
 	})
-	ctx:RegisterAccent(function(accent)
+	-- A toast is transient, so drop its accent subscription when it dies (below)
+	-- — otherwise the registry grows by one dead closure per notification.
+	local unsubscribeAccent = ctx:RegisterAccent(function(accent)
 		bar.BackgroundColor3 = accent
 	end)
 
@@ -110,6 +112,7 @@ return function(ctx: any, container: Frame, opts: any)
 		Tween.play(card, Tween.ToastOut, { Position = UDim2.fromOffset(20, 0) })
 		local out = Tween.play(toast, Tween.ToastOut, { GroupTransparency = 1 })
 		out.Completed:Once(function()
+			unsubscribeAccent()
 			toast:Destroy()
 		end)
 	end)
