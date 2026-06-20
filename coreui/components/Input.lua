@@ -43,7 +43,7 @@ return function(ctx: any, opts: any)
 	end)
 	box:GetPropertyChangedSignal("Text"):Connect(function()
 		if opts.Callback then
-			opts.Callback(box.Text)
+			task.spawn(opts.Callback, box.Text)
 		end
 	end)
 

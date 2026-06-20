@@ -162,7 +162,7 @@ return function(ctx: any, opts: any)
 	box:GetPropertyChangedSignal("Text"):Connect(function()
 		syncGutter()
 		if opts.Callback then
-			opts.Callback(box.Text)
+			task.spawn(opts.Callback, box.Text)
 		end
 	end)
 

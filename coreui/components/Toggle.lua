@@ -59,7 +59,7 @@ return function(ctx: any, opts: any)
 		state = value == true
 		paint(true)
 		if opts.Callback then
-			opts.Callback(state)
+			task.spawn(opts.Callback, state)
 		end
 	end
 

@@ -61,7 +61,7 @@ return function(ctx: any, opts: any)
 			button.TextColor3 = colors.text
 			stroke.Color = colors.border
 			if opts.Callback then
-				opts.Callback(key)
+				task.spawn(opts.Callback, key)
 			end
 		end)
 	end)
@@ -74,7 +74,7 @@ return function(ctx: any, opts: any)
 		key = value
 		button.Text = key ~= Enum.KeyCode.Unknown and key.Name or "None"
 		if opts.Callback then
-			opts.Callback(key)
+			task.spawn(opts.Callback, key)
 		end
 	end
 

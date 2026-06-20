@@ -197,14 +197,14 @@ local function build(ctx: any, opts: any, multi: boolean)
 					relabel()
 					rebuild()
 					if opts.Callback then
-						opts.Callback(fireMulti())
+						task.spawn(opts.Callback, fireMulti())
 					end
 				else
 					single = opt
 					relabel()
 					ctx:ClosePopover()
 					if opts.Callback then
-						opts.Callback(single)
+						task.spawn(opts.Callback, single)
 					end
 				end
 			end)
@@ -253,7 +253,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 		end
 		relabel()
 		if opts.Callback then
-			opts.Callback(multi and fireMulti() or single)
+			task.spawn(opts.Callback, multi and fireMulti() or single)
 		end
 	end
 	-- Replace the option list at runtime (e.g. a refreshed saved-config list).

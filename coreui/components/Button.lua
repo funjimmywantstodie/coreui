@@ -48,7 +48,7 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 		scale.Scale = 0.96
 		Tween.play(scale, Tween.Spring, { Scale = 1 })
 		if callback then
-			callback()
+			task.spawn(callback)
 		end
 	end)
 

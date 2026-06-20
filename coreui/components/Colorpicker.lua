@@ -83,7 +83,7 @@ return function(ctx: any, opts: any)
 		Tween.play(swatch, Tween.Normal, { BackgroundColor3 = color })
 		hexLabel.Text = toHex(color)
 		if opts.Callback then
-			opts.Callback(color)
+			task.spawn(opts.Callback, color)
 		end
 	end
 

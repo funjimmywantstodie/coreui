@@ -105,7 +105,7 @@ return function(ctx: any, opts: any)
 		value = clamp(snap(min + pct * (max - min)), min, max)
 		render()
 		if opts.Callback then
-			opts.Callback(value)
+			task.spawn(opts.Callback, value)
 		end
 	end
 
@@ -157,7 +157,7 @@ return function(ctx: any, opts: any)
 		value = clamp(snap(v), min, max)
 		render()
 		if opts.Callback then
-			opts.Callback(value)
+			task.spawn(opts.Callback, value)
 		end
 	end
 

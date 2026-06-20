@@ -19,6 +19,23 @@ local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/he
 local coreui = loadstring(game:HttpGet(URL))()
 ```
 
+If you want to guard the network/load step, wrap it in `pcall` — but mind the
+return order: **`pcall` returns `(ok, result)`, so the library is the *second*
+value, not the first.** Getting this backwards is the most common load bug (you
+end up with `coreui = true` and every `coreui:Method(...)` call throws "attempt
+to index boolean"):
+
+```lua
+local ok, coreui = pcall(function()
+    return loadstring(game:HttpGet(URL))()
+end)
+if not ok then
+    warn("[coreui] failed to load:", coreui) -- on failure, `coreui` holds the error
+    return
+end
+-- coreui is the library table here
+```
+
 > Tip: `raw.githubusercontent.com` CDN-caches each path for ~5 min and ignores
 > `?` query busters on the *same* path. To always get a fresh build, load the
 > **commit-pinned** URL (`…/<sha>/coreui.bundle.lua`) that `push.py` copies to
