@@ -87,6 +87,39 @@ Selection:MultiDropdown({
 })
 Selection:Dropdown({ Name = "Quality", Options = { "Low", "Medium", "High", "Ultra" }, Default = "High", Width = 120 })
 
+-- A Code field: a multi-line monospace editor for pasting raw config that won't
+-- fit a structured control (Lua tables, JSON, scripts). `Parse` validates it on
+-- blur — a parse error paints the box red and prints the message beneath it.
+-- `:GetValue()` returns the last parsed result; the raw text is Flag-saved.
+local RawConfig = Components:CreateGroup({ Title = "Raw Config", Column = 1 })
+local cfg = RawConfig:Code({
+	Name = "Action Sequence", Desc = "Paste a Lua config table — validated on blur.",
+	LineNumbers = true, Height = 180, Flag = "raw_config",
+	Default = "return {\n  { type = \"place\",   id = \"pyro1\", cost = 1350 },\n  { type = \"upgrade\", id = \"pyro1\", tier = 1, cost = 487 },\n}",
+	Parse = function(text)
+		local fn = loadstring(text)        -- compile…
+		if not fn then error("syntax error") end
+		return fn()                        -- …and run; must return a table
+	end,
+	OnParse = function(ok, value, err)
+		if ok then
+			print("config ok:", #value, "actions")
+		else
+			print("config error:", err)
+		end
+	end,
+})
+RawConfig:Button({
+	Label = "Run Config", Accent = true,
+	Callback = function()
+		local data = cfg:GetValue()
+		Window:Notify({
+			Title = "Config",
+			Text = (type(data) == "table") and ("Parsed " .. #data .. " actions.") or "Fix the errors first.",
+		})
+	end,
+})
+
 -- right column ---------------------------------------------------------------
 local Controls = Components:CreateGroup({ Title = "Controls", Column = 2 })
 Controls:Toggle({

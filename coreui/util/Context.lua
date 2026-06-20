@@ -73,6 +73,10 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 		encode = function(v) return tostring(v) end,
 		decode = function(v) return tostring(v) end,
 	},
+	code = { -- raw editor text; stored verbatim like input
+		encode = function(v) return tostring(v) end,
+		decode = function(v) return tostring(v) end,
+	},
 	dropdown = {
 		encode = function(v) return v end, -- string | { string } — both JSON-safe
 		decode = function(v) return v end,

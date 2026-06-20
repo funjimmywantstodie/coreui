@@ -11,6 +11,7 @@ local Toggle = require(script.Parent.Toggle)
 local Slider = require(script.Parent.Slider)
 local Dropdown = require(script.Parent.Dropdown)
 local Input = require(script.Parent.Input)
+local Code = require(script.Parent.Code)
 local Keybind = require(script.Parent.Keybind)
 local Colorpicker = require(script.Parent.Colorpicker)
 local Button = require(script.Parent.Button)
@@ -72,6 +73,7 @@ function Controls.new(ctx: any, frame: Frame)
 	function api:Toggle(o) return mount(Toggle, o, "toggle") end
 	function api:Slider(o) return mount(Slider, o, "slider") end
 	function api:Input(o) return mount(Input, o, "input") end
+	function api:Code(o) return mount(Code, o, "code") end
 	function api:Keybind(o) return mount(Keybind, o, "keybind") end
 	function api:Colorpicker(o) return mount(Colorpicker, o, "colorpicker") end
 	function api:Paragraph(o) return mount(Paragraph, o) end

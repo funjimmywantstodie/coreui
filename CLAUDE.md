@@ -73,7 +73,7 @@ API; build until it runs and matches `reference/coreui-demo.html`):
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy()`
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
-- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player`
+- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Code :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player`
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
 
 ## Config & settings (Flag system)
