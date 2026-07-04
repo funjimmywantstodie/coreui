@@ -286,6 +286,33 @@ h:Get()           -- → string
 h:Set("hello")
 ```
 
+**Input filtering.** `Type` restricts what can be typed — disallowed characters
+are stripped live as you type (and on `:Set`), so the box only ever holds a valid
+value:
+
+| `Type`           | Accepts                                                        |
+| ---------------- | ------------------------------------------------------------- |
+| `"number"`       | digits, one leading `-`, one `.` (always `tonumber`-parseable) |
+| `"integer"`      | digits + a leading `-`                                          |
+| `"alpha"`        | letters only                                                   |
+| `"alphanumeric"` | letters and digits                                             |
+| *(omitted)*      | unrestricted text (default)                                    |
+
+For a custom rule, pass `Filter = function(text) return cleaned end` — it receives
+the raw text and returns the sanitized value. `Filter` wins over `Type`.
+
+```lua
+Group:Input({ Name = "Max Amount", Placeholder = "0", Type = "number" })
+Group:Input({                       -- up to 6 hex characters
+    Name = "Hex", Placeholder = "RRGGBB",
+    Filter = function(s) return (s:sub(1, 6):gsub("[^%x]", "")) end,
+})
+```
+
+`Callback` still fires exactly once per edit, with the already-cleaned value. The
+value stored by a `Flag` is the raw (filtered) text.
+```
+
 ### Code (multi-line editor)
 
 A monospace, fixed-height scrolling editor for raw config that doesn't fit a
