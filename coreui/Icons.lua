@@ -25,6 +25,9 @@ local ALIAS: { [string]: string } = {
 	close  = "x",           chev   = "chevron-up",
 	caret  = "chevron-down", ddchev = "chevron-down",
 	check  = "check",       avatar = "circle-user",
+	-- notify types
+	success = "circle-check", info    = "info",
+	warning = "triangle-alert", error = "circle-x",
 }
 
 -- Unicode fallbacks for any name with no Lucide entry (keeps the UI legible
@@ -33,6 +36,7 @@ local GLYPH: { [string]: string } = {
 	home = "⌂", layers = "▤", cursor = "➤", input = "⌨", list = "≣",
 	palette = "◑", person = "☺", gear = "⚙", search = "⌕", avatar = "☻",
 	min = "—", max = "▢", close = "✕", chev = "⌄", caret = "⌄", check = "✓",
+	success = "✓", info = "ℹ", warning = "⚠", error = "✕",
 }
 
 local Icons = {}

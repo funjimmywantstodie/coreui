@@ -31,7 +31,7 @@ local t = Group:Toggle({ Name = "Enable", Default = true, Callback = function(on
 t:Set(false)  print(t:Get())
 ```
 
-- **Window** — `:CreateTab{Name,Icon}` · `:Notify{Title,Text,Duration}` · `:Select(i)` · `:SetAccent(Color3)`
+- **Window** — `:CreateTab{Name,Icon}` · `:Notify{Title,Text,Type,Duration}` (Type: `success`/`info`/`warning`/`error`) · `:Select(i)` · `:SetAccent(Color3)`
 - **Tab** — `:CreateGroup{Title,Column,Collapsed}`
 - **Group / Section** — `:Section` `:Button` `:ButtonRow` `:Toggle` `:Slider` `:Dropdown`
   `:MultiDropdown` `:Input` `:Keybind` `:Colorpicker` `:Paragraph` `:Label` `:Divider`

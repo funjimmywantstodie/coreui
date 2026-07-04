@@ -45,6 +45,36 @@ Session:Button({
 		Window:Notify({ Title = "Notification", Text = "A toast from coreui." })
 	end,
 })
+-- Typed toasts: Type = "success" | "info" | "warning" | "error" (omit for the
+-- default accent-colored toast). Case-insensitive; "warn" aliases "warning".
+Session:ButtonRow({
+	{
+		Label = "Success",
+		Callback = function()
+			Window:Notify({ Type = "success", Title = "Success", Text = "Config saved." })
+		end,
+	},
+	{
+		Label = "Info",
+		Callback = function()
+			Window:Notify({ Type = "info", Title = "Info", Text = "3 updates available." })
+		end,
+	},
+})
+Session:ButtonRow({
+	{
+		Label = "Warning",
+		Callback = function()
+			Window:Notify({ Type = "warning", Title = "Warning", Text = "Low on memory." })
+		end,
+	},
+	{
+		Label = "Error",
+		Callback = function()
+			Window:Notify({ Type = "error", Title = "Error", Text = "Failed to connect." })
+		end,
+	},
+})
 
 --------------------------------------------------------------------------------
 -- TAB 2 · Components

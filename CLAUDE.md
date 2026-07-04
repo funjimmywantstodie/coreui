@@ -73,8 +73,10 @@ API; build until it runs and matches `reference/coreui-demo.html`):
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy()`
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
-- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Code :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player`
+- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Code :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player :Custom :DataGrid`
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
+  `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
+  settable value.
 
 ## Config & settings (Flag system)
 
@@ -115,6 +117,82 @@ subscription registry, and the single-popover manager.
 `(holder, set)`. `content` must be `(1,0)` wide with `AutomaticSize.Y`. Holder
 clips + owns the animated height; tracks content via AutomaticSize while open,
 switches to manual offset height during the tween. `set(collapsed, animate?)`.
+
+## Adding a new control
+
+One file per control in `components/`, `--!strict`, signature
+`function(ctx, opts) -> (Instance, handle, bordered)` — `Controls.lua`'s
+`mount()` parents `Instance` into the card/section, appends the trailing
+separator hairline iff `bordered`, and (if `opts.Flag` + a `kind` string were
+passed to `mount`) registers `handle` for config save/load. `handle` is `{}`
+for display-only controls; stateful ones expose at least `:Get()`/`:Set(v)`.
+
+- **Height reporting has no explicit API** — it's pure `AutomaticSize.Y`
+  propagation. Either the control is `AutomaticSize.Y` end to end (`List.lua`),
+  or — for content that needs a fixed, scrollable viewport — a fixed-size
+  `ScrollingFrame` (`AutomaticCanvasSize` for its inner content) sits inside an
+  `AutomaticSize.Y` wrapper frame (`Code.lua`, `DataGrid.lua`). Either way, the
+  card/`Collapse.wrap` machinery needs zero changes to host it.
+- **Theming**: call `ctx:RegisterAccent(fn)` for anything that stays
+  accent-colored while idle (it fires once immediately + on every
+  `Window:SetAccent`, so don't also paint once by hand). Colors only shown
+  transiently on focus/hover (e.g. an input's focus stroke) can just read
+  `ctx.Accent` live at the moment they're applied — no subscription needed
+  (see `Input.lua`).
+- **Two manual wiring points** activate a new control kind — there's no
+  runtime auto-discovery inside Luau (`require` needs a real `script.Parent.X`
+  reference, unlike e.g. a JS registry that can `readdirSync` a folder):
+  1. `components/Controls.lua` — `local Foo = require(script.Parent.Foo)` +
+     one `function api:Foo(o) return mount(Foo, o, "foo") end` line.
+  2. *Optional* — `util/Context.lua`'s local `Codec` table gets a
+     `foo = { encode = ..., decode = ... }` entry if the control's value
+     should round-trip through config Flags. Skip this (pass `kind = nil` to
+     `mount`) for transient/caller-owned content — see `Custom`/`DataGrid`.
+- `bundle.py` needs **no edit** for a new file — it walks the whole `coreui/`
+  tree and picks up any `.lua` module automatically. Its icon tree-shaker also
+  auto-keeps any literal `Icons.new("x")` / `Icons.apply(_, "x")` call found
+  anywhere in source; only a *dynamically computed* icon name needs a manual
+  `EXTRA_ICONS` entry in `bundle.py`.
+
+**`Group:Custom(builder)` / `Section:Custom(builder)`** (`components/Custom.lua`)
+is the escape hatch for parenting arbitrary Instances — `builder(ctx, frame)`
+gets a `frame` that already satisfies the height-reporting contract above;
+parent whatever you want into it and theme it yourself via `ctx:RegisterAccent`
+if needed.
+
+```lua
+Group:Custom(function(ctx, frame)
+	local box = Create("Frame", { Size = UDim2.fromOffset(0, 40), Parent = frame })
+end)
+```
+
+**`Group:DataGrid{...}` / `Section:DataGrid{...}`** (`components/DataGrid.lua`)
+is a dense row grid built on the same escape hatch, for tools shaped like a
+data table (memory/value scanner, traffic log, instance browser). Row frames
+are pooled and reused across `:SetRows` calls, and only cells whose value
+changed get touched — sized for a few hundred live rows updating several
+times a second, not a one-shot render.
+
+```lua
+local grid = Group:DataGrid({
+	Name = "Results",
+	Columns = {
+		{ Key = "path",    Title = "Path",  Width = 0.45 },
+		{ Key = "value",   Title = "Value", Width = 0.20, Editable = true },
+		{ Key = "actions", Title = "",      Width = 0.35, Type = "actions" },
+	},
+	Height = 200,
+	RowHeight = 27,
+})
+grid:SetRows({
+	{ id = "row1", path = "Humanoid.WalkSpeed", value = "16",
+	  actions = { { Name = "lock", Icon = "lock" }, { Name = "info", Icon = "info" } } },
+})
+grid:UpdateRow("row1", { value = "24" })
+grid:RemoveRow("row1")
+grid.RowEdited:Connect(function(id, columnKey, newText) end)
+grid.RowAction:Connect(function(id, actionName) end)
+```
 
 ## Conventions
 

@@ -5,10 +5,31 @@
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
+local Icons = require(script.Parent.Parent.Icons)
+
+-- Semantic notification kinds. Each colors the accent bar + adds a matching
+-- icon. Anything else (incl. nil / "default") keeps the original accent-themed
+-- toast with no icon. Keys are matched case-insensitively; "warn" aliases
+-- "warning".
+local C = Theme.Colors
+local TYPES: { [string]: { color: Color3, icon: string } } = {
+	success = { color = C.success, icon = "success" },
+	info    = { color = C.info,    icon = "info" },
+	warning = { color = C.warning, icon = "warning" },
+	error   = { color = C.danger,  icon = "error" },
+}
 
 return function(ctx: any, container: Frame, opts: any)
 	local colors = Theme.Colors
 	opts = opts or {}
+
+	-- Resolve the requested Type → semantic color + icon (nil = default look).
+	local kind: { color: string, icon: string }? = nil
+	if type(opts.Type) == "string" then
+		local key = opts.Type:lower()
+		kind = TYPES[key == "warn" and "warning" or key]
+	end
+	local barColor = kind and kind.color or ctx.Accent
 
 	-- CanvasGroup → fade every descendant at once; renders to its own buffer
 	-- so the inner card's horizontal slide is clipped (no layout reflow).
@@ -41,6 +62,9 @@ return function(ctx: any, container: Frame, opts: any)
 	-- content holds the vertical text stack; the card sizes to it. The accent
 	-- bar is positioned absolutely (height tracked) so it never feeds the
 	-- card's AutomaticSize — otherwise its (1,0) height would run away.
+	-- A typed toast reserves a left gutter for its icon; the default keeps the
+	-- original snug padding.
+	local leftPad = kind and 40 or 16
 	local content = Create("Frame", {
 		Name = "Content",
 		BackgroundTransparency = 1,
@@ -48,9 +72,18 @@ return function(ctx: any, container: Frame, opts: any)
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Parent = card,
 	}, {
-		Create.padding(10, 13, 10, 16),
+		Create.padding(10, 13, 10, leftPad),
 		Create.listLayout({ Padding = UDim.new(0, 3) }),
 	})
+
+	-- Type icon, tinted to match the bar, pinned top-left inside the gutter.
+	-- Positioned absolutely so it never feeds the card's AutomaticSize.
+	if kind then
+		local icon = Icons.new(kind.icon, 18, kind.color)
+		icon.Position = UDim2.fromOffset(13, 11)
+		icon.ZIndex = 2
+		icon.Parent = card
+	end
 
 	-- Scale height (1,0 on Y) fills the card natively. Scale-sized children are
 	-- excluded from AutomaticSize, so the bar never feeds the card's height and
@@ -59,16 +92,21 @@ return function(ctx: any, container: Frame, opts: any)
 		Name = "AccentBar",
 		Position = UDim2.fromOffset(0, 0),
 		Size = UDim2.new(0, 3, 1, 0),
-		BackgroundColor3 = ctx.Accent,
+		BackgroundColor3 = barColor,
 		BorderSizePixel = 0,
 		ZIndex = 2,
 		Parent = card,
 	})
-	-- A toast is transient, so drop its accent subscription when it dies (below)
-	-- — otherwise the registry grows by one dead closure per notification.
-	local unsubscribeAccent = ctx:RegisterAccent(function(accent)
-		bar.BackgroundColor3 = accent
-	end)
+	-- Only the default (accent-themed) toast tracks live accent changes; typed
+	-- toasts have a fixed semantic color. A toast is transient, so drop the
+	-- subscription when it dies — otherwise the registry grows by one dead
+	-- closure per notification.
+	local unsubscribeAccent: (() -> ())? = nil
+	if not kind then
+		unsubscribeAccent = ctx:RegisterAccent(function(accent)
+			bar.BackgroundColor3 = accent
+		end)
+	end
 
 	if opts.Title then
 		Create("TextLabel", {
@@ -112,7 +150,9 @@ return function(ctx: any, container: Frame, opts: any)
 		Tween.play(card, Tween.ToastOut, { Position = UDim2.fromOffset(20, 0) })
 		local out = Tween.play(toast, Tween.ToastOut, { GroupTransparency = 1 })
 		out.Completed:Once(function()
-			unsubscribeAccent()
+			if unsubscribeAccent then
+				unsubscribeAccent()
+			end
 			toast:Destroy()
 		end)
 	end)

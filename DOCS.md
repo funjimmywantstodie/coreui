@@ -141,11 +141,17 @@ functions. In Studio / unsupported executors, config calls no-op safely.
 
 ```lua
 Window:Notify({
-    Title    = "Saved",        -- optional
-    Text     = "Config saved.", -- body
-    Duration = 3.2,            -- seconds on screen (default 3.2)
+    Title    = "Saved",         -- optional
+    Text     = "Config saved.",  -- body
+    Type     = "success",        -- optional: "success" | "info" | "warning" | "error"
+    Duration = 3.2,              -- seconds on screen (default 3.2)
 })
 ```
+
+`Type` picks a semantic style — a colored accent bar plus a matching icon
+(success = green check, info = blue, warning = amber triangle, error = red).
+It is case-insensitive and `"warn"` aliases `"warning"`. Omit `Type` (or pass
+anything unrecognized) for the original accent-colored toast with no icon.
 
 ---
 

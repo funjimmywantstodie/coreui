@@ -21,6 +21,8 @@ local Divider = require(script.Parent.Divider)
 local List = require(script.Parent.List)
 local Player = require(script.Parent.Player)
 local Section = require(script.Parent.Section)
+local Custom = require(script.Parent.Custom)
+local DataGrid = require(script.Parent.DataGrid)
 
 local Controls = {}
 
@@ -108,6 +110,18 @@ function Controls.new(ctx: any, frame: Frame)
 		local section, body = Section(ctx, o)
 		place(section, true)
 		return Controls.new(ctx, body)
+	end
+
+	-- Escape hatch: `builder(ctx, frame)` parents whatever it wants into `frame`.
+	-- No Flag/kind — content is caller-owned, not a config-serializable value.
+	function api:Custom(builder: ((any, Frame) -> ())?)
+		return mount(function(c, _opts)
+			return Custom(c, builder)
+		end, nil, nil)
+	end
+
+	function api:DataGrid(o)
+		return mount(DataGrid, o, nil)
 	end
 
 	return api

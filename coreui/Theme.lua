@@ -22,7 +22,10 @@ Theme.Colors = {
 	accent      = Color3.fromHex("F2680C"), -- active nav, toggle-on, accent button, focus
 	accent_2    = Color3.fromHex("FF8A3D"), -- accent hover / gradient top
 	white       = Color3.fromHex("FFFFFF"),
-	danger      = Color3.fromHex("FF6B6B"), -- close-button hover
+	danger      = Color3.fromHex("FF6B6B"), -- close-button hover + notify "error"
+	success     = Color3.fromHex("55D98D"), -- notify "success"
+	warning     = Color3.fromHex("F5B740"), -- notify "warning"
+	info        = Color3.fromHex("5B9DF9"), -- notify "info"
 }
 
 -- ── Metrics (offset px) ───────────────────────────────────────────────────
