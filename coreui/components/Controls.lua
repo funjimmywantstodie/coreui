@@ -6,6 +6,7 @@
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
+local Log = require(script.Parent.Parent.util.Log)
 
 local Toggle = require(script.Parent.Toggle)
 local Slider = require(script.Parent.Slider)
@@ -61,7 +62,23 @@ function Controls.new(ctx: any, frame: Frame)
 
 	-- Build via a component, drop it in, register it as a flag (if it carries one
 	-- and a serializable `kind`), then hand back the control's handle.
-	local function mount(builder: (any, any) -> (Instance, any, boolean), opts: any, kind: string?): any
+	-- `label` is the human name used in diagnostics (defaults to the kind).
+	local function mount(builder: (any, any) -> (Instance, any, boolean), opts: any, kind: string?, label: string?): any
+		-- Generic option shape checks shared by every control, so a bad Callback
+		-- or a table where a value was expected fails with a readable message
+		-- instead of erroring deep inside the component builder.
+		local control = label or (kind and (kind:gsub("^%l", string.upper))) or "Control"
+		if opts ~= nil and type(opts) ~= "table" then
+			Log.fail(control, ("options must be a table, got %s (write %s({ Name = ... }))")
+				:format(typeof(opts), control))
+		end
+		if opts then
+			local where = Log.where(control, opts.Name)
+			Log.field(where, "Callback", opts.Callback, "function")
+			Log.field(where, "Flag", opts.Flag, "string")
+			Log.field(where, "Name", opts.Name, "string")
+		end
+
 		local inst, handle, bordered = builder(ctx, opts)
 		place(inst, bordered)
 		if opts and opts.Flag and kind then
@@ -78,11 +95,11 @@ function Controls.new(ctx: any, frame: Frame)
 	function api:Code(o) return mount(Code, o, "code") end
 	function api:Keybind(o) return mount(Keybind, o, "keybind") end
 	function api:Colorpicker(o) return mount(Colorpicker, o, "colorpicker") end
-	function api:Paragraph(o) return mount(Paragraph, o) end
-	function api:Label(o) return mount(Label, o) end
-	function api:Divider() return mount(Divider, {}) end
-	function api:Player(o) return mount(Player, o) end
-	function api:List(o) return mount(List, o) end
+	function api:Paragraph(o) return mount(Paragraph, o, nil, "Paragraph") end
+	function api:Label(o) return mount(Label, o, nil, "Label") end
+	function api:Divider() return mount(Divider, {}, nil, "Divider") end
+	function api:Player(o) return mount(Player, o, nil, "Player") end
+	function api:List(o) return mount(List, o, nil, "List") end
 
 	function api:Dropdown(o)
 		return mount(function(c, opts)
@@ -96,17 +113,25 @@ function Controls.new(ctx: any, frame: Frame)
 	end
 
 	function api:Button(o)
+		Log.field(Log.where("Button", o and o.Name), "Callback", o and o.Callback, "function")
 		local inst, handle, bordered = Button.single(ctx, o)
 		place(inst, bordered)
 		return handle
 	end
 	function api:ButtonRow(list)
+		if type(list) ~= "table" then
+			Log.fail("ButtonRow", ("expects an array of { Label = ..., Callback = ... } buttons, got %s")
+				:format(typeof(list)))
+		end
 		local inst, handle, bordered = Button.row(ctx, list)
 		place(inst, bordered)
 		return handle
 	end
 
 	function api:Section(o)
+		if o ~= nil and type(o) ~= "table" then
+			Log.fail("Section", ("options must be a table like { Title = ... }, got %s"):format(typeof(o)))
+		end
 		local section, body = Section(ctx, o)
 		place(section, true)
 		return Controls.new(ctx, body)
@@ -115,13 +140,16 @@ function Controls.new(ctx: any, frame: Frame)
 	-- Escape hatch: `builder(ctx, frame)` parents whatever it wants into `frame`.
 	-- No Flag/kind — content is caller-owned, not a config-serializable value.
 	function api:Custom(builder: ((any, Frame) -> ())?)
+		if builder ~= nil and type(builder) ~= "function" then
+			Log.fail("Custom", ("expects a builder function builder(ctx, frame), got %s"):format(typeof(builder)))
+		end
 		return mount(function(c, _opts)
 			return Custom(c, builder)
-		end, nil, nil)
+		end, nil, nil, "Custom")
 	end
 
 	function api:DataGrid(o)
-		return mount(DataGrid, o, nil)
+		return mount(DataGrid, o, nil, "DataGrid")
 	end
 
 	return api

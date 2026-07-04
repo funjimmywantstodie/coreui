@@ -5,6 +5,7 @@ local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
+local Log = require(script.Parent.Parent.util.Log)
 local Group = require(script.Parent.Group)
 
 local M = Theme.Metrics
@@ -168,7 +169,19 @@ return function(ctx: any, opts: any)
 		end
 	end
 	function tab:CreateGroup(groupOpts: any)
-		local target = (groupOpts and groupOpts.Column == 2) and col2 or col1
+		if groupOpts ~= nil and type(groupOpts) ~= "table" then
+			Log.fail("CreateGroup", ("options must be a table like { Title = ..., Column = 1 }, got %s")
+				:format(typeof(groupOpts)))
+		end
+		-- Column is 1 (left) or 2 (right). A stray value (e.g. Column = 3, or a
+		-- string) would silently land the group in the left column — warn and
+		-- fall back so the author knows their column choice was ignored.
+		local column = groupOpts and groupOpts.Column
+		if column ~= nil and column ~= 1 and column ~= 2 then
+			Log.warn(Log.where("CreateGroup", groupOpts and groupOpts.Title),
+				("Column must be 1 (left) or 2 (right), got %s — using column 1."):format(tostring(column)))
+		end
+		local target = (column == 2) and col2 or col1
 		return Group(ctx, target, groupOpts or {})
 	end
 

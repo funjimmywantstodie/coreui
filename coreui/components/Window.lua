@@ -13,6 +13,7 @@ local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Context = require(script.Parent.Parent.util.Context)
 local Config = require(script.Parent.Parent.util.Config)
+local Log = require(script.Parent.Parent.util.Log)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 
@@ -21,6 +22,13 @@ local M = Theme.Metrics
 return function(opts: any)
 	opts = opts or {}
 	local colors = Theme.Colors
+
+	-- Validate the window options up front so a wrong type surfaces here (naming
+	-- the field) rather than as a mystery error much later when it's first used.
+	Log.field("CreateWindow", "Title", opts.Title, "string")
+	Log.field("CreateWindow", "ToggleKey", opts.ToggleKey, "EnumItem")
+	Log.field("CreateWindow", "Accent", opts.Accent, "Color3")
+	Log.field("CreateWindow", "ConfigFolder", opts.ConfigFolder, "string")
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "coreui"
@@ -702,6 +710,13 @@ return function(opts: any)
 	end)
 
 	function window:CreateTab(tabOpts: any)
+		if tabOpts ~= nil and type(tabOpts) ~= "table" then
+			Log.fail("CreateTab", ("options must be a table like { Name = ..., Icon = ... }, got %s"
+				.. " — if you meant a title, write CreateTab({ Name = %s })")
+				:format(typeof(tabOpts), type(tabOpts) == "string" and ('"%s"'):format(tabOpts) or "..."))
+		end
+		Log.field("CreateTab", "Name", tabOpts and tabOpts.Name, "string")
+		Log.field("CreateTab", "Icon", tabOpts and tabOpts.Icon, "string")
 		local tab = Tab(ctx, tabOpts or {})
 		tab.button.Parent = nav
 		tab.page.Parent = content
@@ -734,10 +749,19 @@ return function(opts: any)
 	end
 
 	function window:Select(index: number)
+		if type(index) ~= "number" or index < 1 or index > #tabs or index % 1 ~= 0 then
+			Log.warn("Select", ("no tab #%s (there %s %d tab%s) — ignoring.")
+				:format(tostring(index), #tabs == 1 and "is" or "are", #tabs, #tabs == 1 and "" or "s"))
+			return
+		end
 		select(index)
 	end
 
 	function window:Notify(notifyOpts: any)
+		if notifyOpts ~= nil and type(notifyOpts) ~= "table" then
+			Log.fail("Notify", ("options must be a table like { Title = ..., Text = ... }, got %s")
+				:format(typeof(notifyOpts)))
+		end
 		if not notificationsEnabled then
 			return
 		end
@@ -745,11 +769,19 @@ return function(opts: any)
 	end
 
 	function window:SetAccent(color: Color3)
+		if typeof(color) ~= "Color3" then
+			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7c5cff\"))")
+				:format(typeof(color)))
+		end
 		ctx:SetAccent(color)
 	end
 
 	-- ── settings: theme / keybind / notifications ─────────────────────────────
 	function window:SetToggleKey(key: Enum.KeyCode)
+		if key ~= nil and typeof(key) ~= "EnumItem" then
+			Log.fail("SetToggleKey", ("expects an Enum.KeyCode, got %s (try Enum.KeyCode.RightShift)")
+				:format(typeof(key)))
+		end
 		toggleKey = key or Enum.KeyCode.Unknown
 		restoreHintText.Text = toggleKey ~= Enum.KeyCode.Unknown
 			and ("Press %s to show it again."):format(toggleKey.Name)
@@ -764,7 +796,19 @@ return function(opts: any)
 	-- These read/write the flag registry (any control built with a `Flag`).
 	window.ConfigSupported = Config.supported
 
+	local function badConfigName(where: string, name: any): boolean
+		if type(name) ~= "string" or name == "" then
+			Log.warn(where, ("config name must be a non-empty string, got %s — ignoring.")
+				:format(name == "" and '""' or typeof(name)))
+			return true
+		end
+		return false
+	end
+
 	function window:SaveConfig(name: string): boolean
+		if badConfigName("SaveConfig", name) then
+			return false
+		end
 		local snapshot = ctx:GetConfig()
 		local ok = Config.save(configFolder, name, snapshot)
 		local n = 0
@@ -775,6 +819,9 @@ return function(opts: any)
 		return ok
 	end
 	function window:LoadConfig(name: string): boolean
+		if badConfigName("LoadConfig", name) then
+			return false
+		end
 		local data = Config.load(configFolder, name)
 		print(("[coreui] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
 		if data then
@@ -784,6 +831,9 @@ return function(opts: any)
 		return false
 	end
 	function window:DeleteConfig(name: string): boolean
+		if badConfigName("DeleteConfig", name) then
+			return false
+		end
 		return Config.delete(configFolder, name)
 	end
 	function window:ListConfigs(): { string }

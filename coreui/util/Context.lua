@@ -9,6 +9,7 @@
 
 local Create = require(script.Parent.Create)
 local Tween = require(script.Parent.Tween)
+local Log = require(script.Parent.Log)
 
 local Context = {}
 Context.__index = Context
@@ -116,6 +117,13 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 function Context:RegisterFlag(name: string?, handle: any, kind: string?)
 	if not name or not kind or not Codec[kind] or not handle then
 		return
+	end
+	-- Two controls sharing a Flag silently overwrite each other in config
+	-- save/load — the second wins and the first never persists. That's almost
+	-- always a copy-paste slip, so surface it rather than let configs go stale.
+	if self.Flags[name] then
+		Log.warn("Flag", ('"%s" is registered twice — both controls share one config '
+			.. "slot, so only the last will save/load. Give each a unique Flag."):format(name))
 	end
 	self.Flags[name] = { handle = handle, kind = kind }
 end

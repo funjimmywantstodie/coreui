@@ -7,6 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
+local Log = require(script.Parent.Parent.util.Log)
 local Field = require(script.Parent.Field)
 
 local function clamp(v: number, a: number, b: number): number
@@ -19,9 +20,26 @@ end
 
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
+	local where = Log.where("Slider", opts.Name)
+	Log.field(where, "Min", opts.Min, "number")
+	Log.field(where, "Max", opts.Max, "number")
+	Log.field(where, "Step", opts.Step, "number")
+
 	local min = opts.Min or 0
 	local max = opts.Max or 100
+	-- An inverted or collapsed range makes every position map to the same value
+	-- (render()/snap() guard the maths, but the control would be dead). Warn and
+	-- fall back to a sane [min, min+1] so it's at least usable.
+	if min >= max then
+		Log.warn(where, ("Min (%s) must be less than Max (%s) — using [%s, %s]."):format(
+			("%g"):format(min), ("%g"):format(max), ("%g"):format(min), ("%g"):format(min + 1)))
+		max = min + 1
+	end
 	local step = opts.Step or 1
+	if step < 0 then
+		Log.warn(where, ("Step (%s) can't be negative — using 1."):format(("%g"):format(step)))
+		step = 1
+	end
 	local suffix = opts.Suffix or ""
 	local value = clamp(opts.Default or min, min, max)
 

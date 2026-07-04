@@ -8,6 +8,7 @@ local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
+local Log = require(script.Parent.Parent.util.Log)
 local Field = require(script.Parent.Field)
 
 local function hover(button: GuiButton, base: Color3, over: Color3)
@@ -21,6 +22,10 @@ end
 
 local function build(ctx: any, opts: any, multi: boolean)
 	local colors = Theme.Colors
+	local where = Log.where(multi and "MultiDropdown" or "Dropdown", opts.Name)
+	if opts.Options ~= nil and type(opts.Options) ~= "table" then
+		Log.fail(where, ("Options must be an array of strings, got %s"):format(typeof(opts.Options)))
+	end
 	local options = opts.Options or {}
 	local placeholder = opts.Placeholder or "None"
 	local stack = opts.Stack == true
