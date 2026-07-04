@@ -6,9 +6,43 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Field = require(script.Parent.Field)
 
+-- Live character filters keyed by opts.Type. Each takes the raw box text and
+-- returns it with disallowed characters stripped; the number kinds also collapse
+-- to a single leading '-' and a single '.' so the result is always parseable.
+local function sanitizer(kind: string?): (((string) -> string)?)
+	if kind == "number" then
+		return function(s)
+			local neg = s:sub(1, 1) == "-"
+			s = s:gsub("[^%d%.]", "")
+			local dot = s:find("%.")
+			if dot then
+				s = s:sub(1, dot) .. (s:sub(dot + 1):gsub("%.", ""))
+			end
+			return neg and ("-" .. s) or s
+		end
+	elseif kind == "integer" then
+		return function(s)
+			local neg = s:sub(1, 1) == "-"
+			s = (s:gsub("[^%d]", ""))
+			return neg and ("-" .. s) or s
+		end
+	elseif kind == "alpha" then
+		return function(s)
+			return (s:gsub("[^%a]", ""))
+		end
+	elseif kind == "alphanumeric" then
+		return function(s)
+			return (s:gsub("[^%w]", ""))
+		end
+	end
+	return nil
+end
+
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local f = Field.new(ctx, opts, true)
+	-- opts.Filter (function) wins; otherwise opts.Type selects a preset filter.
+	local clean = opts.Filter or sanitizer(opts.Type)
 
 	local box = Create("TextBox", {
 		Name = "Input",
@@ -41,7 +75,21 @@ return function(ctx: any, opts: any)
 			opts.OnEnter(box.Text)
 		end
 	end)
+	local guard = false
 	box:GetPropertyChangedSignal("Text"):Connect(function()
+		if guard then
+			return
+		end
+		if clean then
+			local filtered = clean(box.Text)
+			if filtered ~= box.Text then
+				-- Rewriting Text re-fires this signal synchronously; guard skips
+				-- that pass so the callback below runs once with the clean value.
+				guard = true
+				box.Text = filtered
+				guard = false
+			end
+		end
 		if opts.Callback then
 			task.spawn(opts.Callback, box.Text)
 		end

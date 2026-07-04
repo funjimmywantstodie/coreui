@@ -91,6 +91,12 @@ Inputs:Input({
 	Callback = function(text) print("username:", text) end,
 })
 Inputs:Input({ Name = "Webhook URL", Placeholder = "https://...", Flag = "webhook" })
+-- Type restricts what can be typed: "number" | "integer" | "alpha" | "alphanumeric".
+-- Or pass Filter = function(text) return cleaned end for a custom rule.
+Inputs:Input({
+	Name = "Max Amount", Placeholder = "0", Type = "number", Flag = "maxAmount",
+	Callback = function(text) print("amount:", text) end,
+})
 Inputs:Slider({
 	Name = "Volume", Desc = "This is a slider — drag the handle.",
 	Min = 0, Max = 100, Default = 50, Suffix = "%", Flag = "volume",
