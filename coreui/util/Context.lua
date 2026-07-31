@@ -110,6 +110,23 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			return (ok and color) or Color3.new(1, 1, 1)
 		end,
 	},
+	playerselect = { -- handle:Get() returns Player(s); persist as UserId(s), :Set resolves back
+		encode = function(v)
+			if type(v) == "table" then
+				local ids = {}
+				for _, p in v do
+					if typeof(p) == "Instance" and p:IsA("Player") then
+						table.insert(ids, p.UserId)
+					end
+				end
+				return ids
+			elseif typeof(v) == "Instance" and v:IsA("Player") then
+				return v.UserId
+			end
+			return nil
+		end,
+		decode = function(v) return v end, -- number | { number } — handle:Set resolves ids live
+	},
 }
 
 -- Register a stateful control's handle under `name` so config save/load can

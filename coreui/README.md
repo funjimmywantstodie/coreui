@@ -9,7 +9,9 @@ instances.
 
 Sync the folder into your place with Rojo (or paste it in so the folder becomes
 a `ModuleScript` named `coreui` whose children are `Theme`, `Icons`, `util/`,
-`components/`). Put `example.lua` in a `LocalScript` beside it.
+`components/`). Put `example.loadstring.lua` in a `LocalScript` beside it,
+swapping its `loadstring(game:HttpGet(...))` line for
+`require(path.to.coreui)`.
 
 ```
 ReplicatedStorage/

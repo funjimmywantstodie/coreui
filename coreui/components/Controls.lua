@@ -21,6 +21,7 @@ local Label = require(script.Parent.Label)
 local Divider = require(script.Parent.Divider)
 local List = require(script.Parent.List)
 local Player = require(script.Parent.Player)
+local PlayerSelect = require(script.Parent.PlayerSelect)
 local Section = require(script.Parent.Section)
 local Custom = require(script.Parent.Custom)
 local DataGrid = require(script.Parent.DataGrid)
@@ -110,6 +111,17 @@ function Controls.new(ctx: any, frame: Frame)
 		return mount(function(c, opts)
 			return Dropdown(c, opts, true)
 		end, o, "dropdown")
+	end
+
+	function api:PlayerSelect(o)
+		return mount(function(c, opts)
+			return PlayerSelect(c, opts, false)
+		end, o, "playerselect")
+	end
+	function api:PlayerMultiSelect(o)
+		return mount(function(c, opts)
+			return PlayerSelect(c, opts, true)
+		end, o, "playerselect")
 	end
 
 	function api:Button(o)

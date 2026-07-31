@@ -86,6 +86,20 @@ Selection:MultiDropdown({
 	Callback = function(list) print("selected:", table.concat(list, ", ")) end,
 })
 Selection:Dropdown({ Name = "Quality", Options = { "Low", "Medium", "High", "Ultra" }, Default = "High", Width = 120 })
+Selection:PlayerSelect({
+	Name = "Target Player", Desc = "This is a player select — pick one from everyone online, with avatar.",
+	Stack = true, Flag = "target_player",
+	Callback = function(p) print("target:", p and p.Name or "none") end,
+})
+Selection:PlayerMultiSelect({
+	Name = "Squad", Desc = "This is a multi player select — pick several players.",
+	Stack = true, Flag = "squad",
+	Callback = function(list)
+		local names = {}
+		for _, p in list do table.insert(names, p.Name) end
+		print("squad:", table.concat(names, ", "))
+	end,
+})
 
 -- A Code field: a multi-line monospace editor for pasting raw config that won't
 -- fit a structured control (Lua tables, JSON, scripts). `Parse` validates it on

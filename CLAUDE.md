@@ -65,15 +65,23 @@ coreui/
 calls `Window(options)`). `ctx` is the `Context` object; thread it through to
 children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
-**Public API surface** (see `example.lua` — it's the spec, written in the target
-API; build until it runs and matches `reference/coreui-demo.html`):
+**Public API surface** (see `example.loadstring.lua` — it's the spec, written in
+the target API; build until it runs and matches `reference/coreui-demo.html`):
 - `coreui:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy()`
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
-- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown :Input :Code :Keybind :Colorpicker :Paragraph :Label :Divider :List :Player :Custom :DataGrid`
+- Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
+  :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
+  :Label :Divider :List :Player :Custom :DataGrid`
+  - `PlayerSelect`/`PlayerMultiSelect` (`components/PlayerSelect.lua`) — dropdown-shell
+    picker that lists `Players:GetPlayers()` live (refetched each open), each row a
+    headshot (`GetUserThumbnailAsync`, fetched off-thread so opening never blocks)
+    + display name + `@username`. `:Get()` resolves live Player instances (single) or
+    a live `{Player}` (multi) by UserId, so someone leaving just drops out. Flag
+    codec `playerselect` persists UserId(s), not instances.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
