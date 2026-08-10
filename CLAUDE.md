@@ -75,7 +75,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
-  :Label :Divider :List :Player :Custom :DataGrid`
+  :Label :Divider :List :Player :Custom :DataGrid :MediaPlayer`
   - `PlayerSelect`/`PlayerMultiSelect` (`components/PlayerSelect.lua`) — dropdown-shell
     picker that lists `Players:GetPlayers()` live (refetched each open), each row a
     headshot (`GetUserThumbnailAsync`, fetched off-thread so opening never blocks)
@@ -200,6 +200,30 @@ grid:UpdateRow("row1", { value = "24" })
 grid:RemoveRow("row1")
 grid.RowEdited:Connect(function(id, columnKey, newText) end)
 grid.RowAction:Connect(function(id, actionName) end)
+```
+
+**`Group:MediaPlayer{...}` / `Section:MediaPlayer{...}`** (`components/MediaPlayer.lua`)
+is a cover-art + title/artist + draggable scrub timeline + transport (shuffle /
+prev / play·pause / next / repeat) + volume bar. Three ways to drive it, mixable
+per track: give a `SoundId` (or a `Queue` of them) and it owns real
+`Instance.new("Sound")`s and actually plays them, driving the timeline off
+`Sound.TimePosition`; pass an existing `Sound` instance and it drives that one
+without owning/destroying it; or give neither and it's a pure remote — every
+action just fires `Callback(action, payload)` + a matching event, and you push
+state back with `:SetProgress`/`:SetPlaying`/`:SetDuration`. Transient like
+`Custom`/`DataGrid` — no `Flag`/config codec.
+
+```lua
+local player = Group:MediaPlayer({
+	Name = "Now Playing",
+	Queue = {
+		{ Title = "Song One", Artist = "Artist", SoundId = "rbxassetid://123" },
+		{ Title = "Song Two", Artist = "Artist", SoundId = "rbxassetid://456" },
+	},
+	ShowVolume = true, ShowShuffle = true, ShowLoop = true,
+	Callback = function(action, payload) print(action, payload.Title) end,
+})
+player.TrackChanged:Connect(function(track) print("now playing:", track.Title) end)
 ```
 
 ## Conventions

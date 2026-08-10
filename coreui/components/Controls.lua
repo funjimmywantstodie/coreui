@@ -25,6 +25,7 @@ local PlayerSelect = require(script.Parent.PlayerSelect)
 local Section = require(script.Parent.Section)
 local Custom = require(script.Parent.Custom)
 local DataGrid = require(script.Parent.DataGrid)
+local MediaPlayer = require(script.Parent.MediaPlayer)
 
 local Controls = {}
 
@@ -162,6 +163,10 @@ function Controls.new(ctx: any, frame: Frame)
 
 	function api:DataGrid(o)
 		return mount(DataGrid, o, nil, "DataGrid")
+	end
+
+	function api:MediaPlayer(o)
+		return mount(MediaPlayer, o, nil, "MediaPlayer")
 	end
 
 	return api
