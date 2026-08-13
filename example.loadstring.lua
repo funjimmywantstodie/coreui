@@ -153,17 +153,23 @@ Controls:ButtonRow({
 })
 
 -- Images. `Image` accepts a bare decal id, an "rbxassetid://…" string, an https
--- url (downloaded + cached on first use), or a file the executor wrote to disk —
--- Krypton.Asset.resolve normalizes all of them, so you can paste whichever form
--- you have. Same for Player.Avatar and a MediaPlayer track's Cover.
+-- url (downloaded + cached on first use), a file the executor wrote to disk, or
+-- an ARRAY of those as a fallback chain. Same for Player.Avatar and a
+-- MediaPlayer track's Cover.
+--
+-- Prefer a URL first, id second (what this does): the URL is cached to disk and
+-- loaded via getcustomasset, so it dodges Roblox moderation / Asset Privacy /
+-- decal-id issues entirely, and the id covers executors with no file access.
+-- `Krypton.Asset.url("name.png")` resolves a filename against the public
+-- Krypton asset repo, so shipping new art is just committing the file.
 local Media = Components:CreateGroup({ Title = "Media", Column = 2 })
 local banner = Media:Image({
 	Name    = "Logo",
 	Desc    = "A 512×512 mark, rounded off by the frame.",
-	Image   = 74808640463075, -- bare id — no rbxassetid:// prefix needed
+	Image   = { Krypton.Asset.url("krypton-512-square.png"), "rbxassetid://74808640463075" },
 	Height  = 150,
 	Fit     = "contain",
-	Caption = "Image = <decal id> | \"rbxassetid://…\" | \"https://…\" | \"folder/art.png\"",
+	Caption = "Image = <id> | \"https://…\" | \"folder/art.png\" | { chain, of, these }",
 })
 Media:Button({
 	Label = "Swap Image",

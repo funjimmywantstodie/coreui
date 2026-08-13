@@ -171,6 +171,27 @@ feature-detected exactly like `util/Config.lua` (`Asset.supported`,
 `Logo`, `Image`, `Player.Avatar` and MediaPlayer track `Cover` already do.
 Resolving can hit the network, so components call it inside `task.spawn`.
 
+Every source also accepts an **array = fallback chain**, walked in order until
+one loads. Prefer `{ "https://…/art.png", "rbxassetid://…" }`: the URL is cached
+to disk and loaded via `getcustomasset`, which sidesteps moderation, Asset
+Privacy and decal-vs-image ids entirely (the Infinite Yield approach);
+`Theme.Brand.logo` is exactly that. Downloads are magic-byte checked so a 404
+body can't be cached as a `.png`.
+
+**Two repos, don't conflate them.** This one (`coreui`) is the library source +
+bundle, public only so the loadstring resolves. Art is hosted in the separate
+public **`Krypton`** repo (`Assets/`), whose raw base is `Theme.Brand.assets`;
+`init.lua` copies it into `Asset.Base`, so `Asset.url("name.png")` builds the
+full URL and shipping new art is just committing the file there.
+
+**`Asset.load(image, source, onDone)` — two rules, both learned the hard way:**
+1. Never use `ContentProvider:PreloadAsync` to decide whether an image loaded.
+   It doesn't work on ImageLabels and misreports constantly; `IsLoaded` is the
+   only honest signal (and an unparented/hidden ImageLabel never loads at all,
+   because the engine only fetches what it renders).
+2. Detection is **advisory** — never clear or hide the image because of it. Move
+   a *placeholder* instead. Hiding the image was what made the logo invisible.
+
 **Collapse** (`util/Collapse.lua`): `Collapse.wrap(content, startCollapsed)` →
 `(holder, set)`. `content` must be `(1,0)` wide with `AutomaticSize.Y`. Holder
 clips + owns the animated height; tracks content via AutomaticSize while open,

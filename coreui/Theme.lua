@@ -10,12 +10,30 @@
 local Theme = {}
 
 -- ── Brand ─────────────────────────────────────────────────────────────────
--- The titlebar logo. `Window{ Logo = ... }` overrides it, and it goes through
--- util/Asset.lua, so an asset id, a URL or a local file path all work.
+-- `assets` is the **Krypton public repo** — the author's asset host, a separate
+-- thing from this UI library (which lives in the `coreui` repo and is only
+-- public so the loadstring works). Art the UI ships with goes there, not here;
+-- drop a file in its `Assets/` folder and reference it as
+-- `Theme.Brand.assets .. "name.png"` (or `Krypton.Asset.url("name.png")`).
+--
+-- The logo is a fallback chain — util/Asset.lua walks it in order, so
+-- `Window{ Logo = ... }` can be a single source or a chain of its own.
+--
+-- The PNG comes FIRST on purpose — that's the Infinite Yield approach. It's
+-- downloaded once, cached on disk, and handed to the engine via getcustomasset,
+-- so it sidesteps every Roblox asset rule: no moderation wait, no Asset Privacy
+-- restriction, no decal-vs-image id confusion. The uploaded asset id is the
+-- fallback for executors with no file access, where those rules do apply.
+local ASSETS = "https://raw.githubusercontent.com/funjimmywantstodie/Krypton/main/Assets/"
+
 Theme.Brand = {
 	name   = "Krypton",
-	logo   = "rbxassetid://74808640463075", -- 512×512 square mark
-	radius = 8,                              -- rounded off with a UICorner
+	assets = ASSETS,
+	logo = {
+		ASSETS .. "krypton-512-square.png",
+		"rbxassetid://74808640463075", -- 512×512 square mark
+	},
+	radius = 8, -- rounded off with a UICorner
 }
 
 -- ── Colors ────────────────────────────────────────────────────────────────

@@ -110,10 +110,10 @@ return function(ctx: any, opts: any)
 
 	local function apply(value: any)
 		source = value
-		-- Asset.load runs off-thread (an https source downloads on first use, and
-		-- it waits on the load to report back), so building a menu never blocks.
-		-- The placeholder holds the frame until the picture is genuinely up — an
-		-- id that never resolves leaves the icon showing, not an empty box.
+		-- The picture is never hidden (an ImageLabel the engine isn't rendering
+		-- never loads in the first place) — only the placeholder icon behind it
+		-- reacts, so a slow or dead source leaves the icon showing instead of an
+		-- empty box, and a late arrival still paints over it.
 		placeholder.Visible = true
 		Asset.load(picture, value, function(loaded)
 			placeholder.Visible = not loaded

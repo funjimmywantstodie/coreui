@@ -22,6 +22,11 @@ local Krypton = {}
 Krypton.Asset = Asset
 Krypton.Theme = Theme
 
+-- Point the asset helper at the public Krypton repo, so `Asset.url("x.png")`
+-- resolves a bare filename against it. Set here (not in Asset.lua) to keep the
+-- brand URL in one place — Theme.Brand.
+Asset.Base = Theme.Brand.assets
+
 function Krypton:CreateWindow(options: any?)
 	-- A very common miscall is `Krypton.CreateWindow(...)` (dot, not colon) — then
 	-- `options` is the table but `self` swallowed nothing, or the caller passes a

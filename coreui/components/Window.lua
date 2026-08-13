@@ -206,20 +206,22 @@ return function(opts: any)
 		Parent = logo,
 	}) :: ImageLabel
 	local function setLogo(source: any)
-		-- The accent square + initial stay up until the art has *actually*
-		-- loaded. Swapping on resolve alone meant a bad id left the titlebar
-		-- empty — no mark, no fallback, nothing.
-		logoImage.Visible = false
+		-- The mark is ALWAYS visible — it has to be, or the engine never fetches
+		-- the texture — and it's drawn over the accent square, which stays put as
+		-- a backdrop. So the art covers the square when it loads, and if it never
+		-- loads you're left with the accent square + initial. Never a hole,
+		-- whatever the load check believes.
+		logoImage.Visible = true
 		logoFallback.Visible = true
 		logo.BackgroundTransparency = 0
 		Asset.load(logoImage, source, function(loaded)
-			logoImage.Visible = loaded
+			-- Only the fallback reacts; the image is left alone.
 			logoFallback.Visible = not loaded
-			-- The art owns its own background once it's up.
 			logo.BackgroundTransparency = loaded and 1 or 0
 			if not loaded and source ~= nil then
-				Log.warn("CreateWindow", ("Logo %s didn't load — showing the fallback mark. "
-					.. "Check the id is an image/decal you can use."):format(tostring(source)))
+				Log.warn("CreateWindow", ("Logo %s hasn't loaded — the fallback mark is showing. "
+					.. "Check the id is an image/decal, that it passed moderation, and that "
+					.. "it isn't Restricted in Creator Dashboard."):format(tostring(source)))
 			end
 		end)
 	end

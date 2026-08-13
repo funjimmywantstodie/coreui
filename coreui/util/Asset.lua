@@ -64,6 +64,21 @@ Asset.canDownload = Asset.supported and type(g_writefile) == "function"
 -- somewhere other than the default (e.g. alongside your configs).
 Asset.CacheFolder = "krypton/images"
 
+-- Base URL for art hosted in the public asset repo. init.lua points this at
+-- `Theme.Brand.assets`; `Asset.url("logo.png")` then builds the full URL, so
+-- adding a new image is "commit the file, reference it by name".
+Asset.Base = ""
+
+function Asset.url(name: string): string
+	if type(name) ~= "string" or name == "" then
+		return ""
+	end
+	if name:match("^https?://") then
+		return name -- already absolute — pass it through untouched
+	end
+	return Asset.Base .. name
+end
+
 local IMAGE_EXT = { png = true, jpg = true, jpeg = true, webp = true, tga = true, bmp = true }
 
 local function extensionOf(path: string): string?
@@ -105,6 +120,17 @@ function Asset.fromFile(path: string): string?
 		return content
 	end
 	return nil
+end
+
+-- Magic bytes for the formats Roblox will actually render, so a downloaded body
+-- can be checked before it's committed to the disk cache.
+local function looksLikeImage(body: string): boolean
+	local head = body:sub(1, 12)
+	return head:sub(1, 8) == "\137PNG\r\n\26\n"       -- png
+		or head:sub(1, 2) == "\255\216"                -- jpeg
+		or head:sub(1, 6) == "GIF89a" or head:sub(1, 6) == "GIF87a"
+		or (head:sub(1, 4) == "RIFF" and head:sub(9, 12) == "WEBP")
+		or head:sub(1, 2) == "BM"                      -- bmp
 end
 
 -- url → disk → content id. Cached twice: in memory for the session, and on disk
@@ -149,6 +175,12 @@ function Asset.fromUrl(url: string, filename: string?): string?
 	if not okGet or type(body) ~= "string" or body == "" then
 		return nil
 	end
+	-- Refuse to cache a body that isn't actually an image. A 404 page or a rate
+	-- limit notice would otherwise be written to <name>.png and cached on disk
+	-- forever, so one bad fetch would permanently break that image.
+	if not looksLikeImage(body) then
+		return nil
+	end
 	if not (pcall(g_writefile, path, body)) then
 		return nil
 	end
@@ -162,8 +194,24 @@ end
 -- The one every component calls. Accepts an id, a content url, a file path, an
 -- http(s) url, or nil. Always returns a string — "" means "nothing to show", so
 -- callers can assign it straight to `Image` and fall back on their placeholder.
+--
+-- It also accepts an ARRAY of any of those: a fallback chain, tried in order,
+-- first one that resolves wins. That's how you survive Roblox's asset rules —
+-- put a `https://…/logo.png` first (downloaded to disk, loaded via
+-- getcustomasset, so moderation / Asset Privacy / decal-vs-image ids never
+-- apply) and a plain asset id after it for executors with no file access.
 function Asset.resolve(value: any): string
 	if value == nil then
+		return ""
+	end
+
+	if type(value) == "table" then
+		for _, candidate in value do
+			local resolved = Asset.resolve(candidate)
+			if resolved ~= "" then
+				return resolved
+			end
+		end
 		return ""
 	end
 
@@ -199,72 +247,98 @@ end
 
 -- ── Actually loading it ──────────────────────────────────────────────────────
 -- `resolve` only proves the *shape* of a source is usable — it can't know the
--- asset renders. An id that's moderated, mistyped, or a Decal the engine won't
--- resolve leaves the ImageLabel silently blank, which is worse than a
--- placeholder. `Asset.load` reports what really happened, so callers can keep
--- their fallback up.
+-- asset renders. So `Asset.load` sets the image and reports back whether it
+-- really arrived, letting callers keep a placeholder up.
+--
+-- Two hard rules here, both learned the painful way:
+--
+--   1. **Never use ContentProvider:PreloadAsync to decide.** It doesn't work on
+--      ImageLabels (a documented engine limitation) and fails constantly on
+--      content strings, so it reports Failure for images that render fine.
+--      `ImageLabel.IsLoaded` is the only signal that tells the truth.
+--   2. **Never clear or hide the image based on that check.** Detection is
+--      advisory. The image is assigned immediately and stays assigned; a
+--      negative result only means "keep the placeholder", never "erase the art".
+--      Anything else risks blanking a picture that was about to appear.
+--
+-- The engine also only fetches textures for instances it's *rendering*, so an
+-- unparented or hidden ImageLabel never loads at all. Callers must keep the
+-- image visible while it loads — which the no-hiding rule above already gives.
 
-local ContentProvider = game:GetService("ContentProvider")
+local LOAD_TIMEOUT = 8
 
--- Wait for `image` to finish loading. PreloadAsync gives a real status; polling
--- IsLoaded is the fallback for environments where it's unavailable or hooked.
-local function awaitLoaded(image: ImageLabel, timeout: number?): boolean
-	local ok, status = pcall(function()
-		local result: any = nil
-		ContentProvider:PreloadAsync({ image }, function(_, assetStatus)
-			result = assetStatus
-		end)
-		return result
-	end)
-	if ok and status ~= nil then
-		return status == Enum.AssetFetchStatus.Success
+local function whenLoaded(image: ImageLabel, timeout: number?): boolean
+	if image.IsLoaded then
+		return true
 	end
-	local deadline = os.clock() + (timeout or 5)
-	while os.clock() < deadline and not image.IsLoaded do
-		task.wait(0.1)
+	local deadline = os.clock() + (timeout or LOAD_TIMEOUT)
+	while not image.IsLoaded and os.clock() < deadline do
+		task.wait(0.15)
 	end
 	return image.IsLoaded
 end
 
--- Point `image` at `source` and call `onDone(loaded)` once it's settled. Yields
--- on its own thread, so callers never block on the network.
+-- Put `content` on the image and wait for it. Also tries the decal→image id
+-- shuffle: a Decal asset and the Image it wraps live at adjacent ids, and the
+-- decals that don't render directly need the underlying image (decalId - 1).
+local function tryContent(image: ImageLabel, content: string, timeout: number): boolean
+	image.Image = content
+	if whenLoaded(image, timeout) then
+		return true
+	end
+	local id = tonumber(content:match("rbxassetid://(%d+)$"))
+	if id and id > 1 then
+		image.Image = "rbxassetid://" .. tostring(id - 1)
+		if whenLoaded(image, timeout) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Point `image` at `source`; `onDone(loaded)` reports whether it rendered.
+-- `source` may be a single value or a fallback chain (see Asset.resolve) — each
+-- candidate gets a short window, the last gets the full timeout.
+--
+-- `onDone` can fire twice — false on timeout, then true if the asset shows up
+-- late — so keep it idempotent (toggling a placeholder is the ideal shape).
 function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
+	local chain: { any } = (type(source) == "table") and source or { source }
+
 	task.spawn(function()
-		local content = Asset.resolve(source)
-		if content == "" then
-			image.Image = ""
-			if onDone then
-				onDone(false)
-			end
-			return
-		end
-
-		image.Image = content
-		if awaitLoaded(image) then
-			if onDone then
-				onDone(true)
-			end
-			return
-		end
-
-		-- A Decal asset and the Image it wraps are adjacent ids. Most decals
-		-- render straight from the decal id, but the ones that don't need the
-		-- underlying image — conventionally decalId - 1. Cheap to try, and it's
-		-- the difference between "my logo is invisible" and it just working.
-		local id = tonumber(content:match("rbxassetid://(%d+)$"))
-		if id then
-			image.Image = "rbxassetid://" .. tostring(id - 1)
-			if awaitLoaded(image) then
-				if onDone then
-					onDone(true)
+		local firstContent = ""
+		for i, candidate in chain do
+			-- Resolving can download (an https candidate is fetched to disk on
+			-- first use), which is why the whole walk lives on this thread.
+			local content = Asset.resolve(candidate)
+			if content ~= "" then
+				if firstContent == "" then
+					firstContent = content
 				end
-				return
+				-- Don't spend the full budget on early candidates — there's
+				-- another source waiting behind them.
+				local budget = (i < #chain) and 3 or LOAD_TIMEOUT
+				if tryContent(image, content, budget) then
+					if onDone then
+						onDone(true)
+					end
+					return
+				end
 			end
 		end
 
-		image.Image = ""
+		-- Nothing loaded. Leave the best candidate assigned rather than blanking
+		-- it, so a slow asset can still paint itself in later.
+		image.Image = firstContent
 		if onDone then
 			onDone(false)
+			if firstContent ~= "" then
+				image:GetPropertyChangedSignal("IsLoaded"):Once(function()
+					if image.IsLoaded then
+						onDone(true)
+					end
+				end)
+			end
 		end
 	end)
 end

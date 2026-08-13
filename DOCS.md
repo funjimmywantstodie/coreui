@@ -589,6 +589,33 @@ first. That means all of these work, interchangeably:
 | `"myhub/logo.png"` | local file → `getcustomasset` (executor only) |
 | `"https://example.com/logo.png"` | downloaded once, cached on disk, then loaded |
 
+### Fallback chains (the reliable way to ship art)
+
+Any image field also takes an **array** of sources, tried in order until one
+actually loads:
+
+```lua
+Group:Image({ Image = {
+    Krypton.Asset.url("krypton-512-square.png"), -- preferred: hosted PNG
+    "rbxassetid://74808640463075",               -- fallback: uploaded asset
+} })
+```
+
+`Asset.url(name)` resolves a bare filename against `Asset.Base` — the public
+[Krypton asset repo](https://github.com/funjimmywantstodie/Krypton), which is
+separate from the UI library's own repo. Commit a file to its `Assets/` folder
+and it's referenceable by name; pass an absolute URL and it's returned as-is.
+Point `Krypton.Asset.Base` somewhere else to host art yourself.
+
+Put the **URL first**. It's downloaded once, cached on disk, and handed to the
+engine through `getcustomasset` — so it never touches Roblox's asset pipeline:
+no moderation wait, no Asset Privacy restriction, no decal-vs-image id
+confusion. The asset id behind it covers executors with no file access. This is
+how Infinite Yield ships its icons, and it's what `Theme.Brand.logo` uses.
+
+Downloads are validated by magic bytes before they're cached, so a 404 page
+can't poison the cache as a `.png`.
+
 ```lua
 local Asset = Krypton.Asset
 
