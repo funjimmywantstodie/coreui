@@ -13,6 +13,7 @@ local Window = require(script.components.Window)
 local Theme = require(script.Theme)
 local Asset = require(script.util.Asset)
 local Log = require(script.util.Log)
+local Singleton = require(script.util.Singleton)
 
 local Krypton = {}
 
@@ -32,6 +33,25 @@ function Krypton:CreateWindow(options: any?)
 			:format(typeof(options)))
 	end
 	return Window(options)
+end
+
+-- ── single instance ─────────────────────────────────────────────────────────
+-- CreateWindow already unloads whatever a previous run of the loadstring left
+-- on screen (util/Singleton.lua), so re-running the loader refreshes the UI
+-- instead of stacking a second copy. These expose the same slot to loaders that
+-- want to check or clear it themselves:
+--
+--   if Krypton:IsLoaded() then ... end          -- or getgenv()._KRYPTON_LOADED
+--   Krypton:Unload()                            -- tear down the live window
+Krypton.Singleton = Singleton
+
+function Krypton:IsLoaded(): boolean
+	return Singleton.get() ~= nil
+end
+
+-- Returns true if a window was actually torn down.
+function Krypton:Unload(): boolean
+	return Singleton.unloadExisting(Theme.Brand.name)
 end
 
 return Krypton

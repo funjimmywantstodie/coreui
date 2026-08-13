@@ -75,11 +75,12 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Krypton:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?}` →
+- `Krypton:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,AllowMultiple?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetLogo(source)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
-  `:ListConfigs()` · `:Destroy()`
+  `:ListConfigs()` · `:Destroy(immediate?)`
+- Library-level: `Krypton:IsLoaded()` · `Krypton:Unload()` (see single instance below)
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
@@ -95,6 +96,26 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
+
+## Single instance & unload
+
+The titlebar ✕ is a **real unload** — it calls `Window:Destroy()` (disconnect the
+tracked UserInputService listeners → `ctx:ClosePopover()` → free the singleton
+slot → fade → `screenGui:Destroy()`). Listeners come off *before* the fade so a
+toggle-key press during it can't "restore" a window that's on its way out.
+Minimize (and the toggle key) is the hide-temporarily path.
+
+`util/Singleton.lua` keeps `getgenv()._KRYPTON_LOADED` (falls back to `_G` where
+`getgenv` is absent) = `{ Name, Window, ScreenGui, Unload }`. A separate
+loadstring run is a fresh chunk with fresh module state, so that shared-env
+record is the only cross-run handle. `Window()` calls `Singleton.unloadExisting`
+before building (old window destroyed with `immediate = true`, no fade) and
+`Singleton.claim` once it's parented — so re-running the loader refreshes in
+place instead of stacking a second UI. `unloadExisting` also sweeps stray
+ScreenGuis named `Theme.Brand.name`, which covers a broken/cleared record or a
+pre-guard build still on screen. `AllowMultiple = true` opts a window out of both
+halves. `Singleton.release` no-ops unless the stored record is still ours, so a
+late teardown can't evict a newer window.
 
 ## Config & settings (Flag system)
 

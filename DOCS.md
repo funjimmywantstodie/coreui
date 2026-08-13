@@ -112,12 +112,37 @@ local Window = Krypton:CreateWindow({
     Accent       = Color3.fromHex("00c46a"), -- initial accent color     (default theme accent)
     Logo         = 74808640463075,           -- titlebar mark            (default Krypton logo)
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
+    AllowMultiple = false,                   -- skip the single-instance guard (default false)
 })
 ```
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
 It's parented to `LocalPlayer.PlayerGui` (or `CoreGui` in Studio).
+
+**Close fully unloads.** The ✕ button runs `Window:Destroy()` — listeners are
+disconnected and the ScreenGui is destroyed, exactly like the Settings tab's
+*Unload*. To hide the window temporarily use minimize (or the toggle key).
+
+### Single instance
+
+`CreateWindow` publishes a record on the shared executor env:
+
+```lua
+getgenv()._KRYPTON_LOADED = { Name = "Krypton", Window = ..., ScreenGui = ..., Unload = fn }
+```
+
+Re-running the loadstring finds that record, unloads the old window (instantly,
+no fade) and then builds the new one — so the loader **refreshes in place**
+instead of stacking a second UI. The key is cleared on `Window:Destroy()`, and a
+stale record can't wedge you: the guard also sweeps any leftover ScreenGui named
+`Krypton`. Pass `AllowMultiple = true` to opt a window out of both halves (it
+neither unloads the existing window nor claims the slot).
+
+```lua
+if Krypton:IsLoaded() then ... end   -- same as testing getgenv()._KRYPTON_LOADED
+Krypton:Unload()                     -- tear down the live window; true if there was one
+```
 
 ### Window methods
 
@@ -135,7 +160,7 @@ It's parented to `LocalPlayer.PlayerGui` (or `CoreGui` in Studio).
 | `Window:LoadConfig(name)` → `bool` | Load + apply a saved config. |
 | `Window:DeleteConfig(name)` → `bool` | Delete a saved config. |
 | `Window:ListConfigs()` → `{string}` | List saved config names. |
-| `Window:Destroy()` | Fade out and fully unload (disconnects listeners). |
+| `Window:Destroy(immediate?)` | Fade out and fully unload (disconnects listeners, frees the singleton slot). `immediate` skips the fade. |
 
 `Window.ConfigSupported` (`boolean`) tells you whether the executor exposes file
 functions. In Studio / unsupported executors, config calls no-op safely.

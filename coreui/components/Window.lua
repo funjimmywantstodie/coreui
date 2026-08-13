@@ -15,6 +15,7 @@ local Context = require(script.Parent.Parent.util.Context)
 local Config = require(script.Parent.Parent.util.Config)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
+local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 
@@ -30,6 +31,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "ToggleKey", opts.ToggleKey, "EnumItem")
 	Log.field("CreateWindow", "Accent", opts.Accent, "Color3")
 	Log.field("CreateWindow", "ConfigFolder", opts.ConfigFolder, "string")
+	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "krypton"
@@ -38,6 +40,18 @@ return function(opts: any)
 	-- UserInputService connections live past the ScreenGui's lifetime, so they're
 	-- tracked here and disconnected by Window:Destroy.
 	local connections: { RBXScriptConnection } = {}
+
+	-- ── single instance ───────────────────────────────────────────────────────
+	-- Only one Krypton on screen at a time: re-running the loadstring unloads the
+	-- window the previous run left behind (util/Singleton.lua — the handle lives
+	-- on getgenv()._KRYPTON_LOADED so it survives across chunks), then builds
+	-- fresh below. That way the loader refreshes the UI instead of stacking a
+	-- second copy over the first. `AllowMultiple = true` opts out of both halves.
+	local singleton = opts.AllowMultiple ~= true
+	local record: any = nil
+	if singleton and Singleton.unloadExisting(Theme.Brand.name) then
+		print("[Krypton] already loaded — unloaded the previous window and refreshing.")
+	end
 
 	-- ── ScreenGui + window frame ────────────────────────────────────────────
 	local screenGui = Create("ScreenGui", {
@@ -757,9 +771,10 @@ return function(opts: any)
 			return -- typing in a textbox, or a Keybind is listening for this press
 		end
 		if toggleKey ~= Enum.KeyCode.Unknown and input.KeyCode == toggleKey then
-			-- Closing only disables the ScreenGui, so without this the toggle key
-			-- just flipped the minimize state of an invisible window and the UI
-			-- looked permanently gone. Bring it back instead.
+			-- Defensive: if anything disabled the ScreenGui, flipping the minimize
+			-- state would just toggle an invisible window and the UI would look
+			-- permanently gone. Re-enable it instead. (Close no longer takes this
+			-- path — it destroys the ScreenGui outright.)
 			if not screenGui.Enabled then
 				screenGui.Enabled = true
 				minimized = false
@@ -794,17 +809,11 @@ return function(opts: any)
 	end)
 
 	-- ── close ────────────────────────────────────────────────────────────────
+	-- Close is a real unload, not a hide: same shrink+fade as minimize, but the
+	-- listeners come off, the ScreenGui is destroyed and the singleton slot is
+	-- freed. Use the minimize button (or the toggle key) to stash it temporarily.
 	winBtns.close.Activated:Connect(function()
-		-- same shrink+fade as minimize, but disable the gui once it's gone
-		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
-		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
-		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
-		t.Completed:Once(function()
-			screenGui.Enabled = false
-			mainScale.Scale = 1 -- reset in case it's ever re-enabled
-			main.GroupTransparency = 0
-			shadow.ImageTransparency = SHADOW_T
-		end)
+		window:Destroy()
 	end)
 
 	function window:CreateTab(tabOpts: any)
@@ -945,18 +954,36 @@ return function(opts: any)
 	end
 
 	-- ── teardown ───────────────────────────────────────────────────────────────
-	-- Disconnect the lingering UserInputService listeners, then fade the window
-	-- out and destroy the ScreenGui (close() only hides it; this fully unloads).
-	function window:Destroy()
+	-- Full unload: the lingering UserInputService listeners come off, the popover
+	-- overlay closes, the singleton slot is freed and the ScreenGui is destroyed.
+	-- This is what both the close button and the Settings tab's Unload run.
+	--
+	-- The listeners are disconnected UP FRONT rather than in the tween callback —
+	-- during the ~0.16s fade the window is on its way out, and a toggle-key press
+	-- landing in that gap would otherwise "restore" a window about to be deleted.
+	-- `immediate` skips the fade entirely (used when a re-run is unloading us to
+	-- take our place — the new window shouldn't wait on the old one's animation).
+	local destroyed = false
+	function window:Destroy(immediate: boolean?)
+		if destroyed then
+			return
+		end
+		destroyed = true
+		for _, conn in connections do
+			conn:Disconnect()
+		end
+		table.clear(connections)
+		ctx:ClosePopover()
+		Singleton.release(record)
+
+		if immediate then
+			screenGui:Destroy()
+			return
+		end
 		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
 		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
 		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
 		t.Completed:Once(function()
-			for _, conn in connections do
-				conn:Disconnect()
-			end
-			table.clear(connections)
-			ctx:ClosePopover()
 			screenGui:Destroy()
 		end)
 	end
@@ -1123,6 +1150,21 @@ return function(opts: any)
 		screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 	elseif RunService:IsStudio() then
 		screenGui.Parent = game:GetService("CoreGui")
+	end
+
+	-- Claim the global slot LAST, once this window is actually on screen — the
+	-- next run of the loadstring finds this record and unloads us before it
+	-- builds. `Unload` tears down without the fade: the replacement window is
+	-- already being built and shouldn't overlap the outgoing one.
+	if singleton then
+		record = Singleton.claim({
+			Name = Theme.Brand.name,
+			Window = window,
+			ScreenGui = screenGui,
+			Unload = function()
+				window:Destroy(true)
+			end,
+		})
 	end
 
 	return window
