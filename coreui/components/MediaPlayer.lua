@@ -40,6 +40,7 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Log = require(script.Parent.Parent.util.Log)
+local Asset = require(script.Parent.Parent.util.Asset)
 local Field = require(script.Parent.Field)
 
 local function clamp(v: number, a: number, b: number): number
@@ -87,7 +88,7 @@ local function newBar(ctx: any, parent: Instance, width: UDim, hitHeight: number
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0, 0.5),
 		Size = UDim2.fromOffset(knobSize, knobSize),
-		BackgroundColor3 = colors.white,
+		BackgroundColor3 = colors.text, -- see Slider.lua: knob leaves the accent fill at 0
 		ZIndex = 2,
 		Parent = track,
 	}, { Create.corner(999), Create("UIScale", {}) })
@@ -277,16 +278,12 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 	local cover = Create("Frame", {
 		Name = "Cover",
 		Size = UDim2.fromOffset(48, 48),
-		BackgroundColor3 = colors.card,
+		BackgroundColor3 = colors.control_hi,
 		ClipsDescendants = true,
 		Parent = meta,
 	}, { Create.corner(10), Create.stroke(colors.border) })
-	local coverGradient = Create("UIGradient", {
-		Color = ColorSequence.new(ctx.AccentHover, ctx.Accent),
-		Rotation = 135,
-		Parent = cover,
-	})
-	local coverIcon = Icons.new("music", 20, colors.white)
+	-- Flat surface placeholder (no gradient) until real cover art is set.
+	local coverIcon = Icons.new("music", 20, colors.text_dim)
 	coverIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 	coverIcon.Position = UDim2.fromScale(0.5, 0.5)
 	;(coverIcon :: any).Parent = cover
@@ -419,7 +416,7 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		Parent = center,
 	}, { Create.corner(999), Create("UIScale", {}) }) :: TextButton
 	local playScale = playBtn:FindFirstChildOfClass("UIScale") :: UIScale
-	local playIcon = Icons.new("play", 18, colors.white)
+	local playIcon = Icons.new("play", 18, colors.knockout)
 	playIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 	playIcon.Position = UDim2.fromScale(0.5, 0.5)
 	;(playIcon :: any).Parent = playBtn
@@ -464,9 +461,12 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		artistLabel.Text = current.Artist or ""
 		artistLabel.Visible = current.Artist ~= nil and current.Artist ~= ""
 		if current.Cover then
-			coverImage.Image = current.Cover
-			coverImage.Visible = true
-			coverIcon.Visible = false
+			-- Through Asset so a track's Cover can be a bare id / url / file path,
+			-- not just an rbxassetid string.
+			local art = Asset.resolve(current.Cover)
+			coverImage.Image = art
+			coverImage.Visible = art ~= ""
+			coverIcon.Visible = art == ""
 		else
 			coverImage.Visible = false
 			coverIcon.Visible = true
@@ -592,7 +592,7 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 			ownsSound = false
 		elseif data.SoundId then
 			local snd = Instance.new("Sound")
-			snd.Name = "coreui_MediaPlayerSound"
+			snd.Name = "Krypton_MediaPlayerSound"
 			snd.SoundId = data.SoundId
 			snd.Parent = SoundService
 			activeSound = snd
@@ -884,9 +884,8 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		end)
 	end
 
-	ctx:RegisterAccent(function(accent, accentHover)
+	ctx:RegisterAccent(function(accent)
 		progressFill.BackgroundColor3 = accent
-		coverGradient.Color = ColorSequence.new(accentHover, accent)
 		playBtn.BackgroundColor3 = accent
 		if showVolume then
 			volumeFill.BackgroundColor3 = accent

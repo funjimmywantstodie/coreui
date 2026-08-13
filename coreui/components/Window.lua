@@ -13,6 +13,7 @@ local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Context = require(script.Parent.Parent.util.Context)
 local Config = require(script.Parent.Parent.util.Config)
+local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
@@ -31,7 +32,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "ConfigFolder", opts.ConfigFolder, "string")
 
 	-- where configs are saved on disk + which key shows/hides the window
-	local configFolder = opts.ConfigFolder or "coreui"
+	local configFolder = opts.ConfigFolder or "krypton"
 	local toggleKey: Enum.KeyCode = opts.ToggleKey or Enum.KeyCode.RightShift
 	local notificationsEnabled = true
 	-- UserInputService connections live past the ScreenGui's lifetime, so they're
@@ -40,7 +41,7 @@ return function(opts: any)
 
 	-- ── ScreenGui + window frame ────────────────────────────────────────────
 	local screenGui = Create("ScreenGui", {
-		Name = "coreui",
+		Name = Theme.Brand.name,
 		IgnoreGuiInset = true,
 		ResetOnSpawn = false,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -153,51 +154,66 @@ return function(opts: any)
 			BackgroundColor3 = colors.border_soft,
 			BorderSizePixel = 0,
 		}),
-		Create("Frame", { -- top inset highlight — the CSS `inset` lit edge that
-			Name = "Highlight",            -- catches light and lifts the window
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundColor3 = colors.white,
-			BackgroundTransparency = 0.94,
-			BorderSizePixel = 0,
-		}),
 	})
 
-	-- logo
+	-- logo — the brand mark, square art rounded off by the holder's UICorner.
+	-- `Logo` accepts anything util/Asset.lua resolves (id, url, file path); the
+	-- accent square with the brand initial is the fallback while it loads or if
+	-- it never resolves (Studio without executor globals, bad id, …).
 	local logo = Create("Frame", {
 		Name = "Logo",
 		Size = UDim2.fromOffset(26, 26),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, M.sidebar / 2, 0.5, 0),
 		BackgroundColor3 = colors.accent,
+		ClipsDescendants = true,
 		Parent = titlebar,
 	}, {
-		Create.corner(8),
+		Create.corner(opts.LogoRadius or Theme.Brand.radius),
 	})
-	local logoGradient = Create("UIGradient", {
-		Color = ColorSequence.new(colors.accent_2, colors.accent),
-		Rotation = 135,
-		Parent = logo,
-	})
-	Create("Frame", { -- ring
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(13, 13),
+	local brandName = opts.Title or Theme.Brand.name
+	local logoFallback = Create("TextLabel", {
+		Name = "Initial",
 		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Text = brandName:sub(1, 1):upper(),
+		TextColor3 = colors.knockout,
+		TextSize = 15,
+		FontFace = Theme.Font.Bold,
 		Parent = logo,
-	}, { Create.corner(999), Create.stroke(colors.white, 2) })
-	Create("Frame", { -- dot
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(5, 5),
-		BackgroundColor3 = colors.white,
+	})
+	local logoImage = Create("ImageLabel", {
+		Name = "Mark",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ScaleType = Enum.ScaleType.Crop,
+		Visible = false,
 		Parent = logo,
-	}, { Create.corner(999) })
+	}) :: ImageLabel
+	local function setLogo(source: any)
+		task.spawn(function()
+			local content = Asset.resolve(source)
+			logoImage.Image = content
+			logoImage.Visible = content ~= ""
+			logoFallback.Visible = content == ""
+			-- The art owns its own background once it's up, so the accent square
+			-- only shows through while the fallback is what's visible.
+			logo.BackgroundTransparency = content ~= "" and 1 or 0
+		end)
+	end
+	-- `Logo = false` means "no art at all" — keep the accent square + initial.
+	if opts.Logo == false then
+		setLogo(nil)
+	else
+		setLogo(opts.Logo ~= nil and opts.Logo or Theme.Brand.logo)
+	end
 
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Text = opts.Title or "coreui",
+		Text = brandName,
 		TextColor3 = colors.text,
 		TextSize = 16,
 		FontFace = Theme.Font.Bold,
@@ -354,7 +370,7 @@ return function(opts: any)
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 8,
-		ScrollBarImageColor3 = Color3.fromHex("2A2A2E"),
+		ScrollBarImageColor3 = colors.scroll,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		Parent = body,
 	}, {
@@ -467,10 +483,10 @@ return function(opts: any)
 
 	local ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
 
-	-- logo follows accent
-	ctx:RegisterAccent(function(accent, accentHover)
+	-- the logo's accent square is only visible behind the fallback initial, but
+	-- it still needs to track SetAccent for that case
+	ctx:RegisterAccent(function(accent)
 		logo.BackgroundColor3 = accent
-		logoGradient.Color = ColorSequence.new(accentHover, accent)
 	end)
 
 	-- ── titlebar dragging ────────────────────────────────────────────────────
@@ -843,6 +859,12 @@ return function(opts: any)
 		Notify(ctx, toasts, notifyOpts)
 	end
 
+	-- Swap the brand mark at runtime — same source types as the Logo option
+	-- (asset id, https url, local file path).
+	function window:SetLogo(source: any)
+		setLogo(source)
+	end
+
 	function window:SetAccent(color: Color3)
 		if typeof(color) ~= "Color3" then
 			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7c5cff\"))")
@@ -890,7 +912,7 @@ return function(opts: any)
 		for _ in snapshot do
 			n += 1
 		end
-		print(("[coreui] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
+		print(("[Krypton] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
 		return ok
 	end
 	function window:LoadConfig(name: string): boolean
@@ -898,7 +920,7 @@ return function(opts: any)
 			return false
 		end
 		local data = Config.load(configFolder, name)
-		print(("[coreui] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
+		print(("[Krypton] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
 		if data then
 			ctx:LoadConfig(data)
 			return true
@@ -938,7 +960,7 @@ return function(opts: any)
 	-- auto-load pass sees every flagged control your other tabs registered.
 	function window:CreateSettingsTab(settingsOpts: any?)
 		settingsOpts = settingsOpts or {}
-		print(("[coreui] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
+		print(("[Krypton] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
 		local tab = window:CreateTab({
 			Name = settingsOpts.Name or "Settings",
 			Icon = settingsOpts.Icon or "gear",
@@ -949,7 +971,7 @@ return function(opts: any)
 		iface:Colorpicker({
 			Name = "Accent Color",
 			Desc = "Re-themes the whole UI.",
-			Flag = "coreui_accent",
+			Flag = "krypton_accent",
 			Default = ctx.Accent,
 			Callback = function(c)
 				window:SetAccent(c)
@@ -958,7 +980,7 @@ return function(opts: any)
 		iface:Keybind({
 			Name = "Toggle UI",
 			Desc = "Show or hide the window.",
-			Flag = "coreui_togglekey",
+			Flag = "krypton_togglekey",
 			Default = toggleKey,
 			Callback = function(k)
 				window:SetToggleKey(k)
@@ -967,7 +989,7 @@ return function(opts: any)
 		iface:Toggle({
 			Name = "Notifications",
 			Desc = "Show toast notifications.",
-			Flag = "coreui_notifications",
+			Flag = "krypton_notifications",
 			Default = true,
 			Callback = function(on)
 				window:SetNotificationsEnabled(on)
@@ -1064,7 +1086,7 @@ return function(opts: any)
 		cfg:Divider()
 		cfg:Button({
 			Name = "Danger Zone",
-			Label = "Unload coreui",
+			Label = "Unload " .. Theme.Brand.name,
 			Callback = function()
 				window:Destroy()
 			end,
@@ -1074,7 +1096,7 @@ return function(opts: any)
 		for _ in ctx.Flags do
 			flagCount += 1
 		end
-		print(("[coreui] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
+		print(("[Krypton] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
 		return tab
 	end
 

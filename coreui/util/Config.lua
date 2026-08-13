@@ -58,7 +58,7 @@ Config.supported = type(g_writefile) == "function"
 	and type(g_isfile) == "function"
 
 -- Surface what was detected so executor file-API gaps are obvious in the console.
-print(("[coreui] config: supported=%s  writefile=%s readfile=%s isfile=%s listfiles=%s delfile=%s")
+print(("[Krypton] config: supported=%s  writefile=%s readfile=%s isfile=%s listfiles=%s delfile=%s")
 	:format(
 		tostring(Config.supported),
 		type(g_writefile), type(g_readfile), type(g_isfile),

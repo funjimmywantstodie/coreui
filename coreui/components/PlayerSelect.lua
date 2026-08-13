@@ -352,7 +352,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			}, {
 				Create.corner(8),
 			})
-			local avatarIcon = Icons.new("avatar", 16, colors.white)
+			local avatarIcon = Icons.new("avatar", 16, colors.knockout)
 			avatarIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 			avatarIcon.Position = UDim2.fromScale(0.5, 0.5);
 			(avatarIcon :: any).Parent = avatar

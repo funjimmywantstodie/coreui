@@ -1,31 +1,50 @@
 --!strict
 -- Theme.lua — design tokens (colors, metrics, fonts).
--- Values mirror reference/coreui.css 1:1. Offset pixels map directly to Roblox.
+-- Offset pixels map directly to Roblox offsets.
+--
+-- Palette: **Krypton (Deep Emerald)**. Greyscale-green everywhere, one accent
+-- element per row at most, flat fills only — no gradients, glows or accent
+-- washes behind large areas. Anything sitting *on* an accent fill (button text,
+-- the active nav icon, the toggle-on knob) uses `knockout`, not white.
 
 local Theme = {}
 
+-- ── Brand ─────────────────────────────────────────────────────────────────
+-- The titlebar logo. `Window{ Logo = ... }` overrides it, and it goes through
+-- util/Asset.lua, so an asset id, a URL or a local file path all work.
+Theme.Brand = {
+	name   = "Krypton",
+	logo   = "rbxassetid://91296376944710", -- 512×512 square mark
+	radius = 8,                              -- rounded off with a UICorner
+}
+
 -- ── Colors ────────────────────────────────────────────────────────────────
 Theme.Colors = {
-	bg          = Color3.fromHex("0C0C0E"), -- window body
-	chrome      = Color3.fromHex("131315"), -- titlebar / sidebar / status bar
-	card        = Color3.fromHex("161618"), -- group card fill
-	pop         = Color3.fromHex("18181B"), -- dropdown / colorpicker / toast
-	control     = Color3.fromHex("1B1B1F"), -- input / dropdown / button fill
-	control_hi  = Color3.fromHex("232328"), -- hovered control
-	toggle_off  = Color3.fromHex("2C2C31"), -- toggle track (off) + slider track
-	knob        = Color3.fromHex("D6D6DB"), -- toggle knob (off)
-	border      = Color3.fromHex("262629"), -- card / control borders, dividers
-	border_soft = Color3.fromHex("1F1F22"), -- between-field dividers
-	text        = Color3.fromHex("EDEDF0"), -- primary text
-	text_muted  = Color3.fromHex("8C8C94"), -- secondary text / descriptions
-	text_dim    = Color3.fromHex("5F5F67"), -- placeholders, inactive icons, chevrons
-	accent      = Color3.fromHex("F2680C"), -- active nav, toggle-on, accent button, focus
-	accent_2    = Color3.fromHex("FF8A3D"), -- accent hover / gradient top
+	bg          = Color3.fromHex("0A100C"), -- window body   (background)
+	chrome      = Color3.fromHex("0A100C"), -- titlebar / sidebar / status bar
+	card        = Color3.fromHex("142019"), -- group card fill        (surface)
+	pop         = Color3.fromHex("142019"), -- dropdown / colorpicker / toast
+	control     = Color3.fromHex("142019"), -- input / dropdown / button fill
+	control_hi  = Color3.fromHex("1B2A21"), -- hovered control  (surface hover)
+	-- Toggle / slider track. The spec calls it "surface", but cards are surface
+	-- too — one step lighter is what keeps the track readable on the card.
+	toggle_off  = Color3.fromHex("1B2A21"),
+	knob        = Color3.fromHex("5A6862"), -- toggle knob (off) — text faint
+	border      = Color3.fromHex("1A2B20"), -- every 1px line
+	border_soft = Color3.fromHex("1A2B20"), -- between-field dividers
+	text        = Color3.fromHex("E4EEE8"), -- primary text / headings
+	text_muted  = Color3.fromHex("8A9A90"), -- descriptions, placeholders, readouts
+	text_dim    = Color3.fromHex("5A6862"), -- small caps headers, hints, idle icons
+	accent      = Color3.fromHex("00C46A"), -- toggle-on, slider fill, active nav, focus
+	accent_2    = Color3.fromHex("1FE087"), -- accent hover
+	accent_dim  = Color3.fromHex("0A6B3E"), -- pressed / disabled accent
+	knockout    = Color3.fromHex("04150C"), -- text + icons ON an accent fill
+	scroll      = Color3.fromHex("22362A"), -- scrollbar thumb
 	white       = Color3.fromHex("FFFFFF"),
-	danger      = Color3.fromHex("FF6B6B"), -- close-button hover + notify "error"
-	success     = Color3.fromHex("55D98D"), -- notify "success"
-	warning     = Color3.fromHex("F5B740"), -- notify "warning"
-	info        = Color3.fromHex("5B9DF9"), -- notify "info"
+	danger      = Color3.fromHex("FF5E5E"), -- destructive buttons + notify "error"
+	success     = Color3.fromHex("00C46A"), -- notify "success"
+	warning     = Color3.fromHex("FFC24D"), -- risky toggles + notify "warning"
+	info        = Color3.fromHex("8A9A90"), -- notify "info" (neutral, off-accent)
 }
 
 -- ── Metrics (offset px) ───────────────────────────────────────────────────

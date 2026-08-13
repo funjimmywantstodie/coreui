@@ -38,7 +38,8 @@ return function(ctx: any, opts: any)
 
 	local function paint(animate: boolean)
 		local trackColor = state and ctx.Accent or colors.toggle_off
-		local knobColor = state and colors.white or colors.knob
+		-- on = knockout knob on the accent track, off = text-faint knob on surface
+		local knobColor = state and colors.knockout or colors.knob
 		local pos = state and ON_POS or OFF_POS
 		if animate then
 			Tween.play(track, Tween.Normal, { BackgroundColor3 = trackColor })

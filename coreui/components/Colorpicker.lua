@@ -6,9 +6,10 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Field = require(script.Parent.Field)
 
+-- Krypton accent ramp first, then the useful off-palette signals.
 local DEFAULT_PRESETS = {
-	"f2680c", "ff5757", "ffb020", "34c759", "2dd4bf", "3b82f6",
-	"8b5cf6", "ec4899", "ededf0", "8c8c94", "3a3a3e", "161618",
+	"00c46a", "1fe087", "0a6b3e", "2dd4bf", "ffc24d", "ff5e5e",
+	"3b82f6", "8b5cf6", "ec4899", "e4eee8", "8a9a90", "142019",
 }
 
 local function toHex(color: Color3): string
@@ -22,7 +23,7 @@ end
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local f = Field.new(ctx, opts)
-	local value: Color3 = opts.Default or Color3.fromHex("f2680c")
+	local value: Color3 = opts.Default or colors.accent
 
 	local swatch = Create("TextButton", {
 		Name = "Colorpicker",
@@ -97,7 +98,7 @@ return function(ctx: any, opts: any)
 			Parent = grid,
 		}, {
 			Create.corner(6),
-			Create("UIStroke", { Color = colors.white, Transparency = 0.9 }),
+			Create("UIStroke", { Color = colors.text, Transparency = 0.9 }),
 			Create("UIScale", {}),
 		})
 		local chipScale = chip:FindFirstChildOfClass("UIScale") :: UIScale

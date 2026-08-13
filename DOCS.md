@@ -1,4 +1,4 @@
-# coreui — documentation
+# Krypton — documentation
 
 A dark-theme UI component library for Roblox, written in Luau. One window, a
 sidebar of tabs, two-column cards, and a full set of controls (buttons, toggles,
@@ -16,24 +16,24 @@ build flow, see [CLAUDE.md](CLAUDE.md).
 
 ```lua
 local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/heads/main/coreui.bundle.lua"
-local coreui = loadstring(game:HttpGet(URL))()
+local Krypton = loadstring(game:HttpGet(URL))()
 ```
 
 If you want to guard the network/load step, wrap it in `pcall` — but mind the
 return order: **`pcall` returns `(ok, result)`, so the library is the *second*
 value, not the first.** Getting this backwards is the most common load bug (you
-end up with `coreui = true` and every `coreui:Method(...)` call throws "attempt
+end up with `Krypton = true` and every `Krypton:Method(...)` call throws "attempt
 to index boolean"):
 
 ```lua
-local ok, coreui = pcall(function()
+local ok, Krypton = pcall(function()
     return loadstring(game:HttpGet(URL))()
 end)
 if not ok then
-    warn("[coreui] failed to load:", coreui) -- on failure, `coreui` holds the error
+    warn("[Krypton] failed to load:", Krypton) -- on failure, `Krypton` holds the error
     return
 end
--- coreui is the library table here
+-- Krypton is the library table here
 ```
 
 > Tip: `raw.githubusercontent.com` CDN-caches each path for ~5 min and ignores
@@ -46,10 +46,10 @@ end
 Drop the `coreui/` tree into your place and `require` its `init`:
 
 ```lua
-local coreui = require(path.to.coreui)
+local Krypton = require(path.to.coreui)
 ```
 
-The bundle prints `[coreui] build <timestamp> <sha>` on load so you can confirm
+The bundle prints `[Krypton] build <timestamp> <sha>` on load so you can confirm
 the build that's actually running.
 
 ---
@@ -57,9 +57,9 @@ the build that's actually running.
 ## Quick start
 
 ```lua
-local Window = coreui:CreateWindow({
-    Title    = "coreui",
-    Subtitle = "component kit",
+local Window = Krypton:CreateWindow({
+    Title    = "Krypton",
+    Subtitle = "script hub",
     Version  = "v1.0.0",
 })
 
@@ -86,7 +86,7 @@ A complete, annotated example lives in
 ## Structure
 
 ```
-Window                         coreui:CreateWindow{...}
+Window                         Krypton:CreateWindow{...}
 ├── Tab                        Window:CreateTab{...}
 │   └── Group  (card)          Tab:CreateGroup{...}     -- left/right column
 │       ├── Section            Group:Section{...}        -- nested, collapsible
@@ -103,13 +103,15 @@ control methods.
 ## Window
 
 ```lua
-local Window = coreui:CreateWindow({
-    Title        = "coreui",                 -- titlebar title           (default "coreui")
-    Subtitle     = "component kit",          -- status-bar left text     (default "")
+local Window = Krypton:CreateWindow({
+    Title        = "Krypton",                -- titlebar title           (default "Krypton")
+    Subtitle     = "script hub",             -- status-bar left text     (default "")
     Version      = "v1.0.0",                 -- status-bar right text    (default "")
-    ConfigFolder = "coreui",                 -- on-disk config folder    (default "coreui")
+    ConfigFolder = "krypton",                -- on-disk config folder    (default "krypton")
     ToggleKey    = Enum.KeyCode.RightShift,  -- show/hide key            (default RightShift)
-    Accent       = Color3.fromHex("f2680c"), -- initial accent color     (default theme accent)
+    Accent       = Color3.fromHex("00c46a"), -- initial accent color     (default theme accent)
+    Logo         = 91296376944710,           -- titlebar mark            (default Krypton logo)
+    LogoRadius   = 8,                        -- corner radius on the mark(default 8)
 })
 ```
 
@@ -126,6 +128,7 @@ It's parented to `LocalPlayer.PlayerGui` (or `CoreGui` in Studio).
 | `Window:Notify(opts)` | Show a toast notification (bottom-right). |
 | `Window:Select(index)` | Switch to tab `index` (1-based). |
 | `Window:SetAccent(color)` | Re-theme the whole UI to `color` (a `Color3`), live. |
+| `Window:SetLogo(source)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
 | `Window:SaveConfig(name)` → `bool` | Save all flagged values to `<name>.json`. |
@@ -149,7 +152,7 @@ Window:Notify({
 ```
 
 `Type` picks a semantic style — a colored accent bar plus a matching icon
-(success = green check, info = blue, warning = amber triangle, error = red).
+(success = accent check, info = neutral, warning = amber triangle, error = red).
 It is case-insensitive and `"warn"` aliases `"warning"`. Omit `Type` (or pass
 anything unrecognized) for the original accent-colored toast with no icon.
 
@@ -408,8 +411,8 @@ The menu stays open while you toggle items; each selected option gets a check.
 ```lua
 local h = Group:Colorpicker({
     Name = "Accent", Desc = "Re-themes the UI.",
-    Default = Color3.fromHex("f2680c"),
-    Presets = { "ff5757", "3b82f6", ... },  -- optional hex grid (12 defaults)
+    Default = Color3.fromHex("00c46a"),
+    Presets = { "1fe087", "3b82f6", ... },  -- optional hex grid (12 defaults)
     Flag = "accent",
     Callback = function(c) Window:SetAccent(c) end,  -- live re-theme
 })
@@ -469,6 +472,31 @@ Group:Player({
 })
 ```
 
+### Image
+
+Drops a picture into a card. `Image` takes **anything** — see
+[Images & assets](#images--assets) for the full list of accepted sources.
+
+```lua
+local h = Group:Image({
+    Name    = "Banner",        -- optional label above the picture
+    Desc    = "Hub artwork.",  -- optional sub-text
+    Image   = 91296376944710,  -- id / rbxassetid / https url / local file
+    Height  = 160,             -- px (default 140)
+    Width   = nil,             -- px; omit for full width
+    Fit     = "cover",         -- "cover" | "contain" | "stretch" | "tile"
+    Corner  = 7,               -- corner radius (default controlRadius)
+    Caption = "512×512",       -- optional muted caption underneath
+    Callback = function(source) end,  -- optional; makes the picture clickable
+})
+h:Set("https://example.com/other.png")  -- swap the source at runtime
+h:Get()                                 -- → the source you last set
+h:SetCaption("new caption")
+```
+
+While the source is empty (or still downloading) the frame shows a placeholder
+icon, so a slow or broken image never leaves a hole in the layout.
+
 ---
 
 ## Config & flags
@@ -521,17 +549,62 @@ are kept. If you pass a raw Lucide name that isn't bundled, add it to
 
 ---
 
+## Images & assets
+
+Roblox's `Image` property only accepts content URLs, which is why every image
+field in Krypton (the `Image` control, `Player.Avatar`, a MediaPlayer track's
+`Cover`, the window `Logo`) runs its value through `Krypton.Asset.resolve`
+first. That means all of these work, interchangeably:
+
+| You pass | What happens |
+| --- | --- |
+| `91296376944710` | bare id → `rbxassetid://91296376944710` |
+| `"rbxassetid://…"`, `"rbxthumb://…"` | used as-is |
+| `"https://roblox.com/library/123/x"` | id pulled out of the link |
+| `"myhub/logo.png"` | local file → `getcustomasset` (executor only) |
+| `"https://example.com/logo.png"` | downloaded once, cached on disk, then loaded |
+
+```lua
+local Asset = Krypton.Asset
+
+Asset.resolve(91296376944710)                  -- → "rbxassetid://91296376944710"
+Asset.fromFile("myhub/logo.png")               -- → content id, or nil
+Asset.fromUrl("https://example.com/art.png")   -- downloads + caches, → content id
+Asset.headshot(userId, 150)                    -- → rbxthumb avatar url
+Asset.preload({ id1, url2, "art/x.png" })      -- warm them off-thread
+
+Asset.CacheFolder = "myhub/images"  -- where downloads land (default "krypton/images")
+Asset.supported                     -- can we load local files? (getcustomasset)
+Asset.canDownload                   -- can we fetch + cache remote images?
+```
+
+Downloading needs executor globals (`getcustomasset`, `writefile`). Where they're
+missing (Studio, locked-down executors) every call degrades to `""`/`nil` instead
+of erroring, and the component shows its placeholder. Asset ids always work.
+
+**Uploading your own art:** save the PNG to Roblox (creator dashboard → Decals),
+paste the id straight into `Image = <id>`. No `rbxassetid://` prefix needed.
+
+---
+
 ## Theming
 
-The accent color drives toggles, sliders, active tabs, buttons, the logo, and
-more. Change it any time:
+Krypton ships the **Deep Emerald** palette: `#00C46A` accent on a
+greyscale-green ramp (`#0A100C` background, `#142019` surfaces, `#1A2B20`
+lines), with `#04150C` knocked out of anything sitting on an accent fill. Flat
+fills only — no gradients, glows, or accent washes behind large areas, and at
+most one accent element per row.
+
+The accent color drives toggles, sliders, active tabs, buttons, and more. Change
+it any time:
 
 ```lua
 Window:SetAccent(Color3.fromHex("3b82f6"))
 ```
 
 Every accent-aware element updates live. The Colorpicker in the built-in
-Settings tab is wired to this out of the box.
+Settings tab is wired to this out of the box. The full token table is
+`Krypton.Theme.Colors`, and the brand mark lives in `Krypton.Theme.Brand`.
 
 ---
 
@@ -542,4 +615,4 @@ Window:Destroy()   -- fades out, disconnects input listeners, destroys the GUI
 ```
 
 The close (×) button only *hides* the window; `Destroy()` fully unloads it. The
-built-in Settings tab's "Unload coreui" button calls `Destroy()`.
+built-in Settings tab's "Unload Krypton" button calls `Destroy()`.

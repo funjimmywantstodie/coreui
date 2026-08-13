@@ -1,4 +1,12 @@
-# coreui — agent guide
+# Krypton — agent guide
+
+**Branding:** the library is **Krypton** (the author's script-hub UI kit). The
+repo, the `coreui/` source folder and `coreui.bundle.lua` deliberately keep their
+old names — the loadstring URL is pinned to those paths, so renaming them breaks
+every shipped loader. The rebrand is user-visible strings only: window title +
+ScreenGui name, the `[Krypton]` log prefix, and the default config folder
+(`krypton`). The library table is `Krypton` (`init.lua`); the callers' local name
+is theirs to choose.
 
 Dark-theme Roblox UI component library in Luau. `coreui/` is a ModuleScript tree
 (`init.lua` = entry) that ports `coreui referance/reference/*` (HTML/CSS/JS mock)
@@ -67,15 +75,15 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `coreui:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?}` →
+- `Krypton:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
-  `:SetAccent(Color3)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
+  `:SetAccent(Color3)` · `:SetLogo(source)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy()`
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
-  :Label :Divider :List :Player :Custom :DataGrid :MediaPlayer`
+  :Label :Divider :List :Player :Image :Custom :DataGrid :MediaPlayer`
   - `PlayerSelect`/`PlayerMultiSelect` (`components/PlayerSelect.lua`) — dropdown-shell
     picker that lists `Players:GetPlayers()` live (refetched each open, and rebuilt
     on join/leave while open), each row a headshot (`GetUserThumbnailAsync`, fetched
@@ -128,6 +136,20 @@ subscription registry, and the single-popover manager.
   on UserInputService and ignores input while capture is held, so binding a key
   doesn't also toggle the window on that same keystroke.
 
+**Asset** (`util/Asset.lua`): the single funnel every image goes through, so a
+caller never has to know Roblox's content-URL rules. `Asset.resolve(v)` accepts a
+bare decal id (number or numeric string), an `rbxassetid://`/`rbxthumb://`
+string, a roblox.com library link, a local file path (→ `getcustomasset`), or an
+https URL (→ `HttpGet` + `writefile` into `Asset.CacheFolder`, cached in memory
+and on disk), and always returns a string — `""` meaning "nothing to show", so
+callers just assign it and fall back to their placeholder. Executor globals are
+feature-detected exactly like `util/Config.lua` (`Asset.supported`,
+`Asset.canDownload`), so Studio degrades instead of erroring. Also
+`Asset.headshot(userId, size?, kind?)` (rbxthumb) and `Asset.preload(list)`.
+**Any new image-bearing option should go through `Asset.resolve`** — the window
+`Logo`, `Image`, `Player.Avatar` and MediaPlayer track `Cover` already do.
+Resolving can hit the network, so components call it inside `task.spawn`.
+
 **Collapse** (`util/Collapse.lua`): `Collapse.wrap(content, startCollapsed)` →
 `(holder, set)`. `content` must be `(1,0)` wide with `AutomaticSize.Y`. Holder
 clips + owns the animated height; tracks content via AutomaticSize while open,
@@ -179,6 +201,19 @@ if needed.
 Group:Custom(function(ctx, frame)
 	local box = Create("Frame", { Size = UDim2.fromOffset(0, 40), Parent = frame })
 end)
+```
+
+**`Group:Image{...}` / `Section:Image{...}`** (`components/Image.lua`) is the
+picture primitive: a clipped, rounded, bordered frame with a placeholder icon
+until its source resolves. `Image` takes anything `Asset.resolve` handles, so a
+bare decal id is enough. Options: `Image`/`Source`, `Height` (140), `Width`
+(omit = full width), `Fit` (`cover`/`contain`/`stretch`/`tile`), `Corner`,
+`Caption`, `Name`/`Desc` (uses the standard stacked Field), `Callback` (adds a
+click target). Handle: `:Set(source)` / `:Get()` / `:SetCaption(t)`. Transient
+like `Custom`/`DataGrid` — no Flag codec.
+
+```lua
+Group:Image({ Name = "Banner", Image = 91296376944710, Height = 160, Fit = "contain" })
 ```
 
 **`Group:DataGrid{...}` / `Section:DataGrid{...}`** (`components/DataGrid.lua`)
@@ -242,6 +277,17 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
 
 - `--!strict` at top of every Luau module (generated/data files use `--!nocheck`).
 - Colors via `Color3.fromHex(...)`; pull from `Theme.Colors`, never hardcode.
+- **Palette: Krypton / Deep Emerald.** `#00C46A` accent on a greyscale-green ramp
+  (bg `#0A100C`, surfaces `#142019`, hover `#1B2A21`, lines `#1A2B20`, text
+  `#E4EEE8` / `#8A9A90` / `#5A6862`). Anything drawn **on** an accent fill uses
+  `knockout` (`#04150C`), never white — accent button labels, the active nav
+  icon, the toggle-on knob. Flat fills only: no gradients, no glows, no accent
+  wash behind large areas, at most one accent element per row; hover shifts a
+  fill one step lighter and nothing else. Two deliberate exceptions: slider /
+  MediaPlayer knobs use `text` (at value 0 the knob sits off the accent fill,
+  where a knockout knob would vanish), and the window keeps its neutral black
+  drop shadow as elevation. `Theme.Brand` holds the mark
+  (`{ name, logo = <decal id>, radius }`).
 - **Fonts: set `FontFace` (NOT `Font`).** `Font` uses bitmap atlases → soft/
   pixelated scaling; `FontFace` uses the SDF renderer → crisp at any size. Use
   `Theme.Font.{Bold,Medium,Regular,Mono}`.

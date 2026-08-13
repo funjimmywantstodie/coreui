@@ -25,6 +25,7 @@ local ALIAS: { [string]: string } = {
 	close  = "x",           chev   = "chevron-up",
 	caret  = "chevron-down", ddchev = "chevron-down",
 	check  = "check",       avatar = "circle-user",
+	image  = "image",
 	-- notify types
 	success = "circle-check", info    = "info",
 	warning = "triangle-alert", error = "circle-x",
@@ -36,6 +37,7 @@ local GLYPH: { [string]: string } = {
 	home = "⌂", layers = "▤", cursor = "➤", input = "⌨", list = "≣",
 	palette = "◑", person = "☺", gear = "⚙", search = "⌕", avatar = "☻",
 	min = "—", max = "▢", close = "✕", chev = "⌄", caret = "⌄", check = "✓",
+	image = "▣",
 	success = "✓", info = "ℹ", warning = "⚠", error = "✕",
 }
 

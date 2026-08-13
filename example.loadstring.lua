@@ -1,15 +1,15 @@
--- example.loadstring.lua — the coreui demo, loaded over HTTP from the bundle.
+-- example.loadstring.lua — the Krypton demo, loaded over HTTP from the bundle.
 -- Paste this whole thing into your executor. No instance tree / require needed:
 -- loadstring runs the bundled source and returns the library table.
 
 local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/heads/main/coreui.bundle.lua"
-local coreui = loadstring(game:HttpGet(URL .. "?v=" .. tick()))()
+local Krypton = loadstring(game:HttpGet(URL .. "?v=" .. tick()))()
 
-local Window = coreui:CreateWindow({
-	Title        = "coreui",
-	Subtitle     = "component kit",
+local Window = Krypton:CreateWindow({
+	Title        = "Krypton",
+	Subtitle     = "script hub",
 	Version      = "v1.0.0",
-	ConfigFolder = "coreui",                -- where saved configs live on disk
+	ConfigFolder = "krypton",                -- where saved configs live on disk
 	ToggleKey    = Enum.KeyCode.RightShift, -- show/hide the window
 	-- ScreenGui is parented to LocalPlayer.PlayerGui
 })
@@ -33,16 +33,16 @@ Profile:Paragraph({
 })
 
 local Session = Home:CreateGroup({ Title = "Session", Column = 2 }) -- 2 = right
-Session:Label({ Key = "Library",    Value = "coreui" })
+Session:Label({ Key = "Library",    Value = "Krypton" })
 Session:Label({ Key = "Version",    Value = "1.0.0" })
-Session:Label({ Key = "Components", Value = "14" })
+Session:Label({ Key = "Components", Value = "15" })
 Session:Label({ Key = "Status",     Value = "Connected" })
 Session:Divider()
 Session:Button({
 	Label  = "Send Notification",
 	Accent = true,
 	Callback = function()
-		Window:Notify({ Title = "Notification", Text = "A toast from coreui." })
+		Window:Notify({ Title = "Notification", Text = "A toast from Krypton." })
 	end,
 })
 
@@ -152,15 +152,40 @@ Controls:ButtonRow({
 	{ Label = "Load", Callback = function() print("load") end },
 })
 
+-- Images. `Image` accepts a bare decal id, an "rbxassetid://…" string, an https
+-- url (downloaded + cached on first use), or a file the executor wrote to disk —
+-- Krypton.Asset.resolve normalizes all of them, so you can paste whichever form
+-- you have. Same for Player.Avatar and a MediaPlayer track's Cover.
+local Media = Components:CreateGroup({ Title = "Media", Column = 2 })
+local banner = Media:Image({
+	Name    = "Logo",
+	Desc    = "A 512×512 mark, rounded off by the frame.",
+	Image   = 91296376944710, -- bare id — no rbxassetid:// prefix needed
+	Height  = 150,
+	Fit     = "contain",
+	Caption = "Image = <decal id> | \"rbxassetid://…\" | \"https://…\" | \"folder/art.png\"",
+})
+Media:Button({
+	Label = "Swap Image",
+	Callback = function()
+		-- :Set takes the same source types; a headshot is a handy live example.
+		local me = game:GetService("Players").LocalPlayer
+		banner:Set(Krypton.Asset.headshot(me and me.UserId or 1, 352))
+	end,
+})
+
 local Appearance = Components:CreateGroup({ Title = "Appearance", Column = 2 })
 Appearance:Colorpicker({
 	Name = "Accent", Desc = "This is a color picker — it re-themes the UI.",
-	Default = Color3.fromHex("f2680c"),
+	Default = Color3.fromHex("00c46a"),
 	Callback = function(c) Window:SetAccent(c) end, -- live re-theme
 })
-Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("3b82f6") })
+Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("1fe087") })
 Appearance:Divider()
 Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for notes and instructions." })
+
+-- Images: `Image` takes a bare decal id, an rbxassetid string, an https url, or
+-- a local file the executor wrote — see the Media group on the Components tab.
 
 -- NOTE: `Group:MediaPlayer{...}` is still part of the library (see
 -- coreui/components/MediaPlayer.lua and the CLAUDE.md section on it) — it's just
@@ -172,4 +197,4 @@ Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for not
 --------------------------------------------------------------------------------
 Window:CreateSettingsTab()
 
-print("[coreui] demo built — Home / Components / Settings tabs ready")
+print("[Krypton] demo built — Home / Components / Settings tabs ready")

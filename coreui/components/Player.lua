@@ -32,12 +32,7 @@ return function(ctx: any, opts: any)
 		Parent = panel,
 	}, {
 		Create.corner(14),
-		Create.stroke(Color3.fromRGB(255, 255, 255):Lerp(colors.accent, 0.88)),
-	})
-	local gradient = Create("UIGradient", {
-		Color = ColorSequence.new(colors.accent_2, colors.accent),
-		Rotation = 135,
-		Parent = avatar,
+		Create.stroke(colors.border),
 	})
 
 	if opts.Avatar then
@@ -50,7 +45,7 @@ return function(ctx: any, opts: any)
 			Parent = avatar,
 		})
 	else
-		local icon = Icons.new("avatar", 34, colors.white)
+		local icon = Icons.new("avatar", 34, colors.knockout)
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Position = UDim2.fromScale(0.5, 0.5);
 		(icon :: any).Parent = avatar
@@ -134,9 +129,8 @@ return function(ctx: any, opts: any)
 		Parent = info,
 	})
 
-	ctx:RegisterAccent(function(accent, accentHover)
+	ctx:RegisterAccent(function(accent)
 		avatar.BackgroundColor3 = accent
-		gradient.Color = ColorSequence.new(accentHover, accent)
 		if badge then
 			badge.TextColor3 = accent
 			local badgeStroke = badge:FindFirstChildOfClass("UIStroke")

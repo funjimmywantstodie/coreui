@@ -28,8 +28,12 @@ export type Context = typeof(setmetatable(
 	Context
 ))
 
+-- The hover shade of an accent. Lerping toward white washed the color out (the
+-- Krypton accent went pastel-mint); brightening in HSV instead keeps the hue and
+-- most of the saturation, so #00C46A hovers to ~#1FE087 like the palette says.
 local function hover(accent: Color3): Color3
-	return accent:Lerp(Color3.new(1, 1, 1), 0.3)
+	local h, s, v = accent:ToHSV()
+	return Color3.fromHSV(h, math.max(0, s - 0.12), math.min(1, v + 0.12))
 end
 
 function Context.new(theme: any, overlay: Frame, accent: Color3): Context

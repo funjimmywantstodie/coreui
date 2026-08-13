@@ -24,6 +24,7 @@ local Player = require(script.Parent.Player)
 local PlayerSelect = require(script.Parent.PlayerSelect)
 local Section = require(script.Parent.Section)
 local Custom = require(script.Parent.Custom)
+local Image = require(script.Parent.Image)
 local DataGrid = require(script.Parent.DataGrid)
 local MediaPlayer = require(script.Parent.MediaPlayer)
 
@@ -101,6 +102,9 @@ function Controls.new(ctx: any, frame: Frame)
 	function api:Label(o) return mount(Label, o, nil, "Label") end
 	function api:Divider() return mount(Divider, {}, nil, "Divider") end
 	function api:Player(o) return mount(Player, o, nil, "Player") end
+	-- Source is caller-owned content (an id / path / url), not a settable value,
+	-- so it gets no Flag codec — same call as Custom / DataGrid.
+	function api:Image(o) return mount(Image, o, nil, "Image") end
 	function api:List(o) return mount(List, o, nil, "List") end
 
 	function api:Dropdown(o)

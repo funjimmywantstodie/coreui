@@ -101,7 +101,9 @@ return function(ctx: any, opts: any)
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0, 0.5),
 		Size = UDim2.fromOffset(15, 15),
-		BackgroundColor3 = colors.white,
+		-- Text (not knockout): at value 0 the knob sits off the accent fill, on
+		-- the bare rail, where a knockout-dark knob would disappear.
+		BackgroundColor3 = colors.text,
 		ZIndex = 2,
 		Parent = rail,
 	}, {

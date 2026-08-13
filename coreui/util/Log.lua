@@ -1,12 +1,12 @@
 --!strict
--- util/Log.lua — one place every coreui diagnostic flows through, so the format
+-- util/Log.lua — one place every Krypton diagnostic flows through, so the format
 -- stays uniform and the library explains a mistake instead of throwing a bare
 -- "attempt to index nil value" three frames deep in a bundled chunk.
 --
 -- Policy:
 --   * fail  — the call genuinely can't proceed (wrong TYPE for a required arg).
 --             Raised with level 0 so the executor console shows our clean
---             "[coreui] Slider "Speed": ..." text, not a bundle file:line prefix.
+--             "[Krypton] Slider "Speed": ..." text, not a bundle file:line prefix.
 --   * warn  — a recoverable mistake (bad enum value, out-of-range index, a
 --             missing option we can default). We say what happened + what we did
 --             and keep building, so one typo never blanks the whole menu.
@@ -15,7 +15,7 @@
 -- opts.Name)` → `Slider "Speed"`. Keep messages actionable: name the field, the
 -- value we got, and the fix.
 
-local PREFIX = "[coreui]"
+local PREFIX = "[Krypton]"
 
 local Log = {}
 

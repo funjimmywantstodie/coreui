@@ -14,7 +14,7 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 		Size = UDim2.new(1, 0, 0, 36),
 		BackgroundColor3 = accent and ctx.Accent or colors.control,
 		Text = label or "Button",
-		TextColor3 = accent and colors.white or colors.text,
+		TextColor3 = accent and colors.knockout or colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 	}, {
