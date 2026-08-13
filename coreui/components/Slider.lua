@@ -63,14 +63,26 @@ return function(ctx: any, opts: any)
 		Create("UISizeConstraint", { MinSize = Vector2.new(38, 22) }),
 	})
 
+	-- The grab area is 18px tall and transparent; the visible 6px rail is centered
+	-- inside it. A 6px-tall button is a genuinely hard target to hit with a mouse
+	-- (and near-impossible on touch), which is what made the slider feel broken.
 	local track = Create("TextButton", {
 		Name = "Slider",
 		AutoButtonColor = false,
 		Text = "",
-		Size = UDim2.new(1, 0, 0, 6),
-		BackgroundColor3 = colors.toggle_off,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 18),
 		LayoutOrder = 2,
 		Parent = f.field,
+	})
+
+	local rail = Create("Frame", {
+		Name = "Rail",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.new(1, 0, 0, 6),
+		BackgroundColor3 = colors.toggle_off,
+		Parent = track,
 	}, {
 		Create.corner(999),
 	})
@@ -79,7 +91,7 @@ return function(ctx: any, opts: any)
 		Name = "Fill",
 		Size = UDim2.fromScale(0, 1),
 		BackgroundColor3 = ctx.Accent,
-		Parent = track,
+		Parent = rail,
 	}, {
 		Create.corner(999),
 	})
@@ -91,7 +103,7 @@ return function(ctx: any, opts: any)
 		Size = UDim2.fromOffset(15, 15),
 		BackgroundColor3 = colors.white,
 		ZIndex = 2,
-		Parent = track,
+		Parent = rail,
 	}, {
 		Create.corner(999),
 		Create("UIScale", {}),
@@ -118,8 +130,8 @@ return function(ctx: any, opts: any)
 	end
 
 	local function setFromX(x: number)
-		local span = track.AbsoluteSize.X
-		local pct = span > 0 and clamp((x - track.AbsolutePosition.X) / span, 0, 1) or 0
+		local span = rail.AbsoluteSize.X
+		local pct = span > 0 and clamp((x - rail.AbsolutePosition.X) / span, 0, 1) or 0
 		value = clamp(snap(min + pct * (max - min)), min, max)
 		render()
 		if opts.Callback then

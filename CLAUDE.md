@@ -77,9 +77,11 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
   :Label :Divider :List :Player :Custom :DataGrid :MediaPlayer`
   - `PlayerSelect`/`PlayerMultiSelect` (`components/PlayerSelect.lua`) — dropdown-shell
-    picker that lists `Players:GetPlayers()` live (refetched each open), each row a
-    headshot (`GetUserThumbnailAsync`, fetched off-thread so opening never blocks)
-    + display name + `@username`. `:Get()` resolves live Player instances (single) or
+    picker that lists `Players:GetPlayers()` live (refetched each open, and rebuilt
+    on join/leave while open), each row a headshot (`GetUserThumbnailAsync`, fetched
+    off-thread so opening never blocks, then cached process-wide by UserId) + display
+    name + `@username`. The row list is a `ScrollingFrame` capped at `MENU_MAX_H`, so
+    a full server is reachable. `:Get()` resolves live Player instances (single) or
     a live `{Player}` (multi) by UserId, so someone leaving just drops out. Flag
     codec `playerselect` persists UserId(s), not instances.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
@@ -119,7 +121,12 @@ subscription registry, and the single-popover manager.
   — dropdowns & colorpickers mount their menu into the high-ZIndex `overlay` so
   it escapes the scrolling content's clipping. Auto-clamps to window bounds and
   flips above the anchor when no room below. A `CanvasGroup` menu fades in via
-  one `GroupTransparency` tween.
+  one `GroupTransparency` tween. Window's tab `select()` closes any open popover
+  (the overlay outlives the page, so it would otherwise hang over the new tab).
+- `ctx:BeginCapture()` / `:EndCapture()` / `:IsCapturing()` — a control listening
+  for a raw keypress (Keybind) claims capture; Window's toggle-key listener sits
+  on UserInputService and ignores input while capture is held, so binding a key
+  doesn't also toggle the window on that same keystroke.
 
 **Collapse** (`util/Collapse.lua`): `Collapse.wrap(content, startCollapsed)` →
 `(holder, set)`. `content` must be `(1,0)` wide with `AutomaticSize.Y`. Holder
@@ -212,6 +219,11 @@ without owning/destroying it; or give neither and it's a pure remote — every
 action just fires `Callback(action, payload)` + a matching event, and you push
 state back with `:SetProgress`/`:SetPlaying`/`:SetDuration`. Transient like
 `Custom`/`DataGrid` — no `Flag`/config codec.
+
+**Currently left out of `example.loadstring.lua`** at the author's request — the
+component, its `Controls.lua` wiring and its bundling are all untouched, the demo
+just doesn't show it off right now. Don't delete it; re-add the demo group when
+asked.
 
 ```lua
 local player = Group:MediaPlayer({

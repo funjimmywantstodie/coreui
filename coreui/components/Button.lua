@@ -100,6 +100,9 @@ function Button.row(ctx: any, list: { any })
 	})
 	local GAP = 10
 	local n = #list
+	if n == 0 then
+		return wrap, {}, true -- empty row: nothing to size (1/n would be a div by zero)
+	end
 	for i, item in list do
 		local btn = newButton(ctx, item.Label, item.Accent == true, item.Callback)
 		btn.LayoutOrder = i

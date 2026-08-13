@@ -1,10 +1,16 @@
 --!strict
 -- components/PlayerSelect.lua — single + multi player picker.
 -- Same box/popover shell as Dropdown, but the menu lists Players:GetPlayers()
--- live (refetched on every open) with a headshot thumbnail, display name and
--- @username per row. Selection is tracked by UserId so it round-trips through
--- config Flags; :Get() always resolves live against the current player list,
--- so a player who leaves quietly drops out instead of leaving a stale handle.
+-- live (refetched on every open, and kept in sync while open) with a headshot
+-- thumbnail, display name and @username per row. Selection is tracked by UserId
+-- so it round-trips through config Flags; :Get() always resolves live against the
+-- current player list, so a player who leaves quietly drops out instead of
+-- leaving a stale handle.
+--
+-- The menu SCROLLS: a full server is 30+ players, so the row list lives in a
+-- ScrollingFrame capped at MENU_MAX_H. (It used to be a plain auto-sized frame
+-- under a UISizeConstraint, which clipped everyone past the sixth player with no
+-- way to reach them.)
 
 local Players = game:GetService("Players")
 
@@ -13,6 +19,50 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Field = require(script.Parent.Field)
+
+local MENU_MAX_H = 264 -- popover height cap; rows scroll past it
+local MENU_MIN_W = 230
+local ROW_H = 40
+local TICK_W, AVATAR_W, GAP = 15, 28, 9
+
+-- Headshot URLs are a network round-trip and never change within a session, so
+-- they're cached process-wide and in-flight requests are shared. Re-opening the
+-- menu (or toggling a row in a multi-select) then reuses the resolved image
+-- instead of re-fetching every avatar, which is what made them flicker.
+local thumbCache: { [number]: string } = {}
+local thumbWaiters: { [number]: { (string) -> () } } = {}
+
+local function requestThumb(userId: number, apply: (string) -> ())
+	local cached = thumbCache[userId]
+	if cached then
+		apply(cached)
+		return
+	end
+	local waiting = thumbWaiters[userId]
+	if waiting then
+		table.insert(waiting, apply)
+		return
+	end
+	thumbWaiters[userId] = { apply }
+	task.spawn(function()
+		local ok, content = pcall(
+			Players.GetUserThumbnailAsync,
+			Players,
+			userId,
+			Enum.ThumbnailType.HeadShot,
+			Enum.ThumbnailSize.Size48x48
+		)
+		local list = thumbWaiters[userId]
+		thumbWaiters[userId] = nil
+		if not ok or type(content) ~= "string" or content == "" then
+			return
+		end
+		thumbCache[userId] = content
+		for _, fn in list or {} do
+			pcall(fn, content)
+		end
+	end)
+end
 
 local function hover(button: GuiButton, base: Color3, over: Color3)
 	button.MouseEnter:Connect(function()
@@ -92,20 +142,47 @@ local function build(ctx: any, opts: any, multi: boolean)
 	(chevron :: any).Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
+	-- The CanvasGroup auto-sizes to the scroller, whose height is fitted to the row
+	-- list up to MENU_MAX_H (see fitMenu) — past that the canvas overflows and the
+	-- list scrolls instead of being silently cut off.
 	local menu = Create("CanvasGroup", {
 		Name = "PlayerMenu",
 		Visible = false,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.fromOffset(230, 0),
+		Size = UDim2.fromOffset(MENU_MIN_W, 0),
 		BackgroundColor3 = colors.pop,
 		ClipsDescendants = true,
 	}, {
 		Create.corner(8),
 		Create.stroke(colors.border),
 		Create.padding(5),
-		Create.listLayout({ Padding = UDim.new(0, 2) }),
-		Create("UISizeConstraint", { MaxSize = Vector2.new(math.huge, 260) }),
 	})
+
+	local scroller = Create("ScrollingFrame", {
+		Name = "Rows",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 0),
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = colors.text_dim,
+		ScrollBarImageTransparency = 0.35,
+		Parent = menu,
+	}, {
+		Create.listLayout({ Padding = UDim.new(0, 2) }),
+	})
+
+	-- The viewport is driven off the layout's measured content height rather than
+	-- AutomaticSize, so the menu is exactly as tall as its rows up to MENU_MAX_H
+	-- and scrolls beyond it. (The canvas keeps auto-sizing, which is what gives
+	-- the overflow something to scroll through.)
+	local rowLayout = scroller:FindFirstChildOfClass("UIListLayout") :: UIListLayout
+	local function fitMenu()
+		scroller.Size = UDim2.new(1, 0, 0, math.min(MENU_MAX_H, rowLayout.AbsoluteContentSize.Y))
+	end
+	rowLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fitMenu)
 
 	local function selectedPlayers(): { Player }
 		local list = {}
@@ -153,28 +230,67 @@ local function build(ctx: any, opts: any, multi: boolean)
 		end
 	end
 
-	local rebuild -- fwd
+	local function isSelected(userId: number): boolean
+		if multi then
+			return selected[userId] == true
+		end
+		return singleId == userId
+	end
+
+	-- Live row handles, keyed by UserId, so picking (or an external :Set) repaints
+	-- the affected rows in place instead of tearing the whole menu down — a
+	-- rebuild would drop every hover state and restart the open animation.
+	type Row = { tick: GuiObject, name: TextLabel }
+	local rows: { [number]: Row } = {}
+
+	local function paintRow(userId: number)
+		local row = rows[userId]
+		if not row then
+			return
+		end
+		local sel = isSelected(userId)
+		row.tick.Visible = sel
+		row.name.TextColor3 = sel and colors.text or colors.text_muted
+	end
+
+	local function repaintAll()
+		for userId in rows do
+			paintRow(userId)
+		end
+	end
+
 	local function pick(p: Player)
 		if multi then
-			selected[p.UserId] = not selected[p.UserId] or nil
+			local was = selected[p.UserId] == true
+			selected[p.UserId] = (not was) or nil
+			paintRow(p.UserId)
 			relabel()
-			rebuild()
 		else
+			local previous = singleId
 			singleId = p.UserId
+			if previous then
+				paintRow(previous)
+			end
+			paintRow(p.UserId)
 			relabel()
 			ctx:ClosePopover()
 		end
 		fireCallback()
 	end
 
-	rebuild = function()
-		for _, child in menu:GetChildren() do
+	local function rebuild()
+		table.clear(rows)
+		for _, child in scroller:GetChildren() do
 			if child:IsA("GuiButton") or child:IsA("TextLabel") then
 				child:Destroy()
 			end
 		end
 
 		local players = Players:GetPlayers()
+		table.sort(players, function(a, b)
+			return displayName(a):lower() < displayName(b):lower()
+		end)
+
 		if #players == 0 then
 			Create("TextLabel", {
 				Name = "Empty",
@@ -184,51 +300,51 @@ local function build(ctx: any, opts: any, multi: boolean)
 				TextColor3 = colors.text_muted,
 				TextSize = 13,
 				FontFace = Theme.Font.Regular,
-				Parent = menu,
+				Parent = scroller,
 			})
 			return
 		end
 
 		for i, p in players do
-			local sel = multi and selected[p.UserId] == true or (not multi and singleId == p.UserId)
+			local userId = p.UserId
 
 			local row = Create("TextButton", {
-				Name = p.Name,
+				Name = tostring(userId),
 				AutoButtonColor = false,
 				Text = "",
 				BackgroundColor3 = colors.control_hi,
 				BackgroundTransparency = 1,
-				AutomaticSize = Enum.AutomaticSize.Y,
-				Size = UDim2.new(1, 0, 0, 0),
+				Size = UDim2.new(1, -4, 0, ROW_H), -- -4 keeps rows clear of the scrollbar
 				LayoutOrder = i,
-				Parent = menu,
+				ClipsDescendants = true,
+				Parent = scroller,
 			}, {
 				Create.corner(6),
-				Create.padding(6, 8),
+				Create.padding(0, 8),
 				Create.listLayout({
 					FillDirection = Enum.FillDirection.Horizontal,
 					VerticalAlignment = Enum.VerticalAlignment.Center,
-					Padding = UDim.new(0, 9),
+					Padding = UDim.new(0, GAP),
 				}),
 			})
 
 			local tickHolder = Create("Frame", {
 				Name = "Tick",
 				BackgroundTransparency = 1,
-				Size = UDim2.fromOffset(15, 15),
+				Size = UDim2.fromOffset(TICK_W, TICK_W),
 				LayoutOrder = 1,
 				Parent = row,
 			})
 			local tick = Icons.new("check", 14, ctx.Accent)
-			tick.Visible = sel;
+			tick.Visible = false;
 			(tick :: any).Parent = tickHolder
 
 			-- avatar: accent-tinted placeholder with a generic icon, swapped for the
-			-- real headshot once GetUserThumbnailAsync resolves (it's a network call,
-			-- so it runs off-thread and never blocks the menu from opening).
+			-- real headshot once the (cached) thumbnail lookup resolves — the fetch
+			-- runs off-thread so opening the menu never blocks on the network.
 			local avatar = Create("Frame", {
 				Name = "Avatar",
-				Size = UDim2.fromOffset(28, 28),
+				Size = UDim2.fromOffset(AVATAR_W, AVATAR_W),
 				BackgroundColor3 = ctx.Accent,
 				ClipsDescendants = true,
 				LayoutOrder = 2,
@@ -241,61 +357,67 @@ local function build(ctx: any, opts: any, multi: boolean)
 			avatarIcon.Position = UDim2.fromScale(0.5, 0.5);
 			(avatarIcon :: any).Parent = avatar
 
-			task.spawn(function()
-				local ok, content = pcall(
-					Players.GetUserThumbnailAsync,
-					Players,
-					p.UserId,
-					Enum.ThumbnailType.HeadShot,
-					Enum.ThumbnailSize.Size48x48
-				)
-				if ok and avatar.Parent then
-					avatarIcon.Visible = false
-					Create("ImageLabel", {
-						Name = "Image",
-						BackgroundTransparency = 1,
-						Size = UDim2.fromScale(1, 1),
-						Image = content,
-						Parent = avatar,
-					})
+			requestThumb(userId, function(image)
+				if not avatar.Parent then
+					return
 				end
+				avatarIcon.Visible = false
+				local existing = avatar:FindFirstChild("Image")
+				if existing and existing:IsA("ImageLabel") then
+					existing.Image = image
+					return
+				end
+				Create("ImageLabel", {
+					Name = "Image",
+					BackgroundTransparency = 1,
+					Size = UDim2.fromScale(1, 1),
+					Image = image,
+					Parent = avatar,
+				})
 			end)
 
+			-- Names take the row's leftover width (offset-sized, truncated) so a long
+			-- display name can't push the @username past the menu edge.
 			local names = Create("Frame", {
 				Name = "Names",
 				BackgroundTransparency = 1,
-				AutomaticSize = Enum.AutomaticSize.XY,
-				Size = UDim2.new(0, 0, 0, 0),
+				Size = UDim2.new(1, -(TICK_W + AVATAR_W + GAP * 2), 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
 				LayoutOrder = 3,
 				Parent = row,
 			}, {
 				Create.listLayout({ Padding = UDim.new(0, 1) }),
 			})
 
-			Create("TextLabel", {
+			local nameLabel = Create("TextLabel", {
 				Name = "Display",
 				BackgroundTransparency = 1,
-				AutomaticSize = Enum.AutomaticSize.XY,
+				Size = UDim2.new(1, 0, 0, 15),
 				Text = displayName(p),
-				TextColor3 = sel and colors.text or colors.text_muted,
+				TextColor3 = colors.text_muted,
 				TextSize = 13,
 				FontFace = Theme.Font.Regular,
 				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
 				LayoutOrder = 1,
 				Parent = names,
 			})
 			Create("TextLabel", {
 				Name = "Username",
 				BackgroundTransparency = 1,
-				AutomaticSize = Enum.AutomaticSize.XY,
+				Size = UDim2.new(1, 0, 0, 13),
 				Text = "@" .. p.Name,
 				TextColor3 = colors.text_dim,
 				TextSize = 11,
 				FontFace = Theme.Font.Regular,
 				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
 				LayoutOrder = 2,
 				Parent = names,
 			})
+
+			rows[userId] = { tick = tick, name = nameLabel }
+			paintRow(userId)
 
 			row.MouseEnter:Connect(function()
 				Tween.play(row, Tween.Fast, { BackgroundTransparency = 0 })
@@ -314,19 +436,64 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Tween.play(chevron, Tween.Spin, { Rotation = open and 180 or 0 })
 	end
 
+	-- Roster changes while the menu is open rebuild it, so someone joining or
+	-- leaving mid-pick doesn't leave a row pointing at a player who's gone.
+	local liveConns: { RBXScriptConnection } = {}
+	local function stopWatching()
+		for _, conn in liveConns do
+			conn:Disconnect()
+		end
+		table.clear(liveConns)
+	end
+
 	box.Activated:Connect(function()
 		if ctx:IsOpen(menu) then
 			ctx:ClosePopover()
 			return
 		end
 		rebuild()
-		menu.Size = UDim2.fromOffset(math.max(box.AbsoluteSize.X, 230), 0)
+		fitMenu()
+		scroller.CanvasPosition = Vector2.new(0, 0)
+		menu.Size = UDim2.fromOffset(math.max(box.AbsoluteSize.X, MENU_MIN_W), 0)
 		setOpenVisual(true)
+		table.insert(liveConns, Players.PlayerAdded:Connect(rebuild))
+		table.insert(liveConns, Players.PlayerRemoving:Connect(function()
+			-- PlayerRemoving fires before the player leaves GetPlayers(), so rebuild
+			-- on the next step to get the post-departure roster.
+			task.defer(function()
+				if ctx:IsOpen(menu) then
+					rebuild()
+				end
+			end)
+		end))
 		ctx:OpenPopover(menu, box, function()
+			stopWatching()
 			setOpenVisual(false)
 		end)
 	end)
 	hover(box, colors.control, colors.control_hi)
+
+	-- The box label resolves UserIds to live players, so it has to be redrawn when
+	-- someone selected leaves (or rejoins) — otherwise it keeps naming a player
+	-- who isn't in the server any more. Self-disconnects once the control is gone,
+	-- since these signals outlive the ScreenGui.
+	do
+		local rosterConns: { RBXScriptConnection } = {}
+		local function onRoster(p: Player)
+			if not box:IsDescendantOf(game) then
+				for _, conn in rosterConns do
+					conn:Disconnect()
+				end
+				table.clear(rosterConns)
+				return
+			end
+			if isSelected(p.UserId) then
+				task.defer(relabel)
+			end
+		end
+		table.insert(rosterConns, Players.PlayerRemoving:Connect(onRoster))
+		table.insert(rosterConns, Players.PlayerAdded:Connect(onRoster))
+	end
 
 	relabel()
 
@@ -339,7 +506,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 	end
 	function handle:Set(value: any)
 		if multi then
-			selected = {}
+			table.clear(selected)
 			if type(value) == "table" then
 				for _, v in value do
 					local id = toId(v)
@@ -352,9 +519,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			singleId = toId(value)
 		end
 		relabel()
-		if ctx:IsOpen(menu) then
-			rebuild()
-		end
+		repaintAll()
 		fireCallback()
 	end
 

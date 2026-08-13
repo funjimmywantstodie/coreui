@@ -162,20 +162,9 @@ Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("3b82f6") 
 Appearance:Divider()
 Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for notes and instructions." })
 
--- MediaPlayer: no SoundId given, so it's a pure remote-control surface here —
--- drag the timeline / hit transport and watch the Callback prints. Give it a
--- Queue entry a `SoundId` and it'll own a real Sound + actually play audio.
-local MediaGroup = Components:CreateGroup({ Title = "Media Player", Column = 2 })
-local media = MediaGroup:MediaPlayer({
-	Name = "Now Playing", Desc = "Drag the timeline, or use the transport controls.",
-	Queue = {
-		{ Title = "Sunset Drive", Artist = "Nightcall", Duration = 214 },
-		{ Title = "Neon Streets", Artist = "Nightcall", Duration = 187 },
-	},
-	Volume = 0.6, ShowVolume = true, ShowShuffle = true, ShowLoop = true,
-	Callback = function(action, payload) print("player:", action, payload.Title) end,
-})
-media.TrackChanged:Connect(function(track) print("now playing:", track.Title) end)
+-- NOTE: `Group:MediaPlayer{...}` is still part of the library (see
+-- coreui/components/MediaPlayer.lua and the CLAUDE.md section on it) — it's just
+-- left out of this demo for now so the tour stays focused on the core controls.
 
 --------------------------------------------------------------------------------
 -- TAB 3 · Settings (built in — accent, toggle key, config save/load)

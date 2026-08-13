@@ -11,6 +11,9 @@ local Icons = require(script.Parent.Parent.Icons)
 local Log = require(script.Parent.Parent.util.Log)
 local Field = require(script.Parent.Field)
 
+local MENU_MAX_H = 232 -- popover height cap; options scroll past it
+local MENU_MIN_W = 150
+
 local function hover(button: GuiButton, base: Color3, over: Color3)
 	button.MouseEnter:Connect(function()
 		Tween.play(button, Tween.Fast, { BackgroundColor3 = over })
@@ -78,20 +81,47 @@ local function build(ctx: any, opts: any, multi: boolean)
 	(chevron :: any).Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
+	-- The option list lives in a ScrollingFrame capped at MENU_MAX_H: it used to be
+	-- a plain auto-sized frame under a UISizeConstraint, which silently clipped
+	-- every option past the sixth with no way to reach them.
 	local menu = Create("CanvasGroup", {
 		Name = "DropdownMenu",
 		Visible = false,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.fromOffset(150, 0),
+		Size = UDim2.fromOffset(MENU_MIN_W, 0),
 		BackgroundColor3 = colors.pop,
 		ClipsDescendants = true,
 	}, {
 		Create.corner(8),
 		Create.stroke(colors.border),
 		Create.padding(5),
-		Create.listLayout({ Padding = UDim.new(0, 2) }),
-		Create("UISizeConstraint", { MaxSize = Vector2.new(math.huge, 210) }),
 	})
+
+	local scroller = Create("ScrollingFrame", {
+		Name = "Options",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 0),
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = colors.text_dim,
+		ScrollBarImageTransparency = 0.35,
+		Parent = menu,
+	}, {
+		Create.listLayout({ Padding = UDim.new(0, 2) }),
+	})
+
+	-- The viewport is driven off the layout's measured content height rather than
+	-- AutomaticSize, so the menu is exactly as tall as its options up to
+	-- MENU_MAX_H and scrolls beyond it. (The canvas keeps auto-sizing, which is
+	-- what gives the overflow something to scroll through.)
+	local optionLayout = scroller:FindFirstChildOfClass("UIListLayout") :: UIListLayout
+	local function fitMenu()
+		scroller.Size = UDim2.new(1, 0, 0, math.min(MENU_MAX_H, optionLayout.AbsoluteContentSize.Y))
+	end
+	optionLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fitMenu)
 
 	local function valueLabelText(): (string, boolean)
 		if multi then
@@ -126,7 +156,6 @@ local function build(ctx: any, opts: any, multi: boolean)
 		return single == opt
 	end
 
-	local rebuild -- fwd
 	local function fireMulti(): { string }
 		local list = {}
 		for _, opt in options do
@@ -137,14 +166,30 @@ local function build(ctx: any, opts: any, multi: boolean)
 		return list
 	end
 
-	rebuild = function()
-		for _, child in menu:GetChildren() do
+	-- Live row handles so toggling a multi-select option repaints just that row.
+	-- Rebuilding the whole menu on every click dropped hover states and re-ran the
+	-- open animation mid-interaction.
+	type Row = { tick: GuiObject, label: TextLabel }
+	local rows: { [string]: Row } = {}
+
+	local function paintRow(opt: string)
+		local row = rows[opt]
+		if not row then
+			return
+		end
+		local sel = isSelected(opt)
+		row.tick.Visible = sel
+		row.label.TextColor3 = sel and colors.text or colors.text_muted
+	end
+
+	local function rebuild()
+		table.clear(rows)
+		for _, child in scroller:GetChildren() do
 			if child:IsA("TextButton") then
 				child:Destroy()
 			end
 		end
 		for i, opt in options do
-			local sel = isSelected(opt)
 			local optBtn = Create("TextButton", {
 				Name = opt,
 				AutoButtonColor = false,
@@ -152,9 +197,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 				BackgroundColor3 = colors.control_hi,
 				BackgroundTransparency = 1,
 				AutomaticSize = Enum.AutomaticSize.Y,
-				Size = UDim2.new(1, 0, 0, 0),
+				Size = UDim2.new(1, -4, 0, 0), -- -4 keeps rows clear of the scrollbar
 				LayoutOrder = i,
-				Parent = menu,
+				Parent = scroller,
 			}, {
 				Create.corner(6),
 				Create.padding(7, 9),
@@ -173,22 +218,27 @@ local function build(ctx: any, opts: any, multi: boolean)
 				Parent = optBtn,
 			})
 			local tick = Icons.new("check", 14, ctx.Accent)
-			tick.Visible = sel;
+			tick.Visible = false;
 			(tick :: any).Parent = tickHolder
 
-			Create("TextLabel", {
+			-- Offset-sized + truncated: an option longer than the menu used to grow
+			-- past its edge and get clipped by the CanvasGroup instead of eliding.
+			local label = Create("TextLabel", {
 				Name = "Label",
 				BackgroundTransparency = 1,
-				AutomaticSize = Enum.AutomaticSize.X,
-				Size = UDim2.new(0, 0, 0, 16),
+				Size = UDim2.new(1, -24, 0, 16),
 				Text = opt,
-				TextColor3 = sel and colors.text or colors.text_muted,
+				TextColor3 = colors.text_muted,
 				TextSize = 13,
 				FontFace = Theme.Font.Regular,
 				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
 				LayoutOrder = 2,
 				Parent = optBtn,
 			})
+
+			rows[opt] = { tick = tick, label = label }
+			paintRow(opt)
 
 			optBtn.MouseEnter:Connect(function()
 				Tween.play(optBtn, Tween.Fast, { BackgroundTransparency = 0 })
@@ -199,13 +249,18 @@ local function build(ctx: any, opts: any, multi: boolean)
 			optBtn.Activated:Connect(function()
 				if multi then
 					selected[opt] = not selected[opt] or nil
+					paintRow(opt)
 					relabel()
-					rebuild()
 					if opts.Callback then
 						task.spawn(opts.Callback, fireMulti())
 					end
 				else
+					local previous = single
 					single = opt
+					if previous then
+						paintRow(previous)
+					end
+					paintRow(opt)
 					relabel()
 					ctx:ClosePopover()
 					if opts.Callback then
@@ -227,7 +282,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 			return
 		end
 		rebuild()
-		menu.Size = UDim2.fromOffset(math.max(box.AbsoluteSize.X, 150), 0)
+		fitMenu()
+		scroller.CanvasPosition = Vector2.new(0, 0)
+		menu.Size = UDim2.fromOffset(math.max(box.AbsoluteSize.X, MENU_MIN_W), 0)
 		setOpenVisual(true)
 		ctx:OpenPopover(menu, box, function()
 			setOpenVisual(false)
@@ -257,6 +314,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 			single = value
 		end
 		relabel()
+		for opt in rows do
+			paintRow(opt)
+		end
 		if opts.Callback then
 			task.spawn(opts.Callback, multi and fireMulti() or single)
 		end

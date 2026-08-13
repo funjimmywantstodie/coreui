@@ -153,6 +153,14 @@ return function(ctx: any, opts: any)
 		button = button,
 		page = page,
 	}
+
+	-- The page's resting position is captured once, on first activation (Window
+	-- sets it before selecting the first tab). Re-reading page.Position on every
+	-- activation meant a fast tab switch sampled a mid-tween value and adopted it
+	-- as "rest", so the page crept further down the screen with each switch.
+	local restPos: UDim2? = nil
+	local slideTween: Tween? = nil
+
 	function tab:_setActive(value: boolean)
 		local becameActive = value and not active
 		active = value
@@ -163,9 +171,13 @@ return function(ctx: any, opts: any)
 			Tween.play(iconScale, Tween.Spring, { Scale = 1 }) -- pop on select
 			-- ease the page up into place so switching tabs settles instead of
 			-- hard-cutting (rest position is set by Window; nudge down, slide back)
-			local rest = page.Position
+			local rest = restPos or page.Position
+			restPos = rest
+			if slideTween then
+				slideTween:Cancel()
+			end
 			page.Position = rest + UDim2.fromOffset(0, 10)
-			Tween.play(page, Tween.Normal, { Position = rest })
+			slideTween = Tween.play(page, Tween.Normal, { Position = rest })
 		end
 	end
 	function tab:CreateGroup(groupOpts: any)

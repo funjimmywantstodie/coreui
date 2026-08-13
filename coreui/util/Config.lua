@@ -65,9 +65,12 @@ print(("[coreui] config: supported=%s  writefile=%s readfile=%s isfile=%s listfi
 		type(g_listfiles), type(g_delfile)
 	))
 
--- Strip path separators so a config name can't escape its folder.
+-- Strip path separators so a config name can't escape its folder. Wrapped in
+-- parens: gsub returns (string, count), and letting that second value escape made
+-- `sanitize(name)` in an argument list expand to two arguments.
 local function sanitize(name: string): string
-	return (tostring(name):gsub("[^%w%-_ ]", "")):gsub("^%s*(.-)%s*$", "%1")
+	local cleaned = (tostring(name):gsub("[^%w%-_ ]", ""))
+	return (cleaned:gsub("^%s*(.-)%s*$", "%1"))
 end
 
 local function configsDir(folder: string): string
@@ -195,7 +198,10 @@ function Config.getAutoload(folder: string): string?
 	end
 	local okRead, raw = pcall(g_readfile, path)
 	if okRead and type(raw) == "string" and raw ~= "" then
-		return raw
+		-- Trim: a stray newline from an editor (or another tool writing the file)
+		-- would never match a name in the saved-config dropdown.
+		local name = sanitize(raw)
+		return name ~= "" and name or nil
 	end
 	return nil
 end

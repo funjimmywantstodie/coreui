@@ -285,13 +285,17 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		for _, col in columns do
 			local raw = data[col.Key]
 			if entry.lastValues[col.Key] ~= raw then
-				entry.lastValues[col.Key] = raw
 				if col.Type == "actions" then
+					entry.lastValues[col.Key] = raw
 					renderActions(entry, col.Key, (raw :: { ActionDef }?) or {})
 				else
 					local cell = entry.cells[col.Key]
 					local focused = col.Editable and (cell :: TextBox):IsFocused()
 					if not focused then
+						-- Only record the value once it's actually on screen. Marking
+						-- it applied while the user was mid-edit made the skipped
+						-- update permanent: the cell kept the stale text after blur.
+						entry.lastValues[col.Key] = raw
 						cell.Text = raw ~= nil and tostring(raw) or ""
 					end
 				end
@@ -312,6 +316,10 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 
 	local function releaseRow(entry: RowEntry)
 		entry.id = nil
+		entry.data = {}
+		-- Drop the change-detection cache with the row: a pooled frame reused for a
+		-- different id must repaint every cell, not diff against the old row's data.
+		table.clear(entry.lastValues)
 		entry.frame.Parent = nil
 		table.insert(pool, entry)
 	end

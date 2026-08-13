@@ -54,6 +54,14 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 			-- expand: slide up to the content's natural height, then hand back to
 			-- AutomaticSize so later content changes keep tracking
 			local target = content.AbsoluteSize.Y
+			if target <= 0 then
+				-- Content hasn't been laid out yet (a group built collapsed and
+				-- expanded before its first render). Tweening to 0 would leave it
+				-- looking empty until the completion handler snapped it open — just
+				-- hand height straight back to AutomaticSize.
+				holder.AutomaticSize = Enum.AutomaticSize.Y
+				return
+			end
 			local t = Tween.play(holder, Tween.Slide, { Size = UDim2.new(1, 0, 0, target) })
 			activeTween = t
 			t.Completed:Once(function(state)

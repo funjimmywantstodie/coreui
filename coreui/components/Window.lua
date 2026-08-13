@@ -102,10 +102,20 @@ return function(opts: any)
 	main:GetPropertyChangedSignal("Size"):Connect(syncShadow)
 
 	-- Never exceed the viewport — on small screens the window shrinks to fit
-	-- (centered) instead of spilling content off the right/bottom edge.
+	-- (centered) instead of spilling content off the right/bottom edge. Skipped
+	-- while maximized, which owns the size itself (this used to fight it and snap
+	-- a maximized window back to its default size on any viewport change).
+	local maximized = false
 	local function fitWindow()
 		local vp = screenGui.AbsoluteSize
 		if vp.X <= 0 then
+			return
+		end
+		if maximized then
+			main.Size = UDim2.fromOffset(
+				math.max(M.windowWidth, vp.X - 24),
+				math.max(M.windowHeight, vp.Y - 24)
+			)
 			return
 		end
 		main.Size = UDim2.fromOffset(
@@ -473,14 +483,34 @@ return function(opts: any)
 			startPos = main.Position
 		end
 	end)
+	-- Keep the window reachable: a drag can't push the titlebar off the top or
+	-- shove the window so far past an edge that there's nothing left to grab.
+	local KEEP_ON_SCREEN = 80
+	local function clampToViewport(pos: UDim2): UDim2
+		local vp = screenGui.AbsoluteSize
+		local size = main.AbsoluteSize
+		if vp.X <= 0 or size.X <= 0 then
+			return pos
+		end
+		local halfX, halfY = size.X / 2, size.Y / 2
+		local cx = pos.X.Scale * vp.X + pos.X.Offset
+		local cy = pos.Y.Scale * vp.Y + pos.Y.Offset
+		cx = math.clamp(cx, KEEP_ON_SCREEN - halfX, vp.X - KEEP_ON_SCREEN + halfX)
+		cy = math.clamp(cy, halfY, math.max(halfY, vp.Y - KEEP_ON_SCREEN + halfY))
+		return UDim2.new(
+			pos.X.Scale, cx - pos.X.Scale * vp.X,
+			pos.Y.Scale, cy - pos.Y.Scale * vp.Y
+		)
+	end
+
 	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
-			main.Position = UDim2.new(
+			main.Position = clampToViewport(UDim2.new(
 				startPos.X.Scale, startPos.X.Offset + delta.X,
 				startPos.Y.Scale, startPos.Y.Offset + delta.Y
-			)
+			))
 		end
 	end))
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
@@ -503,6 +533,9 @@ return function(opts: any)
 
 	local function select(index: number)
 		activeIndex = index
+		-- Popovers live in the overlay, not in the page, so an open dropdown would
+		-- otherwise hang around over the tab you just switched to.
+		ctx:ClosePopover()
 		for i, tab in tabs do
 			tab:_setActive(i == index)
 		end
@@ -542,8 +575,23 @@ return function(opts: any)
 
 				local anyVisible = false
 				if card then
-					for _, item in card:GetChildren() do
-						if item:IsA("GuiObject") and item.Name ~= "Separator" then
+					-- Fields and their trailing hairlines are siblings ordered
+					-- field, separator, field, separator… so filter the fields first,
+					-- then re-derive each separator: visible only when the field
+					-- above it survived AND some field still follows it. (Leaving
+					-- separators alone stranded hairlines wherever a field was
+					-- hidden; showing them all put one under the last row.)
+					local ordered: { GuiObject } = {}
+					for _, child in card:GetChildren() do
+						if child:IsA("GuiObject") then -- skip UICorner/UIStroke/UIPadding/UIListLayout
+							table.insert(ordered, child)
+						end
+					end
+					table.sort(ordered, function(a, b)
+						return a.LayoutOrder < b.LayoutOrder
+					end)
+					for _, item in ordered do
+						if item.Name ~= "Separator" then
 							local matches = groupMatch
 								or string.find(collectText(item), query, 1, true) ~= nil
 							item.Visible = matches
@@ -551,6 +599,24 @@ return function(opts: any)
 								anyVisible = true
 							end
 						end
+					end
+					local previousVisible = false
+					local lastSeparator: GuiObject? = nil
+					for _, item in ordered do
+						if item.Name == "Separator" then
+							item.Visible = previousVisible
+							if previousVisible then
+								lastSeparator = item
+							end
+						else
+							if item.Visible and lastSeparator then
+								lastSeparator = nil -- a field follows it, so it stays
+							end
+							previousVisible = item.Visible
+						end
+					end
+					if lastSeparator then
+						lastSeparator.Visible = false -- trailing hairline, nothing below
 					end
 				end
 				group.Visible = query == "" or groupMatch or anyVisible
@@ -664,16 +730,25 @@ return function(opts: any)
 	-- The toggle key hides AND restores (a single press flips the window's state),
 	-- ignored while the player is typing into a textbox / capturing a keybind.
 	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
-			return
+		if gameProcessed or ctx:IsCapturing() then
+			return -- typing in a textbox, or a Keybind is listening for this press
 		end
 		if toggleKey ~= Enum.KeyCode.Unknown and input.KeyCode == toggleKey then
+			-- Closing only disables the ScreenGui, so without this the toggle key
+			-- just flipped the minimize state of an invisible window and the UI
+			-- looked permanently gone. Bring it back instead.
+			if not screenGui.Enabled then
+				screenGui.Enabled = true
+				minimized = false
+				main.Visible = true
+				restoreHint.Visible = false
+				return
+			end
 			setMinimized(not minimized)
 		end
 	end))
 
 	-- ── maximize toggle ─────────────────────────────────────────────────────────
-	local maximized = false
 	winBtns.max.Activated:Connect(function()
 		maximized = not maximized
 		if maximized then

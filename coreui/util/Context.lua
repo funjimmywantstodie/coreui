@@ -23,6 +23,7 @@ export type Context = typeof(setmetatable(
 		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
 		_popover: { menu: Instance, catcher: Instance, conns: { RBXScriptConnection }, onClose: (() -> ())? }?,
+		_capturing: number,
 	},
 	Context
 ))
@@ -40,7 +41,25 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		Flags = {},
 		_consumers = {},
 		_popover = nil,
+		_capturing = 0,
 	}, Context)
+end
+
+-- ── Key capture ─────────────────────────────────────────────────────────────
+-- A control that's listening for a raw keypress (Keybind) claims capture for the
+-- duration. The window's toggle-key listener sits on UserInputService, which
+-- doesn't know a control is mid-bind, so without this, binding a key also
+-- toggled the window on the very keystroke being bound.
+function Context:BeginCapture()
+	self._capturing += 1
+end
+
+function Context:EndCapture()
+	self._capturing = math.max(0, self._capturing - 1)
+end
+
+function Context:IsCapturing(): boolean
+	return self._capturing > 0
 end
 
 -- Register a function recolored whenever the accent changes. Called once now

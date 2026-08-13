@@ -24,7 +24,7 @@ return function(ctx: any, container: Frame, opts: any)
 	opts = opts or {}
 
 	-- Resolve the requested Type → semantic color + icon (nil = default look).
-	local kind: { color: string, icon: string }? = nil
+	local kind: { color: Color3, icon: string }? = nil
 	if type(opts.Type) == "string" then
 		local key = opts.Type:lower()
 		kind = TYPES[key == "warn" and "warning" or key]
@@ -35,6 +35,25 @@ return function(ctx: any, container: Frame, opts: any)
 	-- so the inner card's horizontal slide is clipped (no layout reflow).
 	local order = (container:GetAttribute("count") or 0) + 1
 	container:SetAttribute("count", order)
+
+	-- Cap the visible stack: the container grows upward with AutomaticSize, so a
+	-- burst of notifications used to run off the top of the window and sit there
+	-- clipped. Retire the oldest instead.
+	local MAX_TOASTS = 4
+	local live: { CanvasGroup } = {}
+	for _, child in container:GetChildren() do
+		if child:IsA("CanvasGroup") then
+			table.insert(live, child)
+		end
+	end
+	if #live >= MAX_TOASTS then
+		table.sort(live, function(a, b)
+			return a.LayoutOrder < b.LayoutOrder
+		end)
+		for i = 1, #live - MAX_TOASTS + 1 do
+			live[i]:Destroy()
+		end
+	end
 
 	local toast = Create("CanvasGroup", {
 		Name = "Toast",
