@@ -197,6 +197,78 @@ function Asset.resolve(value: any): string
 	return Asset.fromFile(value) or ""
 end
 
+-- ── Actually loading it ──────────────────────────────────────────────────────
+-- `resolve` only proves the *shape* of a source is usable — it can't know the
+-- asset renders. An id that's moderated, mistyped, or a Decal the engine won't
+-- resolve leaves the ImageLabel silently blank, which is worse than a
+-- placeholder. `Asset.load` reports what really happened, so callers can keep
+-- their fallback up.
+
+local ContentProvider = game:GetService("ContentProvider")
+
+-- Wait for `image` to finish loading. PreloadAsync gives a real status; polling
+-- IsLoaded is the fallback for environments where it's unavailable or hooked.
+local function awaitLoaded(image: ImageLabel, timeout: number?): boolean
+	local ok, status = pcall(function()
+		local result: any = nil
+		ContentProvider:PreloadAsync({ image }, function(_, assetStatus)
+			result = assetStatus
+		end)
+		return result
+	end)
+	if ok and status ~= nil then
+		return status == Enum.AssetFetchStatus.Success
+	end
+	local deadline = os.clock() + (timeout or 5)
+	while os.clock() < deadline and not image.IsLoaded do
+		task.wait(0.1)
+	end
+	return image.IsLoaded
+end
+
+-- Point `image` at `source` and call `onDone(loaded)` once it's settled. Yields
+-- on its own thread, so callers never block on the network.
+function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
+	task.spawn(function()
+		local content = Asset.resolve(source)
+		if content == "" then
+			image.Image = ""
+			if onDone then
+				onDone(false)
+			end
+			return
+		end
+
+		image.Image = content
+		if awaitLoaded(image) then
+			if onDone then
+				onDone(true)
+			end
+			return
+		end
+
+		-- A Decal asset and the Image it wraps are adjacent ids. Most decals
+		-- render straight from the decal id, but the ones that don't need the
+		-- underlying image — conventionally decalId - 1. Cheap to try, and it's
+		-- the difference between "my logo is invisible" and it just working.
+		local id = tonumber(content:match("rbxassetid://(%d+)$"))
+		if id then
+			image.Image = "rbxassetid://" .. tostring(id - 1)
+			if awaitLoaded(image) then
+				if onDone then
+					onDone(true)
+				end
+				return
+			end
+		end
+
+		image.Image = ""
+		if onDone then
+			onDone(false)
+		end
+	end)
+end
+
 -- Avatar thumbnails without an API round-trip. `kind` is "head" (default),
 -- "bust" or "body"; rbxthumb only accepts a fixed set of sizes.
 function Asset.headshot(userId: number, size: number?, kind: string?): string

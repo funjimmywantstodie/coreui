@@ -110,12 +110,13 @@ return function(ctx: any, opts: any)
 
 	local function apply(value: any)
 		source = value
-		-- Resolving can hit the network (an https source downloads on first use),
-		-- so it runs off-thread — building a menu never blocks on a download.
-		task.spawn(function()
-			local content = Asset.resolve(value)
-			picture.Image = content
-			placeholder.Visible = content == ""
+		-- Asset.load runs off-thread (an https source downloads on first use, and
+		-- it waits on the load to report back), so building a menu never blocks.
+		-- The placeholder holds the frame until the picture is genuinely up — an
+		-- id that never resolves leaves the icon showing, not an empty box.
+		placeholder.Visible = true
+		Asset.load(picture, value, function(loaded)
+			placeholder.Visible = not loaded
 		end)
 	end
 
