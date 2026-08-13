@@ -14,7 +14,7 @@ local Theme = {}
 -- util/Asset.lua, so an asset id, a URL or a local file path all work.
 Theme.Brand = {
 	name   = "Krypton",
-	logo   = "rbxassetid://91296376944710", -- 512×512 square mark
+	logo   = "rbxassetid://74808640463075", -- 512×512 square mark
 	radius = 8,                              -- rounded off with a UICorner
 }
 

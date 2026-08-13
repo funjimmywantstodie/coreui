@@ -110,7 +110,7 @@ local Window = Krypton:CreateWindow({
     ConfigFolder = "krypton",                -- on-disk config folder    (default "krypton")
     ToggleKey    = Enum.KeyCode.RightShift,  -- show/hide key            (default RightShift)
     Accent       = Color3.fromHex("00c46a"), -- initial accent color     (default theme accent)
-    Logo         = 91296376944710,           -- titlebar mark            (default Krypton logo)
+    Logo         = 74808640463075,           -- titlebar mark            (default Krypton logo)
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
 })
 ```
@@ -481,7 +481,7 @@ Drops a picture into a card. `Image` takes **anything** — see
 local h = Group:Image({
     Name    = "Banner",        -- optional label above the picture
     Desc    = "Hub artwork.",  -- optional sub-text
-    Image   = 91296376944710,  -- id / rbxassetid / https url / local file
+    Image   = 74808640463075,  -- id / rbxassetid / https url / local file
     Height  = 160,             -- px (default 140)
     Width   = nil,             -- px; omit for full width
     Fit     = "cover",         -- "cover" | "contain" | "stretch" | "tile"
@@ -558,7 +558,7 @@ first. That means all of these work, interchangeably:
 
 | You pass | What happens |
 | --- | --- |
-| `91296376944710` | bare id → `rbxassetid://91296376944710` |
+| `74808640463075` | bare id → `rbxassetid://74808640463075` |
 | `"rbxassetid://…"`, `"rbxthumb://…"` | used as-is |
 | `"https://roblox.com/library/123/x"` | id pulled out of the link |
 | `"myhub/logo.png"` | local file → `getcustomasset` (executor only) |
@@ -567,7 +567,7 @@ first. That means all of these work, interchangeably:
 ```lua
 local Asset = Krypton.Asset
 
-Asset.resolve(91296376944710)                  -- → "rbxassetid://91296376944710"
+Asset.resolve(74808640463075)                  -- → "rbxassetid://74808640463075"
 Asset.fromFile("myhub/logo.png")               -- → content id, or nil
 Asset.fromUrl("https://example.com/art.png")   -- downloads + caches, → content id
 Asset.headshot(userId, 150)                    -- → rbxthumb avatar url

@@ -160,7 +160,7 @@ local Media = Components:CreateGroup({ Title = "Media", Column = 2 })
 local banner = Media:Image({
 	Name    = "Logo",
 	Desc    = "A 512×512 mark, rounded off by the frame.",
-	Image   = 91296376944710, -- bare id — no rbxassetid:// prefix needed
+	Image   = 74808640463075, -- bare id — no rbxassetid:// prefix needed
 	Height  = 150,
 	Fit     = "contain",
 	Caption = "Image = <decal id> | \"rbxassetid://…\" | \"https://…\" | \"folder/art.png\"",

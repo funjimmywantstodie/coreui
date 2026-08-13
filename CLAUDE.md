@@ -213,7 +213,7 @@ click target). Handle: `:Set(source)` / `:Get()` / `:SetCaption(t)`. Transient
 like `Custom`/`DataGrid` — no Flag codec.
 
 ```lua
-Group:Image({ Name = "Banner", Image = 91296376944710, Height = 160, Fit = "contain" })
+Group:Image({ Name = "Banner", Image = 74808640463075, Height = 160, Fit = "contain" })
 ```
 
 **`Group:DataGrid{...}` / `Section:DataGrid{...}`** (`components/DataGrid.lua`)
