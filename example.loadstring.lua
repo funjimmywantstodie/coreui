@@ -184,10 +184,10 @@ Media:Button({
 local Appearance = Components:CreateGroup({ Title = "Appearance", Column = 2 })
 Appearance:Colorpicker({
 	Name = "Accent", Desc = "This is a color picker — it re-themes the UI.",
-	Default = Color3.fromHex("00c46a"),
+	Default = Color3.fromHex("7be04a"),
 	Callback = function(c) Window:SetAccent(c) end, -- live re-theme
 })
-Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("1fe087") })
+Appearance:Colorpicker({ Name = "Highlight", Default = Color3.fromHex("96ec69") })
 Appearance:Divider()
 Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for notes and instructions." })
 

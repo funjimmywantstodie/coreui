@@ -109,7 +109,7 @@ local Window = Uranium:CreateWindow({
     Version      = "v1.0.0",                 -- status-bar right text    (default "")
     ConfigFolder = "uranium",                -- on-disk config folder    (default "uranium")
     ToggleKey    = Enum.KeyCode.RightShift,  -- show/hide key            (default RightShift)
-    Accent       = Color3.fromHex("7cff3b"), -- initial accent color     (default theme accent)
+    Accent       = Color3.fromHex("7be04a"), -- initial accent color     (default theme accent)
     Logo         = 74808640463075,           -- titlebar mark            (default Uranium logo)
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
     LogoZoom     = 1,                        -- crop a margin baked into the art (default 1)
@@ -437,8 +437,8 @@ The menu stays open while you toggle items; each selected option gets a check.
 ```lua
 local h = Group:Colorpicker({
     Name = "Accent", Desc = "Re-themes the UI.",
-    Default = Color3.fromHex("7cff3b"),
-    Presets = { "1fe087", "3b82f6", ... },  -- optional hex grid (12 defaults)
+    Default = Color3.fromHex("7be04a"),
+    Presets = { "96ec69", "3b82f6", ... },  -- optional hex grid (12 defaults)
     Flag = "accent",
     Callback = function(c) Window:SetAccent(c) end,  -- live re-theme
 })
@@ -643,12 +643,19 @@ paste the id straight into `Image = <id>`. No `rbxassetid://` prefix needed.
 
 ## Theming
 
-Uranium ships the **Uranium Glass** palette: `#7CFF3B` accent on a
-greyscale-green ramp (`#0B0F0A` background, `#18220F` surfaces, `#2C3A24`
-lines), with `#0A1604` knocked out of anything sitting on an accent fill. Flat
-fills only — no gradients, glows, or accent washes behind large areas, and at
-most one accent element per row. The accent is bright enough that using it
-widely stops it reading as an accent at all, hence the one-per-row rule.
+Uranium ships the **Uranium Glass** palette: a `#7BE04A` accent on a
+near-neutral ramp that only whispers green (`#0B0F0A` chrome, `#10150E` body,
+`#171D15` cards, `#1D241B` controls, `#2B3427` lines), with `#08140A` knocked
+out of anything sitting on a solid accent fill. Flat fills only — no gradients
+or glows, and at most one accent element per row.
+
+The accent is applied at three weights depending on how much area it covers: the
+accent itself for small marks (slider fill, toggle track, icons, focus strokes),
+a deeper shade for large solid fills like primary buttons — which hover *up* to
+the full accent — and a ~13% tint of it laid into the surface for tiles that
+should read as accent-coloured without putting neon on screen (the active nav
+button, avatar placeholders, badges). All three move together when you change the
+accent, so there's nothing extra to set.
 
 The accent color drives toggles, sliders, active tabs, buttons, and more. Change
 it any time:

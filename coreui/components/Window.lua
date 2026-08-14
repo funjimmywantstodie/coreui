@@ -916,7 +916,7 @@ return function(opts: any)
 
 	function window:SetAccent(color: Color3)
 		if typeof(color) ~= "Color3" then
-			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7cff3b\"))")
+			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7be04a\"))")
 				:format(typeof(color)))
 		end
 		ctx:SetAccent(color)

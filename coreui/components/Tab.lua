@@ -32,14 +32,32 @@ return function(ctx: any, opts: any)
 		AutoButtonColor = false,
 		Text = "",
 		Size = UDim2.fromOffset(M.navButton, M.navButton),
-		BackgroundColor3 = colors.accent,
+		BackgroundColor3 = colors.accent_soft,
 		BackgroundTransparency = 1,
 	}, {
 		Create.corner(M.navRadius),
 	})
 
-	-- No glow behind the active button: the Uranium palette is flat fills only,
-	-- so the accent tile itself is the whole active state.
+	-- No glow behind the active button: the Uranium palette is flat fills only.
+	-- The active state is a *tinted* tile (accent_soft) with an accent icon on
+	-- it, plus the rail below — a solid accent tile put a neon block in the
+	-- sidebar of every screenshot, and it fought the primary button for the eye.
+	--
+	-- The rail is the loud half of the active state, and it can afford to be:
+	-- it's 3×18px. It lives in the sidebar gutter left of the button (the nav
+	-- frame doesn't clip), and grows out of nothing on select.
+	local rail = Create("Frame", {
+		Name = "Rail",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, -9, 0.5, 0),
+		Size = UDim2.fromOffset(3, 0),
+		BackgroundColor3 = colors.accent,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = button,
+	}, {
+		Create.corner(999),
+	})
 
 	local icon = Icons.new(opts.Icon or "gear", M.navIcon, colors.text_dim)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -87,29 +105,38 @@ return function(ctx: any, opts: any)
 	-- Crossfade both colour and transparency in a single tween. The old code
 	-- snapped BackgroundColor3 to white instantly while the fill was still
 	-- opaque (and snapped transparency to 0 on activate), so a switched-off tab
-	-- showed a solid flash for one frame before fading. Keeping the colour on
-	-- the accent while the fill fades out means there's no intermediate solid
-	-- colour to flash — the accent simply fades in / out.
+	-- showed a solid flash for one frame before fading. Idle keeps the *tint*
+	-- colour and only fades the transparency, so there's no intermediate solid
+	-- colour to flash — the tile simply fades in / out.
 	local function paint(animate: boolean?)
-		local goal
+		local goal, railGoal
+		rail.BackgroundColor3 = ctx.Accent
 		if active then
-			goal = { BackgroundColor3 = ctx.Accent, BackgroundTransparency = 0 }
-			Icons.tint(icon, colors.knockout) -- icon sits on an accent fill
+			goal = { BackgroundColor3 = ctx.AccentSoft, BackgroundTransparency = 0 }
+			Icons.tint(icon, ctx.Accent) -- the icon carries the colour, not the tile
+			railGoal = { Size = UDim2.fromOffset(3, 18), BackgroundTransparency = 0 }
 		else
 			goal = {
-				-- idle (transparency 1) keeps the accent so the fade-out is a
-				-- pure accent fade; hover is one step lighter than the chrome.
-				BackgroundColor3 = hovering and colors.control_hi or ctx.Accent,
+				-- idle (transparency 1) keeps the tint colour so the fade-out is a
+				-- pure fade; hover is one step lighter than the chrome.
+				BackgroundColor3 = hovering and colors.control_hi or ctx.AccentSoft,
 				BackgroundTransparency = hovering and 0 or 1,
 			}
 			Icons.tint(icon, hovering and colors.text_muted or colors.text_dim)
+			railGoal = { Size = UDim2.fromOffset(3, 0), BackgroundTransparency = 1 }
 		end
 		if animate == false then
 			for key, value in goal do
 				(button :: any)[key] = value
 			end
+			for key, value in railGoal do
+				(rail :: any)[key] = value
+			end
 		else
 			Tween.play(button, Tween.Fast, goal)
+			-- Overshoot on the way in only: Back easing on the way *out* would
+			-- pull the height below zero before settling.
+			Tween.play(rail, active and Tween.Spring or Tween.Fast, railGoal)
 		end
 	end
 	button.MouseEnter:Connect(function()
@@ -125,8 +152,10 @@ return function(ctx: any, opts: any)
 		end
 	end)
 	ctx:RegisterAccent(function()
+		rail.BackgroundColor3 = ctx.Accent
 		if active then
-			button.BackgroundColor3 = ctx.Accent
+			button.BackgroundColor3 = ctx.AccentSoft
+			Icons.tint(icon, ctx.Accent)
 		end
 	end)
 

@@ -23,10 +23,13 @@ return function(ctx: any, opts: any)
 	})
 
 	-- avatar ───────────────────────────────────────────────────────────────
+	-- The placeholder tile is accent-*tinted*, with the accent carried by the
+	-- icon on top. A 56px solid-accent square was the biggest block of colour
+	-- on the Home tab and it wasn't even real content.
 	local avatar = Create("Frame", {
 		Name = "Avatar",
 		Size = UDim2.fromOffset(56, 56),
-		BackgroundColor3 = colors.accent,
+		BackgroundColor3 = colors.accent_soft,
 		ClipsDescendants = true,
 		LayoutOrder = 1,
 		Parent = panel,
@@ -35,6 +38,7 @@ return function(ctx: any, opts: any)
 		Create.stroke(colors.border),
 	})
 
+	local placeholder: GuiObject? = nil -- Icons.new may resolve to a glyph TextLabel
 	if opts.Avatar then
 		Create("ImageLabel", {
 			Name = "Image",
@@ -45,10 +49,11 @@ return function(ctx: any, opts: any)
 			Parent = avatar,
 		})
 	else
-		local icon = Icons.new("avatar", 34, colors.knockout)
+		local icon = Icons.new("avatar", 34, colors.accent)
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Position = UDim2.fromScale(0.5, 0.5);
 		(icon :: any).Parent = avatar
+		placeholder = icon
 	end
 
 	-- info ─────────────────────────────────────────────────────────────────
@@ -93,11 +98,14 @@ return function(ctx: any, opts: any)
 
 	local badge: TextLabel? = nil
 	if opts.Badge then
+		-- A filled chip (tinted surface + accent text) rather than an outlined
+		-- one: an accent hairline that small reads as a stray line at a glance,
+		-- and the fill gives the label something to sit on.
 		badge = Create("TextLabel", {
 			Name = "Badge",
 			AutomaticSize = Enum.AutomaticSize.X,
-			Size = UDim2.fromOffset(0, 16),
-			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(17, 17),
+			BackgroundColor3 = colors.accent_soft,
 			Text = string.upper(opts.Badge),
 			TextColor3 = colors.accent,
 			TextSize = 10,
@@ -106,8 +114,7 @@ return function(ctx: any, opts: any)
 			Parent = nameRow,
 		}, {
 			Create.corner(999),
-			Create.stroke(colors.accent),
-			Create.padding(1, 6),
+			Create.padding(1, 7),
 		})
 	end
 
@@ -130,13 +137,13 @@ return function(ctx: any, opts: any)
 	})
 
 	ctx:RegisterAccent(function(accent)
-		avatar.BackgroundColor3 = accent
+		avatar.BackgroundColor3 = ctx.AccentSoft
+		if placeholder then
+			Icons.tint(placeholder, accent)
+		end
 		if badge then
+			badge.BackgroundColor3 = ctx.AccentSoft
 			badge.TextColor3 = accent
-			local badgeStroke = badge:FindFirstChildOfClass("UIStroke")
-			if badgeStroke then
-				badgeStroke.Color = accent
-			end
 		end
 	end)
 

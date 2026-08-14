@@ -12,7 +12,10 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 		Name = "Button",
 		AutoButtonColor = false,
 		Size = UDim2.new(1, 0, 0, 36),
-		BackgroundColor3 = accent and ctx.Accent or colors.control,
+		-- Accent buttons take the *deepened* accent, not the accent itself: a
+		-- full-width slab of the raw accent is the single loudest thing the UI
+		-- can draw. It hovers up to the real accent (see below).
+		BackgroundColor3 = accent and ctx.AccentFill or colors.control,
 		Text = label or "Button",
 		TextColor3 = accent and colors.knockout or colors.text,
 		TextSize = 13,
@@ -30,10 +33,12 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 
 	local hovering = false
 	local function base(): Color3
-		return accent and ctx.Accent or colors.control
+		return accent and ctx.AccentFill or colors.control
 	end
+	-- Hovering an accent button brightens it to the full accent — the fill
+	-- "lights up" rather than shifting to yet another shade.
 	local function over(): Color3
-		return accent and ctx.AccentHover or colors.control_hi
+		return accent and ctx.Accent or colors.control_hi
 	end
 	btn.MouseEnter:Connect(function()
 		hovering = true

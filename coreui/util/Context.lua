@@ -19,6 +19,8 @@ export type Context = typeof(setmetatable(
 		Theme: any,
 		Accent: Color3,
 		AccentHover: Color3,
+		AccentFill: Color3,
+		AccentSoft: Color3,
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
@@ -36,11 +38,31 @@ local function hover(accent: Color3): Color3
 	return Color3.fromHSV(h, math.max(0, s - 0.12), math.min(1, v + 0.12))
 end
 
+-- The accent, deepened, for LARGE solid fills (primary buttons). The accent is
+-- sized for small marks — a 6px slider fill, a 23px toggle track. The same
+-- colour across a 36px full-width button is a searing slab that drowns
+-- everything around it, so big fills sit ~18% darker and *hover up* to the full
+-- accent, which also gives the press somewhere to go.
+local function fill(accent: Color3): Color3
+	local h, s, v = accent:ToHSV()
+	return Color3.fromHSV(h, math.min(1, s + 0.06), v * 0.82)
+end
+
+-- The accent laid *into* a surface — a tinted tile rather than a painted one.
+-- Used where something needs to read as accent-coloured across an area too big
+-- for the real accent (active nav tile, avatar placeholders, badges): the icon
+-- or text on top carries the actual colour, the tile just tints under it.
+local function soft(theme: any, accent: Color3): Color3
+	return theme.Colors.card:Lerp(accent, 0.13)
+end
+
 function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 	return setmetatable({
 		Theme = theme,
 		Accent = accent,
 		AccentHover = hover(accent),
+		AccentFill = fill(accent),
+		AccentSoft = soft(theme, accent),
 		overlay = overlay,
 		Flags = {},
 		_consumers = {},
@@ -67,7 +89,9 @@ function Context:IsCapturing(): boolean
 end
 
 -- Register a function recolored whenever the accent changes. Called once now
--- with the current accent so callers don't duplicate the initial paint. Returns
+-- with the current accent so callers don't duplicate the initial paint. The
+-- derived shades (`ctx.AccentFill` / `ctx.AccentSoft`) are refreshed *before*
+-- consumers run, so a callback can read them straight off ctx. Returns
 -- an unsubscribe function — transient consumers (e.g. toasts) must call it on
 -- teardown or their dead closures pile up in the registry and fire on every
 -- SetAccent forever.
@@ -88,6 +112,8 @@ end
 function Context:SetAccent(color: Color3)
 	self.Accent = color
 	self.AccentHover = hover(color)
+	self.AccentFill = fill(color)
+	self.AccentSoft = soft(self.Theme, color)
 	for _, fn in self._consumers do
 		fn(self.Accent, self.AccentHover)
 	end

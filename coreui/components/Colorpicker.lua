@@ -8,8 +8,8 @@ local Field = require(script.Parent.Field)
 
 -- Uranium accent ramp first, then the useful off-palette signals.
 local DEFAULT_PRESETS = {
-	"7cff3b", "9bff6b", "46801f", "2dd4bf", "ffd400", "ff5e5e",
-	"3b82f6", "8b5cf6", "ec4899", "e9f5e4", "909c96", "18220f",
+	"7be04a", "96ec69", "4e9b2b", "2dd4bf", "ffc53d", "ff6b6b",
+	"3b82f6", "8b5cf6", "ec4899", "e9f2e5", "98a394", "171d15",
 }
 
 local function toHex(color: Color3): string

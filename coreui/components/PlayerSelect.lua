@@ -345,14 +345,14 @@ local function build(ctx: any, opts: any, multi: boolean)
 			local avatar = Create("Frame", {
 				Name = "Avatar",
 				Size = UDim2.fromOffset(AVATAR_W, AVATAR_W),
-				BackgroundColor3 = ctx.Accent,
+				BackgroundColor3 = ctx.AccentSoft,
 				ClipsDescendants = true,
 				LayoutOrder = 2,
 				Parent = row,
 			}, {
 				Create.corner(8),
 			})
-			local avatarIcon = Icons.new("avatar", 16, colors.knockout)
+			local avatarIcon = Icons.new("avatar", 16, ctx.Accent)
 			avatarIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 			avatarIcon.Position = UDim2.fromScale(0.5, 0.5);
 			(avatarIcon :: any).Parent = avatar

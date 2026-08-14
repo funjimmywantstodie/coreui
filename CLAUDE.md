@@ -325,18 +325,31 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
 
 - `--!strict` at top of every Luau module (generated/data files use `--!nocheck`).
 - Colors via `Color3.fromHex(...)`; pull from `Theme.Colors`, never hardcode.
-- **Palette: Uranium / Uranium Glass.** `#7CFF3B` accent on a greyscale-green ramp
-  (bg `#0B0F0A`, surfaces `#18220F`, hover `#212D16`, lines `#2C3A24`, text
-  `#E9F5E4` / `#909C96` / `#5A6B52`). The accent is very bright — used widely it
-  stops reading as an accent, so the one-per-row rule matters more than it did on
-  the old emerald. Anything drawn **on** an accent fill uses
-  `knockout` (`#0A1604`), never white — accent button labels, the active nav
-  icon, the toggle-on knob. Flat fills only: no gradients, no glows, no accent
-  wash behind large areas, at most one accent element per row; hover shifts a
-  fill one step lighter and nothing else. Two deliberate exceptions: slider /
-  MediaPlayer knobs use `text` (at value 0 the knob sits off the accent fill,
-  where a knockout knob would vanish), and the window keeps its neutral black
-  drop shadow as elevation. `Theme.Brand` holds the mark
+- **Palette: Uranium / Uranium Glass.** `#7BE04A` accent on a *near-neutral*
+  ramp that only whispers green — chrome `#0B0F0A` < bg `#10150E` < card
+  `#171D15` < pop `#1A2118` < control `#1D241B` < hover `#262E23`, lines
+  `#2B3427` (edges) / `#1F271D` (inner dividers), text `#E9F2E5` / `#98A394` /
+  `#616D5D`. Two things were retuned away from the first Uranium pass and both
+  matter: the surfaces used to be a flat olive (`#18220F`, all three of card /
+  pop / control at once), which read muddy under the accent and gave a field no
+  way to stand out inside its card; and the accent was `#7CFF3B`, bright enough
+  that any sizable fill of it took the window over.
+  **The accent now has three weights, chosen by area** — `accent` for small
+  marks (slider fill, toggle track, icons, focus strokes, text), `accent_fill`
+  (`#5EB832`, deeper) for large solid fills like primary buttons, which hover
+  *up* to `accent`, and `accent_soft` (`#22331A`, accent at ~13% into the
+  surface) for tinted tiles — the active nav, avatar placeholders, badge chips —
+  where the icon/text on top carries the real colour. `util/Context.lua` derives
+  `ctx.AccentFill` / `ctx.AccentSoft` from the live accent, so `SetAccent` moves
+  all three; read them off `ctx` inside a `RegisterAccent` callback, never
+  recompute them. Anything drawn **on a solid accent fill** uses `knockout`
+  (`#08140A`), never white. Flat fills only: no gradients, no glows, at most one
+  accent element per row; hover shifts a fill one step lighter and nothing else.
+  Three deliberate exceptions: slider / MediaPlayer knobs use `text` (at value 0
+  the knob sits off the accent fill, where a knockout knob would vanish), the
+  active nav button carries an accent rail (3×18px, in the sidebar gutter) as
+  well as its tinted tile, and the window keeps its neutral black drop shadow as
+  elevation. `Theme.Brand` holds the mark
   (`{ name, logo = <source chain>, radius, zoom }`) and `Theme.Metrics.logo` its
   size. `zoom` exists because the shipped PNG is a full-bleed tile with dead
   margin baked around the glyph: the titlebar holder clips and draws the art

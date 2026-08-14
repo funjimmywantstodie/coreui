@@ -2,14 +2,31 @@
 -- Theme.lua — design tokens (colors, metrics, fonts).
 -- Offset pixels map directly to Roblox offsets.
 --
--- Palette: **Uranium (Uranium Glass)**. Greyscale-green everywhere, one accent
--- element per row at most, flat fills only — no gradients, glows or accent
--- washes behind large areas. Anything sitting *on* an accent fill (button text,
--- the active nav icon, the toggle-on knob) uses `knockout`, not white.
+-- Palette: **Uranium (Uranium Glass)**. Flat fills only — no gradients, no
+-- glows — and at most one accent element per row. Anything sitting *on* a solid
+-- accent fill (button text, the toggle-on knob) uses `knockout`, not white.
 --
--- The accent is a very bright yellow-green; used widely it stops being readable,
--- so it's rationed to one element per row (toggle-on track, slider fill left of
--- the knob, active nav, focus stroke, primary button, links).
+-- Two rules keep the green from taking the UI over:
+--
+-- 1. **The surfaces are near-neutral.** They carry only a whisper of green
+--    (~10% saturation). The old ramp was a flat olive (#18220F) which, sat
+--    under a screaming yellow-green accent, read muddy — two greens
+--    fighting instead of one green on grey. Neutral ground is also what makes
+--    the accent look bright; tinting the ground just spends the contrast.
+--    The ramp is a real elevation ladder — chrome < bg < card < control <
+--    control_hi — so a field reads as a field even sitting inside a card.
+-- 2. **The accent has three weights, by area.** A colour that looks right as a
+--    6px slider fill is a searing slab at button size, so bigger area = lower
+--    value:
+--      `accent`      small marks — slider fill, toggle track, icons, focus
+--                    strokes, text. Bright, because it's tiny.
+--      `accent_fill` large solid fills (primary buttons). Deeper; hovers *up*
+--                    to `accent`, so the interaction reads as lighting up.
+--      `accent_soft` accent laid into a surface (~13%) for tinted tiles — the
+--                    active nav, avatar placeholders, badges. Reads as "this is
+--                    accent-coloured" without putting neon on the screen.
+--    util/Context.lua derives the last two from the live accent, so a caller's
+--    `SetAccent` keeps all three in step.
 
 local Theme = {}
 
@@ -47,39 +64,47 @@ Theme.Brand = {
 	-- PNG. Drawn 1:1 that reads as a tiny logo floating in a box. So the holder
 	-- clips and the art is drawn `zoom`× oversized inside it — the dead margin
 	-- is cropped away and the glyph fills ~82% of the holder instead of 58%.
-	-- The tile's background is exactly `Colors.bg`, so its edges vanish into the
-	-- titlebar and the crop is invisible. 1 = draw the source untouched (the
-	-- default for a caller-supplied Logo, which we can't assume has margin).
+	-- The tile's background is exactly `Colors.chrome` (#0B0F0A), so its edges
+	-- vanish into the titlebar and the crop is invisible — which is why `chrome`
+	-- is pinned to that value and the rest of the ramp moved around it.
+	-- 1 = draw the source untouched (the default for a caller-supplied Logo,
+	-- which we can't assume has margin).
 	zoom = 1.42,
 }
 
 -- ── Colors ────────────────────────────────────────────────────────────────
 Theme.Colors = {
-	bg          = Color3.fromHex("0B0F0A"), -- window body   (background)
-	chrome      = Color3.fromHex("0B0F0A"), -- titlebar / sidebar / status bar
-	card        = Color3.fromHex("18220F"), -- group card fill        (surface)
-	pop         = Color3.fromHex("18220F"), -- dropdown / colorpicker / toast
-	control     = Color3.fromHex("18220F"), -- input / dropdown / button fill
-	control_hi  = Color3.fromHex("212D16"), -- hovered control  (surface hover)
-	-- Toggle / slider track. The spec calls it "surface", but cards are surface
-	-- too — one step lighter is what keeps the track readable on the card.
-	toggle_off  = Color3.fromHex("212D16"),
-	knob        = Color3.fromHex("5A6B52"), -- toggle knob (off) — text faint
-	border      = Color3.fromHex("2C3A24"), -- every 1px line
-	border_soft = Color3.fromHex("2C3A24"), -- between-field dividers
-	text        = Color3.fromHex("E9F5E4"), -- primary text / headings
-	text_muted  = Color3.fromHex("909C96"), -- descriptions, placeholders, readouts
-	text_dim    = Color3.fromHex("5A6B52"), -- small caps headers, hints, idle icons
-	accent      = Color3.fromHex("7CFF3B"), -- toggle-on, slider fill, active nav, focus
-	accent_2    = Color3.fromHex("9BFF6B"), -- accent hover
-	accent_dim  = Color3.fromHex("46801F"), -- pressed / disabled accent
-	knockout    = Color3.fromHex("0A1604"), -- text + icons ON an accent fill
-	scroll      = Color3.fromHex("2C3A24"), -- scrollbar thumb
+	-- Elevation ladder, darkest → lightest. Each step is a real, visible lift,
+	-- so depth comes from the fills themselves and the hairlines only have to
+	-- draw the edge (they used to carry the whole separation on their own).
+	chrome      = Color3.fromHex("0B0F0A"), -- titlebar / sidebar / status bar (the frame)
+	bg          = Color3.fromHex("10150E"), -- window body — lifts off the chrome
+	card        = Color3.fromHex("171D15"), -- group card fill
+	pop         = Color3.fromHex("1A2118"), -- dropdown / colorpicker / toast (floats above cards)
+	control     = Color3.fromHex("1D241B"), -- input / dropdown / button fill, on a card
+	control_hi  = Color3.fromHex("262E23"), -- hovered control — one step lighter, nothing else
+	-- Toggle / slider track: one step above `control` again, so an unfilled
+	-- track still reads against the field it sits in.
+	toggle_off  = Color3.fromHex("2B3428"),
+	knob        = Color3.fromHex("6E7C69"), -- toggle knob (off)
+	border      = Color3.fromHex("2B3427"), -- every 1px line
+	border_soft = Color3.fromHex("1F271D"), -- between-field dividers (quieter than an edge)
+	text        = Color3.fromHex("E9F2E5"), -- primary text / headings
+	text_muted  = Color3.fromHex("98A394"), -- descriptions, placeholders, readouts
+	text_dim    = Color3.fromHex("616D5D"), -- small caps headers, hints, idle icons
+	-- Accent, by area — see the header. Small marks / large fills / tinted tiles.
+	accent      = Color3.fromHex("7BE04A"), -- slider fill, toggle-on, focus stroke, icons
+	accent_2    = Color3.fromHex("96EC69"), -- accent hover
+	accent_fill = Color3.fromHex("5EB832"), -- large solid fills (primary buttons)
+	accent_soft = Color3.fromHex("22331A"), -- accent tinted into a surface (~13%)
+	accent_dim  = Color3.fromHex("4E9B2B"), -- pressed / disabled accent
+	knockout    = Color3.fromHex("08140A"), -- text + icons ON a solid accent fill
+	scroll      = Color3.fromHex("2B3427"), -- scrollbar thumb
 	white       = Color3.fromHex("FFFFFF"),
-	danger      = Color3.fromHex("FF5E5E"), -- destructive buttons + notify "error"
-	success     = Color3.fromHex("7CFF3B"), -- notify "success"
-	warning     = Color3.fromHex("FFD400"), -- risky toggles + notify "warning"
-	info        = Color3.fromHex("909C96"), -- notify "info" (neutral, off-accent)
+	danger      = Color3.fromHex("FF6B6B"), -- destructive buttons + notify "error"
+	success     = Color3.fromHex("7BE04A"), -- notify "success"
+	warning     = Color3.fromHex("FFC53D"), -- risky toggles + notify "warning"
+	info        = Color3.fromHex("98A394"), -- notify "info" (neutral, off-accent)
 }
 
 -- ── Metrics (offset px) ───────────────────────────────────────────────────
