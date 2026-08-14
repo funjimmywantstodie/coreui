@@ -2,7 +2,9 @@
 -- components/Slider.lua — 6px pill track, accent fill, 15px white knob.
 -- Live drag via UserInputService (no tween), clamped + stepped.
 
-local UserInputService = game:GetService("UserInputService")
+local Services = require(script.Parent.Parent.util.Services)
+
+local UserInputService = Services.UserInputService
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)

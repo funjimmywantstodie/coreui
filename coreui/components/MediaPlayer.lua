@@ -31,9 +31,11 @@
 -- handle.Played/.Paused/.NextTrack/.PreviousTrack/.Seeked/.VolumeChanged/
 --        .ShuffleChanged/.LoopChanged/.TrackChanged/.Ended/.FavoriteChanged (all `.Event`)
 
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
+local Services = require(script.Parent.Parent.util.Services)
+
+local UserInputService = Services.UserInputService
+local RunService = Services.RunService
+local SoundService = Services.SoundService
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)

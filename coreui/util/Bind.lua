@@ -34,7 +34,9 @@
 -- put every sub-option it enables on screen as its own row, which is the exact
 -- wall of text the panel exists to avoid.
 
-local UserInputService = game:GetService("UserInputService")
+local Services = require(script.Parent.Services)
+
+local UserInputService = Services.UserInputService
 
 local Log = require(script.Parent.Log)
 

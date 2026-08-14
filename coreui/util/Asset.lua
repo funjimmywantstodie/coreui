@@ -19,6 +19,8 @@
 -- util/Config.lua, so in Studio (or an executor missing them) the call returns
 -- "" and the caller shows its placeholder instead of erroring.
 
+local Services = require(script.Parent.Services)
+
 local Asset = {}
 
 -- Executor globals live on the SHARED env (getgenv), not the chunk env. Some
@@ -432,7 +434,7 @@ function Asset.preload(list: { any })
 			end
 		end
 		pcall(function()
-			game:GetService("ContentProvider"):PreloadAsync(contents)
+			Services.ContentProvider:PreloadAsync(contents)
 		end)
 		for _, holder in contents do
 			holder:Destroy()

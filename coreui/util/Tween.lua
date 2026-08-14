@@ -1,7 +1,9 @@
 --!strict
 -- util/Tween.lua — shared tween presets. All UI motion is ease-out ~0.12–0.18s.
 
-local TweenService = game:GetService("TweenService")
+local Services = require(script.Parent.Services)
+
+local TweenService = Services.TweenService
 
 local Tween = {}
 

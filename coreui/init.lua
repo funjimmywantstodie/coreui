@@ -16,6 +16,8 @@ local Config = require(script.util.Config)
 local Log = require(script.util.Log)
 local Settings = require(script.components.Settings)
 local Singleton = require(script.util.Singleton)
+local Services = require(script.util.Services)
+local Gui = require(script.util.Gui)
 
 local Uranium = {}
 
@@ -45,6 +47,35 @@ Uranium.Config = Config
 --   Uranium.Settings.InterfaceGroup(Window, tab)
 --   myOwnConfigGroup(tab)
 Uranium.Settings = Settings
+
+-- The service cache every module reads through (util/Services.lua) — cloned with
+-- `cloneref` where the executor has it, so the library's references aren't the
+-- ones the place gets from its own `game:GetService`. A host with its own cache
+-- passes it as the chunk vararg (`loadstring(src)(Services)`) and the library
+-- adopts it; this is the same table either way.
+Uranium.Services = Services
+
+-- Where the ScreenGui goes and what it's called (util/Gui.lua) — exposed so a
+-- host can resolve the same container the library would (`Gui.mount`,
+-- `Gui.roots`, `Gui.rname`) instead of reimplementing the gethui/CoreGui dance.
+Uranium.Gui = Gui
+
+-- Console output. Everything chatty is OFF by default — a game scraping
+-- LogService reads every line the client prints, and a branded one is a free
+-- fingerprint. Failures (`Log.warn` / `Log.fail`) still print.
+--
+--   Uranium.setVerbose(true)         -- or CreateWindow{ Verbose = true }
+--   Uranium.setLogPrefix("[hub]")    -- one place; every line follows
+--   getgenv().URANIUM_VERBOSE = true -- before the loadstring, for load-time lines
+Uranium.Log = Log
+
+function Uranium.setVerbose(on: boolean?)
+	Log.setVerbose(on)
+end
+
+function Uranium.setLogPrefix(prefix: string)
+	Log.setPrefix(prefix)
+end
 
 -- Point the asset helper at the public art repo, so `Asset.url("x.png")`
 -- resolves a bare filename against it. Set here (not in Asset.lua) to keep the
@@ -78,9 +109,11 @@ function Uranium:IsLoaded(): boolean
 	return Singleton.get() ~= nil
 end
 
--- Returns true if a window was actually torn down.
+-- Returns true if a window was actually torn down. No name is passed: current
+-- builds give the ScreenGui a random name and are found by attribute, and the
+-- old brand names are swept from `Singleton.LegacyNames` anyway.
 function Uranium:Unload(): boolean
-	return Singleton.unloadExisting(Theme.Brand.name)
+	return Singleton.unloadExisting()
 end
 
 return Uranium

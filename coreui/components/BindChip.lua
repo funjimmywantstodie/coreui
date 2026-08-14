@@ -27,7 +27,9 @@
 -- `handle:Set(Enum.UserInputType.MouseButton1)` still works for a caller that
 -- really wants it.
 
-local UserInputService = game:GetService("UserInputService")
+local Services = require(script.Parent.Parent.util.Services)
+
+local UserInputService = Services.UserInputService
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)

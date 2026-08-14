@@ -15,7 +15,7 @@
 -- Everything is feature-detected + pcall-guarded exactly like util/Config.lua:
 -- Studio has no getgenv, and some sandboxes throw merely on touching it.
 
-local Players = game:GetService("Players")
+local Gui = require(script.Parent.Gui)
 
 local Singleton = {}
 
@@ -25,8 +25,13 @@ Singleton.Key = "_URANIUM_LOADED"
 -- window on screen, but it parked its record (and named its ScreenGui) under the
 -- old brand — so unloadExisting has to look there too, or re-running the loader
 -- stacks a Uranium window on top of a Krypton one instead of replacing it.
+--
+-- `LegacyNames` is also where the *brand* name now lives as far as the sweep is
+-- concerned: current builds give the ScreenGui a neutral, per-load random name
+-- and mark it with `Gui.Attribute` instead (see util/Gui.lua), so a name match is
+-- purely the fallback for builds that predate that.
 Singleton.LegacyKeys = { "_KRYPTON_LOADED" }
-Singleton.LegacyNames = { "Krypton" }
+Singleton.LegacyNames = { "Krypton", "Uranium" }
 
 -- Shared env, with a fallback chain: getgenv() (executors) → _G (Studio and
 -- anywhere getgenv is missing — same cross-run persistence, different table).
@@ -87,28 +92,29 @@ function Singleton.release(record: any)
 	setKey(nil)
 end
 
--- Last-resort sweep: destroy any leftover ScreenGui with our name. Covers the
--- cases the record can't — the flag was cleared by hand, the previous chunk's
--- Unload closure errored, or an older build that predates this guard is still on
+-- Last-resort sweep: destroy any leftover ScreenGui of ours. Covers the cases
+-- the record can't — the flag was cleared by hand, the previous chunk's Unload
+-- closure errored, or an older build that predates this guard is still on
 -- screen. Destroying the ScreenGui is always safe; a live window that survives
 -- this would be an orphan nobody can see anyway.
-local function sweep(guiName: string): number
+--
+-- Two things changed with the neutral-name work (util/Gui.lua):
+--   * matching is by ATTRIBUTE, since the name is random per load now. `name`
+--     stays supported for pre-attribute builds and is passed through
+--     `LegacyNames`.
+--   * the root list includes `gethui()`. A window parented into the hidden
+--     container is exactly the one whose record is most likely to be the only
+--     handle on it, and missing that root meant a leaked window nothing could
+--     find — the user reloads and gets two stacked.
+local function sweep(guiName: string?): number
 	local removed = 0
-	local roots: { Instance } = {}
-	local lp = Players.LocalPlayer
-	if lp then
-		local pg = lp:FindFirstChildOfClass("PlayerGui")
-		if pg then
-			table.insert(roots, pg)
-		end
-	end
-	pcall(function()
-		table.insert(roots, game:GetService("CoreGui"))
-	end)
-	for _, root in roots do
+	for _, root in Gui.roots() do
 		pcall(function()
 			for _, child in root:GetChildren() do
-				if child:IsA("ScreenGui") and child.Name == guiName then
+				if not child:IsA("ScreenGui") then
+					continue
+				end
+				if Gui.isOurs(child) or (guiName ~= nil and child.Name == guiName) then
 					child:Destroy()
 					removed += 1
 				end
@@ -120,7 +126,7 @@ end
 
 -- Tear down whatever Uranium is already on screen. Returns true if something was
 -- actually unloaded, so the caller can log a refresh instead of a fresh load.
-function Singleton.unloadExisting(guiName: string): boolean
+function Singleton.unloadExisting(guiName: string?): boolean
 	local record = Singleton.get()
 	local unloaded = false
 	if record then

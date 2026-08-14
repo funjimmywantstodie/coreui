@@ -12,7 +12,9 @@
 -- under a UISizeConstraint, which clipped everyone past the sixth player with no
 -- way to reach them.)
 
-local Players = game:GetService("Players")
+local Services = require(script.Parent.Parent.util.Services)
+
+local Players = Services.Players
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)

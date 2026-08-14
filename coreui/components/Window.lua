@@ -1,11 +1,16 @@
 --!strict
 -- components/Window.lua — the window shell: titlebar, sidebar, scrolling content,
 -- status bar and overlay. Owns the Context, the tab list, notifications and the
--- live accent. Mounts a ScreenGui to the LocalPlayer's PlayerGui.
+-- live accent.
+--
+-- The ScreenGui is mounted through util/Gui.lua — `opts.Parent` → `gethui()` →
+-- `CoreGui` → `PlayerGui`, parented exactly once at whichever wins — and carries
+-- a neutral per-load name plus `Gui.Attribute` for identity. It's exposed as
+-- `window.ScreenGui` so a host can re-check where it ended up.
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
+local Services = require(script.Parent.Parent.util.Services)
+
+local UserInputService = Services.UserInputService
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
@@ -17,6 +22,7 @@ local Fade = require(script.Parent.Parent.util.Fade)
 local Config = require(script.Parent.Parent.util.Config)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
+local Gui = require(script.Parent.Parent.util.Gui)
 local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
@@ -46,6 +52,19 @@ return function(opts: any)
 	Log.field("CreateWindow", "OnFlagChanged", opts.OnFlagChanged, "function")
 	Log.field("CreateWindow", "PersistWindow", opts.PersistWindow, "boolean")
 	Log.field("CreateWindow", "WindowFlag", opts.WindowFlag, "string")
+	Log.field("CreateWindow", "Parent", opts.Parent, "Instance")
+	Log.field("CreateWindow", "GuiName", opts.GuiName, "string")
+	Log.field("CreateWindow", "Verbose", opts.Verbose, "boolean")
+
+	-- Console output is off by default (see util/Log.lua): a game scraping
+	-- LogService gets a free fingerprint out of every branded line we print. This
+	-- is set before anything below can log, so `Verbose = true` still catches the
+	-- build stamp and the "already loaded" line.
+	if opts.Verbose ~= nil then
+		Log.setVerbose(opts.Verbose == true)
+	end
+	Log.banner()
+	Log.info(Config.report)
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "uranium"
@@ -63,13 +82,19 @@ return function(opts: any)
 	-- second copy over the first. `AllowMultiple = true` opts out of both halves.
 	local singleton = opts.AllowMultiple ~= true
 	local record: any = nil
-	if singleton and Singleton.unloadExisting(Theme.Brand.name) then
-		print("[Uranium] already loaded — unloaded the previous window and refreshing.")
+	if singleton and Singleton.unloadExisting() then
+		Log.info("already loaded — unloaded the previous window and refreshing.")
 	end
 
 	-- ── ScreenGui + window frame ────────────────────────────────────────────
+	-- Neutral, per-load name (`GuiName` pins it) + an attribute for identity: a
+	-- fixed brand-shaped name is the cheapest thing in the whole library for a
+	-- place to detect, and the singleton sweep that used to need it now matches
+	-- the attribute instead. See util/Gui.lua. The frame names below are random
+	-- for the same reason — they're direct children, so they're visible to
+	-- anything that can see the ScreenGui at all.
 	local screenGui = Create("ScreenGui", {
-		Name = Theme.Brand.name,
+		Name = opts.GuiName or Gui.rname(),
 		IgnoreGuiInset = true,
 		ResetOnSpawn = false,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -84,7 +109,7 @@ return function(opts: any)
 	-- now runs through util/Fade.lua, which drives the real transparency
 	-- properties of the subtree instead. Never put text under a CanvasGroup.
 	local main = Create("Frame", {
-		Name = "Window",
+		Name = Gui.rname(),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromOffset(M.windowWidth, M.windowHeight),
@@ -788,6 +813,11 @@ return function(opts: any)
 	local tabs = {}
 	local activeIndex = 1
 	local window = {}
+	-- The ScreenGui itself, exposed so a host can re-check where it landed (and
+	-- re-parent or re-protect it): the parent is resolved at mount time from
+	-- whatever the executor offers, so it isn't knowable up front. Also on the
+	-- singleton record.
+	window.ScreenGui = screenGui
 	local applySearch -- forward declaration (used by select)
 	local splash: any = nil -- the boot screen, while it's playing (see the mount)
 	-- The bind HUD, once something asks for one (components/Hud.lua). It's a
@@ -1742,8 +1772,8 @@ return function(opts: any)
 			snapshot[Config.MetaKey] = meta
 		end
 		local ok, reason = Config.save(configFolder, name, snapshot)
-		print(("[Uranium] SaveConfig(%q) -> %s  (%d flags%s)"):format(
-			tostring(name), tostring(ok), n, ok and "" or ", " .. tostring(reason)))
+		Log.infof("SaveConfig(%q) -> %s  (%d flags%s)",
+			tostring(name), tostring(ok), n, ok and "" or ", " .. tostring(reason))
 		return ok, reason
 	end
 
@@ -1752,8 +1782,8 @@ return function(opts: any)
 			return false, "invalid name"
 		end
 		local data, reason = Config.load(configFolder, name)
-		print(("[Uranium] LoadConfig(%q) -> %s%s"):format(
-			tostring(name), tostring(data ~= nil), data and "" or " (" .. tostring(reason) .. ")"))
+		Log.infof("LoadConfig(%q) -> %s%s",
+			tostring(name), tostring(data ~= nil), data and "" or " (" .. tostring(reason) .. ")")
 		if not data then
 			return false, reason
 		end
@@ -1909,7 +1939,7 @@ return function(opts: any)
 		end
 		Log.field("CreateSettingsTab", "Sections", settingsOpts.Sections, "table")
 		Log.field("CreateSettingsTab", "Notify", settingsOpts.Notify, "boolean")
-		print(("[Uranium] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
+		Log.infof("CreateSettingsTab: building (config supported=%s)", tostring(Config.supported))
 		-- Every CreateTab option is forwarded, so the settings tab can be pinned
 		-- away from the feature tabs (`CreateSettingsTab{ Pin = "bottom" }`) or
 		-- given its own colour like any other. Defaults are unchanged: top of the
@@ -1938,7 +1968,7 @@ return function(opts: any)
 		for _ in ctx.Flags do
 			flagCount += 1
 		end
-		print(("[Uranium] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
+		Log.infof("CreateSettingsTab: done (%d flags registered)", flagCount)
 		return tab, controls
 	end
 
@@ -2007,11 +2037,17 @@ return function(opts: any)
 		task.defer(mountWindow)
 	end
 
-	local localPlayer = Players.LocalPlayer
-	if localPlayer then
-		screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
-	elseif RunService:IsStudio() then
-		screenGui.Parent = game:GetService("CoreGui")
+	-- Mount LAST, and exactly once. This used to go straight to PlayerGui, which
+	-- any LocalScript in the place can walk; `Gui.mount` runs protect_gui where
+	-- the executor has it and then picks the most hidden container available —
+	-- opts.Parent → gethui() → CoreGui → PlayerGui. Parenting somewhere first and
+	-- moving it after would leave a frame where the place can see us, so there's
+	-- one write, at the resolved target.
+	local guiParent, guiParentLabel = Gui.mount(screenGui, opts.Parent)
+	if guiParent then
+		Log.infof("mounted into %s", guiParentLabel)
+	else
+		Log.warn("CreateWindow", "no GUI container available (no gethui, CoreGui or PlayerGui) — the window is built but not on screen")
 	end
 
 	-- Claim the global slot LAST, once this window is actually on screen — the

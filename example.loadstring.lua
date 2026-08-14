@@ -25,7 +25,9 @@ local Window = Uranium:CreateWindow({
 	-- point), the Settings tab has a switch for it, and a saved config remembers
 	-- where you left it.
 	Hud          = { X = 16, Y = 120 },
-	-- ScreenGui is parented to LocalPlayer.PlayerGui
+	-- The ScreenGui goes to the most hidden container available — gethui(), then
+	-- CoreGui, then PlayerGui — under a random name. Pass `Parent = <container>`
+	-- to place it yourself; `Window.ScreenGui` is the instance either way.
 })
 
 --------------------------------------------------------------------------------

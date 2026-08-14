@@ -39,9 +39,11 @@
 --    instead of tinting accent, so a screen full of active binds still reads as
 --    a list rather than a wall of green.
 
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Stats = game:GetService("Stats")
+local Services = require(script.Parent.Parent.util.Services)
+
+local RunService = Services.RunService
+local UserInputService = Services.UserInputService
+local Stats = Services.Stats
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
@@ -51,6 +53,7 @@ local Icons = require(script.Parent.Parent.Icons)
 local Bind = require(script.Parent.Parent.util.Bind)
 local Collapse = require(script.Parent.Parent.util.Collapse)
 local Log = require(script.Parent.Parent.util.Log)
+local Gui = require(script.Parent.Parent.util.Gui)
 
 local WIDTH = 248
 local HEADER_H = 30
@@ -116,7 +119,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- readout as its own bar beneath it. `root` is transparent — it exists to own
 	-- the position, the drag, the fade and the entrance scale for both at once.
 	local root = Create("Frame", {
-		Name = "Hud",
+		-- Neutral name: the HUD is a direct child of the ScreenGui, so it's as
+		-- visible to a walk of the tree as the window itself (util/Gui.lua).
+		Name = Gui.rname(),
 		Position = UDim2.fromOffset(tonumber(opts.X) or 16, tonumber(opts.Y) or 140),
 		Size = UDim2.fromOffset(WIDTH, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,

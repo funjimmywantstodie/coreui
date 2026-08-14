@@ -49,8 +49,45 @@ Drop the `coreui/` tree into your place and `require` its `init`:
 local Uranium = require(path.to.coreui)
 ```
 
-The bundle prints `[Uranium] build <timestamp> <sha>` on load so you can confirm
-the build that's actually running.
+### Console output (off by default)
+
+The library prints **nothing** on a normal load. Everything chatty — the build
+banner, the detected file-API capabilities, `SaveConfig`/`LoadConfig` results,
+the settings-tab lines — is gated, because a game reading `LogService` gets a
+free fingerprint out of every branded line the client prints. Real problems
+(`Log.warn` / `Log.fail`) still surface.
+
+```lua
+local Window = Uranium:CreateWindow({ Verbose = true })  -- per window
+Uranium.setVerbose(true)                                 -- library-wide, any time
+Uranium.setLogPrefix("[hub]")                            -- one place; every line follows
+```
+
+A few lines happen at *require* time, before `CreateWindow` can be reached. To
+catch those too, set the flag before the loadstring runs:
+
+```lua
+getgenv().URANIUM_VERBOSE = true
+local Uranium = loadstring(game:HttpGet(URL))()
+```
+
+With output on, the bundle stamps `[Uranium] build <timestamp> <sha>` so you can
+confirm the build that's actually running (also `Uranium.Build`).
+
+### Passing a service cache
+
+The bundle takes one optional argument: a table of pre-resolved services. A host
+that already built its own (`cloneref`'d) cache passes it in and the library uses
+those same references instead of making a second set:
+
+```lua
+local Uranium = loadstring(game:HttpGet(URL))(MyHub.Services)
+```
+
+Standalone works exactly as before — with no argument the library builds its own
+cache, `cloneref`-wrapped where the executor provides it, so its service handles
+are never the ones the place gets from its own `game:GetService`. It's reachable
+as `Uranium.Services`.
 
 ---
 
@@ -120,6 +157,9 @@ local Window = Uranium:CreateWindow({
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
     WindowFlag   = "uranium_window",         -- rename that flag        (default "uranium_window")
+    Parent       = someContainer,            -- where the ScreenGui goes (default: resolved, see below)
+    GuiName      = "…",                      -- pin the ScreenGui's name (default: random per load)
+    Verbose      = false,                    -- console output          (default false)
 })
 ```
 
@@ -132,7 +172,31 @@ keybind explicitly still gets one.
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
-It's parented to `LocalPlayer.PlayerGui` (or `CoreGui` in Studio).
+
+### Where the ScreenGui goes
+
+`PlayerGui` is the one container any LocalScript in the place can walk, so it's
+the *last* resort, not the default. The parent is resolved in this order, and the
+instance is parented **once**, at whichever wins:
+
+1. `Parent` — an Instance you pass to `CreateWindow`. A host that already
+   resolved a container gets to keep using it.
+2. `gethui()` — the executor's hidden container.
+3. `CoreGui`.
+4. `LocalPlayer.PlayerGui` — Studio, and executors with neither global.
+
+`protect_gui` / `syn.protect_gui` runs first where the global exists, since some
+executors want to do the reparent themselves.
+
+The ScreenGui gets a **neutral, random name each load** (`GuiName = "..."` pins
+one) rather than a fixed brand-shaped string, and identity is an attribute
+(`__urn`) instead — the single-instance sweep matches on that, so nothing depends
+on the name. The window frame and the HUD are direct children of it, so they're
+named the same way.
+
+`Window.ScreenGui` is the instance itself, so a host can check where it landed,
+re-parent it, or re-protect it. `Uranium.Gui` exposes the same resolution helpers
+(`Gui.mount`, `Gui.roots`, `Gui.rname`, `Gui.Attribute`).
 
 **Close fully unloads.** The ✕ button runs `Window:Destroy()` — listeners are
 disconnected and the ScreenGui is destroyed, exactly like the Settings tab's
@@ -149,9 +213,11 @@ getgenv()._URANIUM_LOADED = { Name = "Uranium", Window = ..., ScreenGui = ..., U
 Re-running the loadstring finds that record, unloads the old window (instantly,
 no fade) and then builds the new one — so the loader **refreshes in place**
 instead of stacking a second UI. The key is cleared on `Window:Destroy()`, and a
-stale record can't wedge you: the guard also sweeps any leftover ScreenGui named
-`Uranium`. Pass `AllowMultiple = true` to opt a window out of both halves (it
-neither unloads the existing window nor claims the slot).
+stale record can't wedge you: the guard also sweeps leftover ScreenGuis of ours
+out of `gethui()`, `CoreGui` **and** `PlayerGui` — matched by the `__urn`
+attribute (plus the old brand names, for builds that predate it), since the name
+itself is random per load. Pass `AllowMultiple = true` to opt a window out of
+both halves (it neither unloads the existing window nor claims the slot).
 
 ```lua
 if Uranium:IsLoaded() then ... end   -- same as testing getgenv()._URANIUM_LOADED

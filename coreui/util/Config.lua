@@ -9,7 +9,9 @@
 -- Layout on disk:  <folder>/configs/<name>.json   (one JSON blob per config)
 --                  <folder>/autoload.txt          (name of the config to auto-load)
 
-local HttpService = game:GetService("HttpService")
+local Services = require(script.Parent.Services)
+
+local HttpService = Services.HttpService
 
 local Config = {}
 
@@ -57,13 +59,17 @@ Config.supported = type(g_writefile) == "function"
 	and type(g_readfile) == "function"
 	and type(g_isfile) == "function"
 
--- Surface what was detected so executor file-API gaps are obvious in the console.
-print(("[Uranium] config: supported=%s  writefile=%s readfile=%s isfile=%s listfiles=%s delfile=%s")
+-- What was detected, so executor file-API gaps are diagnosable. Built as a
+-- string rather than printed: this module is required at load time, long before
+-- `CreateWindow{ Verbose = ... }` can be read, and an unconditional branded line
+-- on every load is a free fingerprint for a game scraping LogService. Window
+-- logs it through `Log.info` once it knows whether the host wants output.
+Config.report = ("config: supported=%s  writefile=%s readfile=%s isfile=%s listfiles=%s delfile=%s")
 	:format(
 		tostring(Config.supported),
 		type(g_writefile), type(g_readfile), type(g_isfile),
 		type(g_listfiles), type(g_delfile)
-	))
+	)
 
 -- The reserved key a config file carries its metadata under. It sits alongside
 -- the flags in the same JSON object, and nothing registers a flag by that name,
