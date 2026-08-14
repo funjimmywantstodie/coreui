@@ -26,6 +26,13 @@
 -- hands back the live entries. A binding carries a `Label` so it has something
 -- to be called in that list — an unlabeled one is internal plumbing and stays
 -- out of it (`Binding:IsListed`).
+--
+-- Bindings also form a shallow TREE. A control declares `Parent = "<id>"` (see
+-- `Binding:GetParent`) to say "I'm a sub-option of that feature" — Sticky Aim
+-- under Aimbot, Wall Check under ESP. That relationship is what keeps the HUD
+-- from turning into an inventory of the menu: switching one parent on used to
+-- put every sub-option it enables on screen as its own row, which is the exact
+-- wall of text the panel exists to avoid.
 
 local UserInputService = game:GetService("UserInputService")
 
@@ -139,6 +146,42 @@ function Bind.mode(value: any, where: string?, fallback: string?): string
 	return canon
 end
 
+-- ── parent references ───────────────────────────────────────────────────────
+-- `Parent` is matched by NAME, not by object, because the sub-option is almost
+-- always built before the caller has anything to hand it: the parent toggle's
+-- handle exists, but the section under it is written in the same breath and a
+-- hub that builds its menu from a table has no locals at all. A name also
+-- survives the parent being rebuilt.
+--
+-- Matching is case- and space-insensitive against the parent's `Id` (a control's
+-- Flag) *or* its `Label` (the control's Name), so `Parent = "Aimbot"` and
+-- `Parent = "aimbot"` both find the toggle named "Aimbot" with `Flag = "aimbot"`
+-- — the two things a call site actually has to hand.
+local function normalize(s: string): string
+	return (s:lower():gsub("%s+", ""))
+end
+
+-- A handle is accepted too (the toggle handle, its `.Bind` chip handle, or a
+-- raw binding), for the case where the caller does have the parent in a local.
+local function refKey(v: any): any
+	if type(v) == "string" and v ~= "" then
+		return normalize(v)
+	end
+	if type(v) == "table" then
+		local binding = v
+		if type(rawget(binding, "Bind")) == "table" then
+			binding = rawget(binding, "Bind")
+		end
+		if type(rawget(binding, "Binding")) == "table" then
+			binding = rawget(binding, "Binding")
+		end
+		if getmetatable(binding) == Binding then
+			return binding
+		end
+	end
+	return nil
+end
+
 -- ── manager ─────────────────────────────────────────────────────────────────
 function Bind.new(ctx: any): any
 	local self = setmetatable({
@@ -146,6 +189,10 @@ function Bind.new(ctx: any): any
 		entries = {} :: { any },
 		connections = {} :: { RBXScriptConnection },
 		observers = {} :: { () -> () },
+		-- Bumped on every registry change; `Binding:GetParent` memoizes against it,
+		-- so one HUD repaint resolves each parent reference once instead of walking
+		-- the whole registry per row per row.
+		revision = 0,
 	}, Bind)
 
 	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -202,6 +249,7 @@ end
 -- the key that moved it (the same reason Binding:_set paints before it spawns
 -- the user callback).
 function Bind:_changed()
+	self.revision += 1
 	for _, fn in table.clone(self.observers) do
 		fn()
 	end
@@ -249,6 +297,8 @@ end
 --   Modes      the cycle list a UI chip offers (defaults to Bind.DefaultModes)
 --   Default    starting state for Toggle/Hold
 --   Label      what to call this bind in a bind list / HUD (unnamed = hidden)
+--   Id         name other binds refer to this one by (defaults to Label)
+--   Parent     the Id / Label of the feature this one is a sub-option of
 --   Hud        true / false to force it into or out of that list
 --   Callback   fn(active, info) — info = { Key, Mode, KeyName }
 --   OnChanged  fn(key, mode) — the bind itself changed
@@ -265,12 +315,17 @@ function Bind:Register(opts: any): any
 		state = opts.Default == true,
 		enabled = true,
 		label = (type(opts.Label) == "string" and opts.Label ~= "") and opts.Label or nil,
+		id = (type(opts.Id) == "string" and opts.Id ~= "") and opts.Id or nil,
+		parentKey = refKey(opts.Parent),
 		hud = opts.Hud,
 		callback = opts.Callback,
 		onChanged = opts.OnChanged,
 		onState = opts.OnState,
 		getState = opts.GetState,
+		destroyed = false,
 		_downKey = nil :: any,
+		_parentRev = nil :: number?,
+		_parentCache = nil :: any,
 	}, Binding)
 	table.insert(self.entries, entry)
 	self:_changed()
@@ -459,12 +514,72 @@ function Binding:SetLabel(label: string?)
 	self.manager:_changed()
 end
 
--- Does this bind belong in a bind list / HUD? Three rules:
+-- ── the tree ────────────────────────────────────────────────────────────────
+-- Does `key` (already normalized) name this binding?
+function Binding:_named(key: string): boolean
+	if self.id and normalize(self.id) == key then
+		return true
+	end
+	return self.label ~= nil and normalize(self.label) == key
+end
+
+-- The feature this bind is a sub-option of, or nil. Resolved lazily and cached
+-- against the manager's revision: the parent may not have been registered yet
+-- when the child was, and it can be destroyed and rebuilt under it.
+--
+-- An unresolvable name is nil, deliberately — a typo, or a parent the host
+-- didn't build in this game, degrades to "top-level feature" rather than
+-- silently hiding the control from the HUD forever.
+function Binding:GetParent(): any?
+	local ref = self.parentKey
+	if ref == nil then
+		return nil
+	end
+	if type(ref) == "table" then
+		return (not ref.destroyed) and ref or nil
+	end
+	local manager = self.manager
+	if self._parentRev == manager.revision then
+		return self._parentCache
+	end
+	local found: any = nil
+	for _, entry in manager.entries do
+		if entry ~= self and entry:_named(ref) then
+			found = entry
+			break
+		end
+	end
+	self._parentRev = manager.revision
+	self._parentCache = found
+	return found
+end
+
+function Binding:SetParent(parent: any)
+	self.parentKey = refKey(parent)
+	self._parentRev = nil
+	self.manager:_changed()
+end
+
+-- Sub-options of this bind, in registration order.
+function Binding:GetChildren(): { any }
+	local out = {}
+	for _, entry in self.manager.entries do
+		if entry ~= self and entry:GetParent() == self then
+			table.insert(out, entry)
+		end
+	end
+	return out
+end
+
+-- Does this bind belong in a bind list / HUD? Four rules:
 --   * it needs a name — an unlabeled binding is internal plumbing, and a row
 --     reading "None" tells nobody anything;
 --   * it needs a mode that can actually go live — "None" is a pure key picker
 --     (the Settings tab's Toggle-UI bind), which never activates;
---   * it needs a KEY **or** it has to be on right now.
+--   * a KEY on it lists it outright — putting a key on something is the user
+--     saying they want to be able to find it;
+--   * with no key, it lists only while it's ON **and** it isn't a sub-option of
+--     something else.
 --
 -- The key clause is what keeps the panel from being an inventory of the whole
 -- menu: since components/Toggle.lua gives *every* toggle a chip, listing the
@@ -475,11 +590,20 @@ end
 -- answers "what's running?", and a feature the user enabled by clicking it is
 -- running whether or not they ever put a key on it — an "Always" bind ignores
 -- its key by definition, and a keyless Toggle switched on from the menu is no
--- different from the outside. Restricting the panel to keyed binds meant the
--- window could be minimized over a page of enabled features and the HUD would
--- claim nothing was live. Idle keyless binds still stay out, so the list only
--- grows by what's actually on.
--- `Hud = true/false` at registration overrides all three.
+-- different from the outside.
+--
+-- The PARENT clause is what stops that second half from being its own flood.
+-- Turning Aimbot on means turning on the eight sub-options that make it work,
+-- and every one of those is a toggle that is now "running" — so the panel filled
+-- with Sticky Aim / Wall Check / Auto Fire rows saying nothing the "Aimbot" row
+-- above them didn't. A sub-option is spoken for by its parent, so a keyless one
+-- stays out and the parent row carries the count instead (components/Hud.lua).
+-- Put a key on it and it's back — that's the user asking for it by name.
+--
+-- Note this makes an ON sub-option of an OFF parent invisible, which is correct:
+-- a sub-option of a feature that isn't running isn't running either.
+--
+-- `Hud = true/false` at registration overrides all four.
 function Binding:IsListed(): boolean
 	if self.hud ~= nil then
 		return self.hud == true
@@ -487,7 +611,24 @@ function Binding:IsListed(): boolean
 	if self.label == nil or self.mode == "None" then
 		return false
 	end
-	return self:_value() or (Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown)
+	if Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown then
+		return true
+	end
+	return self:_value() and self:GetParent() == nil
+end
+
+-- Sub-options that are ON but rolled up into this row (the "+2" the HUD draws).
+-- Counted, not listed: the point of the roll-up is that the detail lives in the
+-- menu, and the panel only has to say the feature is running with more than its
+-- bare minimum switched on.
+function Binding:CountActive(): number
+	local n = 0
+	for _, child in self:GetChildren() do
+		if child:_value() and not child:IsListed() then
+			n += 1
+		end
+	end
+	return n
 end
 
 -- Sync the binding's idea of the value without firing the callback — used when
@@ -517,6 +658,10 @@ function Binding:Destroy()
 			break
 		end
 	end
+	-- Marked as well as removed: a child holding a direct reference to this
+	-- binding (`Parent = someHandle`) has no other way to tell it's gone, and
+	-- would keep hiding itself behind a parent that isn't on screen any more.
+	self.destroyed = true
 	self.callback = nil
 	self.onChanged = nil
 	self.onState = nil

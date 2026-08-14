@@ -11,8 +11,17 @@
 --
 -- What it deliberately does NOT show is every bindable feature in the menu:
 -- that's a wall of unbound, idle rows that buries the few you actually use. The
--- inclusion rule lives in `Binding:IsListed` — a key, or currently active — so
--- the panel is exactly "everything bound + everything running".
+-- inclusion rule lives in `Binding:IsListed` — a key, or currently active and
+-- not a sub-option of something else — so the panel is "everything bound, plus
+-- every top-level feature running".
+--
+-- That last clause is the roll-up. Bindings form a shallow tree (a control
+-- declares `Parent = "<feature>"`, or inherits one from its Group / Section),
+-- because turning Aimbot on means turning on the handful of sub-options that
+-- make it work — and listing each of those as its own row said nothing the
+-- "Aimbot" row above them didn't. A rolled-up sub-option shows as a `+n` count
+-- on its parent instead; one the user put a key on is listed anyway, indented
+-- under that parent, because a key is them asking for it by name.
 --
 -- Three deliberate shapes here:
 --
@@ -52,9 +61,17 @@ local PAD_X = 12
 local NAME_X = 26
 local KEY_W = 110 -- right column: "RShift · always" in 11px mono, with room to spare
 local MARGIN = 8  -- keep-on-screen inset
+local SUB_X = 12  -- how far a sub-option's row is indented under its parent
 
 -- One pooled bind row: dot (live marker) · name · "KEY · mode".
 type Row = { frame: Frame, dot: Frame, name: TextLabel, key: TextLabel }
+
+-- The name label is RichText (for the dim "+2" roll-up count), and a label is
+-- whatever the menu author called their feature — so it has to be escaped, or a
+-- toggle named "HP < 50%" eats the rest of the row.
+local function escape(s: string): string
+	return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+end
 
 return function(ctx: any, parent: Instance, opts: any): any
 	opts = opts or {}
@@ -402,6 +419,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(NAME_X, 0),
 			Size = UDim2.new(1, -(NAME_X + KEY_W + PAD_X), 1, 0),
+			RichText = true,
 			Text = "",
 			TextColor3 = colors.text_muted,
 			TextSize = 12,
@@ -428,7 +446,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 		return { frame = frame, dot = dot, name = name, key = key }
 	end
 
-	local function paintRow(row: Row, entry: any)
+	-- `sub` = this row's parent is on screen right above it, so it draws indented
+	-- with a smaller dot: a bound sub-option reads as belonging to the feature
+	-- over it rather than as another top-level thing that's running.
+	local function paintRow(row: Row, entry: any, sub: boolean)
 		local active = entry:GetState() == true
 		local keyName = Bind.name(entry:GetKey())
 		if keyName == "None" then
@@ -438,11 +459,24 @@ return function(ctx: any, parent: Instance, opts: any): any
 			-- answer to "what key?" — there isn't one, it's running anyway.
 			keyName = "—"
 		end
-		row.name.Text = entry:GetLabel() or "Bind"
+		local indent = sub and SUB_X or 0
+		local text = escape(entry:GetLabel() or "Bind")
+		-- Sub-options that are on but rolled up into this row. The count is the
+		-- whole point of the roll-up: "Aimbot +3" says the feature is running with
+		-- more than its bare minimum on, without spending three rows saying it.
+		local extra = entry.CountActive and entry:CountActive() or 0
+		if extra > 0 then
+			text ..= ('<font color="#%s"> +%d</font>'):format(colors.text_dim:ToHex(), extra)
+		end
+		row.name.Text = text
+		row.name.Position = UDim2.fromOffset(NAME_X + indent, 0)
+		row.name.Size = UDim2.new(1, -(NAME_X + indent + KEY_W + PAD_X), 1, 0)
 		row.name.TextColor3 = active and colors.text or colors.text_muted
 		row.key.Text = ('%s<font color="#%s"> · %s</font>')
 			:format(keyName, colors.text_dim:ToHex(), entry:GetMode():lower())
 		row.key.TextColor3 = active and colors.text or colors.text_dim
+		row.dot.Position = UDim2.new(0, PAD_X + indent, 0.5, 0)
+		row.dot.Size = sub and UDim2.fromOffset(4, 4) or UDim2.fromOffset(6, 6)
 		row.dot.BackgroundColor3 = active and ctx.Accent or colors.border
 		row.frame.BackgroundTransparency = active and 0 or 1
 		row.frame.Visible = true
@@ -453,39 +487,74 @@ return function(ctx: any, parent: Instance, opts: any): any
 			return
 		end
 		local listed = {}
+		local isListed: { [any]: boolean } = {}
 		for _, entry in binds:List() do
 			if entry:IsListed() then
 				table.insert(listed, entry)
+				isListed[entry] = true
 			end
 		end
+
+		-- Gather each listed bind under its parent, if that parent made the list
+		-- too. A bound sub-option whose feature isn't on screen (nothing switched
+		-- on, no key on the parent) is its own top-level row — there's nothing for
+		-- it to sit under, and hiding it would lose a key the user chose.
+		--
+		-- Blocks keep parent and children together through the cap sort below, so
+		-- an indented row can never end up under an unrelated bind (or, worse, be
+		-- the row that got cut).
+		local blocks: { any } = {}
+		local blockOf: { [any]: any } = {}
+		for _, entry in listed do
+			local parent = entry.GetParent and entry:GetParent() or nil
+			local block = (parent and isListed[parent]) and blockOf[parent] or nil
+			if block then
+				table.insert(block.entries, entry)
+			else
+				block = { entries = { entry }, active = false }
+				table.insert(blocks, block)
+			end
+			blockOf[entry] = block
+			block.active = block.active or entry:GetState() == true
+		end
+
 		-- Under the cap, rows stay in registration order so nothing jumps around
 		-- while you read it. Over the cap, what's LIVE has to be the part you can
 		-- see, so active binds float to the top (relative order preserved).
 		if #listed > maxRows then
 			local active, idle = {}, {}
-			for _, entry in listed do
-				table.insert(entry:GetState() and active or idle, entry)
+			for _, block in blocks do
+				table.insert(block.active and active or idle, block)
 			end
-			listed = active
-			for _, entry in idle do
-				table.insert(listed, entry)
+			blocks = active
+			for _, block in idle do
+				table.insert(blocks, block)
 			end
 		end
 
-		local shown = math.min(#listed, maxRows)
+		local order: { any } = {}
+		local subRow: { [any]: boolean } = {}
+		for _, block in blocks do
+			for i, entry in block.entries do
+				table.insert(order, entry)
+				subRow[entry] = i > 1
+			end
+		end
+
+		local shown = math.min(#order, maxRows)
 		for i = 1, shown do
 			local row = rows[i]
 			if not row then
 				row = newRow(i)
 				rows[i] = row
 			end
-			paintRow(row, listed[i])
+			paintRow(row, order[i], subRow[order[i]] == true)
 		end
 		for i = shown + 1, #rows do
 			rows[i].frame.Visible = false
 		end
 		empty.Visible = shown == 0
-		local rest = #listed - shown
+		local rest = #order - shown
 		more.Visible = rest > 0
 		more.Text = ("+%d more"):format(rest)
 	end

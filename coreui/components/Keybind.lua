@@ -31,6 +31,7 @@ return function(ctx: any, opts: any)
 	Log.field(where, "Modes", opts.Modes, "table")
 	Log.field(where, "OnChanged", opts.OnChanged, "function")
 	Log.field(where, "Hud", opts.Hud, "boolean")
+	Log.field(where, "Parent", opts.Parent, { "string", "table" })
 
 	local f = Field.new(ctx, opts)
 	local mode = Bind.mode(opts.Mode, where, "None")
@@ -45,6 +46,10 @@ return function(ctx: any, opts: any)
 		-- The field's own label is what the bind HUD lists it under. A picker
 		-- (Mode = "None") never activates, so it stays out of the HUD regardless.
 		Label = opts.Name,
+		-- `Id` is what sub-options name this bind by; `Parent` makes this one a
+		-- sub-option of another feature (util/Bind.lua's tree).
+		Id = opts.Flag,
+		Parent = opts.Parent,
 		Hud = opts.Hud,
 		-- Picker mode has no activation, so `Callback` keeps its original
 		-- "the key changed" meaning there and only there.

@@ -83,7 +83,10 @@ return function(ctx: any, column: Frame, opts: any, scope: string?)
 	-- `any` for the same reason components/Window.lua types its tab handle that
 	-- way: the control surface grows the two collapse methods below, and under
 	-- --!strict the inferred table type wouldn't take them.
-	local handle: any = Controls.new(ctx, card)
+	-- `Parent` on the card makes every bindable control inside it a sub-option of
+	-- that feature for the bind HUD (util/Bind.lua's tree) — a group of Aimbot
+	-- options says it once here rather than on every toggle.
+	local handle: any = Controls.new(ctx, card, opts.Parent)
 
 	-- Whether a group is folded is state the user set, and it had no
 	-- representation anywhere: not readable, not settable, not in any config. The

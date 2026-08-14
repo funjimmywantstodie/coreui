@@ -40,6 +40,7 @@ return function(ctx: any, opts: any)
 	Log.field(where, "KeybindModes", opts.KeybindModes, "table")
 	Log.field(where, "KeybindFlag", opts.KeybindFlag, "string")
 	Log.field(where, "Hud", opts.Hud, "boolean")
+	Log.field(where, "Parent", opts.Parent, { "string", "table" })
 
 	local f = Field.new(ctx, opts)
 	local state = opts.Default == true
@@ -147,6 +148,14 @@ return function(ctx: any, opts: any)
 			-- The toggle's own label is what the bind HUD lists it under, so
 			-- "hold B for aim" appears there without a second declaration.
 			Label = opts.Name,
+			-- ...and its Flag is what a sub-option points `Parent` at. Either name
+			-- resolves (util/Bind.lua `Binding:_named`), so a section of sub-toggles
+			-- can say `Parent = "aimbot"` or `Parent = "Aimbot"`.
+			Id = opts.Flag,
+			-- Declaring this toggle a sub-option of another feature keeps it out of
+			-- the bind HUD when it's merely switched on — its parent's row speaks for
+			-- it. A key of its own still lists it.
+			Parent = opts.Parent,
 			Hud = opts.Hud,
 			GetState = function()
 				return state

@@ -1398,6 +1398,8 @@ return function(opts: any)
 	--
 	-- Give it a `Label` to have it listed in the bind HUD; without one it's
 	-- treated as internal plumbing and stays out (there'd be nothing to call it).
+	-- `Parent = "<feature>"` makes it a sub-option of another bind, which keeps it
+	-- out of that list while it's merely on (util/Bind.lua's tree).
 	function window:Bind(keyOrOpts: any, callback: any, mode: any): any
 		local o = keyOrOpts
 		if typeof(keyOrOpts) == "EnumItem" then
@@ -1410,6 +1412,8 @@ return function(opts: any)
 		Log.field("Bind", "Callback", o.Callback, "function")
 		Log.field("Bind", "Mode", o.Mode, "string")
 		Log.field("Bind", "Label", o.Label, "string")
+		Log.field("Bind", "Id", o.Id, "string")
+		Log.field("Bind", "Parent", o.Parent, { "string", "table" })
 		Log.field("Bind", "Hud", o.Hud, "boolean")
 		return binds:Register(o)
 	end

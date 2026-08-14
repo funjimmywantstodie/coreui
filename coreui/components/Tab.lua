@@ -687,6 +687,9 @@ return function(ctx: any, opts: any)
 				:format(typeof(groupOpts)))
 		end
 		Log.field("CreateGroup", "Id", groupOpts and groupOpts.Id, "string")
+		-- `Parent` scopes every bindable control in the card to one feature for the
+		-- bind HUD: a name, or `true` to mean "the first bindable control here".
+		Log.field("CreateGroup", "Parent", groupOpts and groupOpts.Parent, { "string", "boolean", "table" })
 		-- Column is 1 (left) or 2 (right). A stray value (e.g. Column = 3, or a
 		-- string) would silently land the group in the left column — warn and
 		-- fall back so the author knows their column choice was ignored.

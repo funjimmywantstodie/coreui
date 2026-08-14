@@ -232,7 +232,8 @@ key and mode, lit while it's live, plus FPS and ping.
 ├────────────────────────────────┤
 │ ● Auto Parry         F · toggle│   ← lit: running right now
 │ ○ Aim Assist         E · hold  │
-│ ● ESP                X · always│
+│ ● Aimbot +3          X · always│   ← +3 sub-options on, rolled up
+│  ◦ Wall Check        V · toggle│   ← a sub-option you gave a key
 │ ● Infinite Jump      — · toggle│   ← on, but never bound to a key
 └────────────────────────────────┘
 ┌────────────────────────────────┐
@@ -272,22 +273,72 @@ switched on — as long as it has a name to be listed under:
 | `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
 | `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
 
-So the panel is **everything you bound + everything that's running**. A keyless
-feature you turned on from the menu lists with a `—` where its key would be:
-there isn't one, and it's running anyway. Turn it back off and the row goes.
+So the panel is **everything you bound + every top-level feature that's
+running**. A keyless feature you turned on from the menu lists with a `—` where
+its key would be: there isn't one, and it's running anyway. Turn it back off and
+the row goes.
 
-Three things stay out, so it stays a short list rather than an inventory of the
+Four things stay out, so it stays a short list rather than an inventory of the
 whole menu:
 
 - **anything that's off and has no key on it** — an idle unbound feature is a
   `— · toggle` row that tells you nothing, and since [every toggle carries a
   chip](#toggle) a hub full of them would bury the binds you set;
+- **sub-options of a feature that's on** — see below;
 - a bind with **no name** (nothing to call it);
 - a **key picker** — a `Keybind` with no `Mode`, which holds a key but never
   activates.
 
 Pass `Hud = true` / `Hud = false` on any of the three sources above to override
 all of it.
+
+#### Sub-options (`Parent`)
+
+Turning Aimbot on means turning on the handful of switches that make it work,
+and each of those is a toggle that is now *running* — so without this the panel
+fills with `Sticky Aim`, `Wall Check`, `Auto Fire` rows saying nothing the
+`Aimbot` row above them didn't.
+
+Say which feature a control belongs to and it rolls up into that feature's row
+instead:
+
+```lua
+Group:Toggle({ Name = "Aimbot", Flag = "aimbot" })
+Group:Toggle({ Name = "Sticky Aim", Flag = "aim_sticky", Parent = "aimbot" })
+Group:Toggle({ Name = "Wall Check", Flag = "aim_walls",  Parent = "aimbot" })
+```
+
+`Parent` matches the other control's **`Flag` or its `Name`**, case- and
+space-insensitively (`"aimbot"`, `"Aimbot"` and `"aim bot"` all find it), so it's
+a name you already wrote down. A handle works too (`Parent = aimbotToggle`), and
+a name that resolves to nothing is simply ignored — the control stays top-level
+rather than disappearing.
+
+Declare it **once for a whole card or section** instead of per line:
+
+```lua
+-- every bindable control in the card belongs to "aimbot"
+local G = Tab:CreateGroup({ Title = "Aimbot", Parent = "aimbot" })
+
+-- ...or let the FIRST bindable control in the container be the feature:
+local G = Tab:CreateGroup({ Title = "Aimbot", Parent = true })
+G:Toggle({ Name = "Aimbot", Flag = "aimbot" })  -- the feature
+G:Toggle({ Name = "Sticky Aim" })               -- sub-option
+G:Toggle({ Name = "Wall Check" })               -- sub-option
+Group:Section({ Title = "Advanced", Parent = "aimbot" })  -- same, on a section
+```
+
+What that changes in the HUD:
+
+| Sub-option | In the panel |
+| --- | --- |
+| off | not listed (same as before) |
+| on, no key | not listed — counted as `+n` on the parent's row |
+| has a key | listed, **indented** under its parent — you asked for it by name |
+| `Hud = true` on it | listed regardless |
+
+An on sub-option of an **off** parent stays out too: a sub-option of a feature
+that isn't running isn't running either.
 
 It lives beside the window rather than inside it, so **minimizing the window (or
 hitting the toggle key) leaves the HUD up** — which is the point of having one.
@@ -387,6 +438,8 @@ local Group = Tab:CreateGroup({
     Column    = 1,          -- 1 = left column, 2 = right  (default 1)
     Collapsed = false,      -- start collapsed             (default false)
     Id        = nil,        -- stable identity for persisted state (default: Title)
+    Parent    = nil,        -- bind-HUD feature every control here belongs to
+                            -- (a name, or `true` = the first bindable control)
 })
 ```
 
@@ -413,6 +466,8 @@ Which groups are folded is persisted with the window (see
 local Sub = Group:Section({
     Title     = "Advanced",  -- section header   (default "Section")
     Collapsed = true,        -- start collapsed  (default false)
+    Parent    = nil,         -- bind-HUD feature these controls belong to
+                             -- (see Sub-options; inherits the card's if unset)
 })
 Sub:Toggle({ Name = "Verbose logging" })
 ```
@@ -474,6 +529,10 @@ part of the feature.
 
 With a `Flag` set and no explicit `KeybindFlag`, the key + mode persist under
 `<flag>_key` (see [Keybind on a Toggle](#keybind-on-a-toggle)).
+
+`Parent = "<feature>"` marks the toggle as a **sub-option** of another control,
+which keeps it out of the bind HUD when it's merely switched on — its parent's
+row speaks for it. See [Sub-options](#sub-options-parent).
 
 ### Button / ButtonRow
 
@@ -656,6 +715,9 @@ Group:Keybind({
 A `Flag` on a bind persists the **key and the mode** together, so a saved config
 restores "hold LAlt", not just the key.
 
+`Parent = "<feature>"` works here too — it marks the bind as a sub-option of
+another one for the [bind HUD](#sub-options-parent).
+
 #### Keybind on a Toggle
 
 Every `Toggle` carries the same chip inline instead of being wired to a separate
@@ -678,6 +740,7 @@ Group:Toggle({
 | *(nothing)* | an empty chip in `Toggle` mode — the default |
 | `Keybind = <key>` | presets the key (and puts it in the HUD from launch) |
 | `Keybind = false` | no chip on this control |
+| `Parent = "<feature>"` | a sub-option of another control — [rolls up in the HUD](#sub-options-parent) |
 | `CreateWindow{ Keybinds = false }` | no chip on any toggle; an explicit `Keybind` / `KeybindMode` / `KeybindModes` overrides it back on |
 
 **The key persists with the toggle.** With a `Flag` and no `KeybindFlag`, the

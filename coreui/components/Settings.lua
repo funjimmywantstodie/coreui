@@ -78,11 +78,17 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			window:SetToggleKey(k)
 		end,
 	})
+	-- `Hud = false` on the switches below: they're preferences about the UI, not
+	-- features running in the game, and the bind HUD lists what's running. Left to
+	-- the default rule they'd all qualify — a keyless toggle that's ON is listed —
+	-- so every user would open the panel to find "Notifications" and, absurdly,
+	-- "Keybind HUD" at the top of it.
 	controls.Notifications = g:Toggle({
 		Name = "Notifications",
 		Desc = "Show toast notifications.",
 		Flag = o.NotificationsFlag or "uranium_notifications",
 		Default = window:GetNotificationsEnabled(),
+		Hud = false,
 		Callback = function(on)
 			window:SetNotificationsEnabled(on)
 		end,
@@ -99,6 +105,7 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 		Name = "Keybind HUD",
 		Desc = "Floating panel: active binds, FPS and ping.",
 		Default = hud ~= nil and hud:IsVisible(),
+		Hud = false,
 		Callback = function(on)
 			local live = window:GetHud()
 			if live and live:IsVisible() == on then
@@ -274,6 +281,7 @@ function Settings.ConfigGroup(window: any, tab: any, opts: any?): any
 		Name = "Auto Load",
 		Desc = "Apply the selected config on launch.",
 		Default = window:GetAutoload() ~= nil,
+		Hud = false, -- a config preference, not a feature (see InterfaceGroup)
 		Callback = syncAutoload,
 	})
 

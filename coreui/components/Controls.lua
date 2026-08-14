@@ -30,9 +30,18 @@ local MediaPlayer = require(script.Parent.MediaPlayer)
 
 local Controls = {}
 
-function Controls.new(ctx: any, frame: Frame)
+-- `inheritParent` is the bind-HUD parent (util/Bind.lua's tree) a Group or
+-- Section declared for everything inside it — see the note on `mount` below.
+function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 	local items: { { inst: Instance, sep: Frame?, bordered: boolean } } = {}
 	local count = 0
+	-- `Parent = true` on the container: the first bindable control in it is the
+	-- feature, and everything bindable after it is a sub-option of that one. It's
+	-- the "Aimbot / Sticky Aim / Wall Check / Auto Fire" card written the way it's
+	-- always written, without having to repeat the feature's name — which is the
+	-- shape that made the bind HUD unreadable in the first place. Resolved to a
+	-- name here rather than a handle so it behaves exactly like the explicit form.
+	local autoParent: any = nil
 
 	local function refresh()
 		local n = #items
@@ -80,6 +89,28 @@ function Controls.new(ctx: any, frame: Frame)
 			Log.field(where, "Callback", opts.Callback, "function")
 			Log.field(where, "Flag", opts.Flag, "string")
 			Log.field(where, "Name", opts.Name, "string")
+		end
+
+		-- A Group / Section built with `Parent = "<feature>"` hands that down to
+		-- every bindable control inside it, so a card full of sub-options declares
+		-- it once at the top instead of on every line — which is the shape the bind
+		-- HUD's roll-up (util/Bind.lua `Binding:IsListed`) is worth having. An
+		-- explicit `Parent` on the control itself still wins, and controls that
+		-- aren't bindable ignore the field.
+		local bindable = kind == "toggle" or kind == "bind"
+		if bindable and inheritParent ~= nil and opts ~= nil and opts.Parent == nil then
+			if inheritParent ~= true then
+				opts = table.clone(opts)
+				opts.Parent = inheritParent
+			elseif autoParent == nil then
+				-- `Parent = true`: the first bindable control here IS the feature, so
+				-- it claims the slot rather than filling one. `false` = it had neither
+				-- a Flag nor a Name, so there's nothing later controls could point at.
+				autoParent = opts.Flag or opts.Name or false
+			elseif autoParent then
+				opts = table.clone(opts)
+				opts.Parent = autoParent
+			end
 		end
 
 		-- Change notification (Context:OnFlagChanged) hangs off the control's own
@@ -198,9 +229,19 @@ function Controls.new(ctx: any, frame: Frame)
 		if o ~= nil and type(o) ~= "table" then
 			Log.fail("Section", ("options must be a table like { Title = ... }, got %s"):format(typeof(o)))
 		end
+		Log.field(Log.where("Section", o and o.Title), "Parent", o and o.Parent, { "string", "boolean", "table" })
 		local section, body = Section(ctx, o)
 		place(section, true)
-		return Controls.new(ctx, body)
+		-- A section is the natural place to say "everything under here belongs to
+		-- that feature" — one line above eight sub-toggles. Falls through to the
+		-- card's own declaration when the section doesn't make one; under a
+		-- `Parent = true` card that means the feature the card already picked, so a
+		-- section of sub-options doesn't start a second one of its own.
+		local inherit = o and o.Parent
+		if inherit == nil then
+			inherit = (inheritParent == true and autoParent ~= nil) and autoParent or inheritParent
+		end
+		return Controls.new(ctx, body, inherit)
 	end
 
 	-- Escape hatch: `builder(ctx, frame)` parents whatever it wants into `frame`.

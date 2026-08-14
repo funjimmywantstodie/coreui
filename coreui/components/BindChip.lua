@@ -163,6 +163,11 @@ return function(ctx: any, opts: any): (Frame, any)
 		-- What the bind HUD calls this bind (components/Hud.lua). The consumers
 		-- pass their control's own `Name`, so nothing is declared twice.
 		Label = opts.Label,
+		-- ...and their own `Flag` as the id other controls point `Parent` at, for
+		-- the same reason: the name a sub-option refers to its feature by is one
+		-- the call site already wrote down.
+		Id = opts.Id,
+		Parent = opts.Parent,
 		Hud = opts.Hud,
 		GetState = opts.GetState,
 		Callback = opts.OnActivate,

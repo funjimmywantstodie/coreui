@@ -91,6 +91,23 @@ Bound:Toggle({
 	Callback = function(on) print("esp:", on) end,
 })
 
+-- Sub-options. `Parent = true` on the card means "the first bindable control in
+-- here is the feature, the rest belong to it" — so switching Aimbot on doesn't
+-- put four more rows in the HUD saying what the Aimbot row already said. They
+-- roll up into it as `Aimbot +3` instead. Give one its own key and it comes back,
+-- indented under the parent. Write `Parent = "aimbot"` per-control (or on a
+-- Section) if the card isn't shaped this neatly.
+local Aim = Home:CreateGroup({ Title = "Aimbot", Column = 2, Parent = true })
+Aim:Toggle({
+	Name = "Aimbot", Desc = "The feature every switch below belongs to.",
+	Flag = "aimbot",
+	Callback = function(on) print("aimbot:", on) end,
+})
+Aim:Toggle({ Name = "Sticky Aim", Default = true, Flag = "aim_sticky" })
+Aim:Toggle({ Name = "Wall Check", Default = true, Flag = "aim_walls" })
+Aim:Toggle({ Name = "Auto Fire", Flag = "aim_autofire" })
+Aim:Slider({ Name = "Smoothness", Min = 0, Max = 100, Default = 35, Flag = "aim_smooth" })
+
 -- The HUD's readout row is extensible: SetStat(label, value) adds or updates a
 -- pill next to FPS / MS, SetStat(label, nil) drops it again. GetHud() returns nil
 -- once the window is unloaded, which is what ends this loop.

@@ -105,7 +105,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
   `Uranium.Config` (the file layer) · `Uranium.Settings` (the settings-panel builders)
-- `Tab:CreateGroup{Title,Column,Collapsed,Id?}` (Column 1=left, 2=right) →
+- `Tab:CreateGroup{Title,Column,Collapsed,Id?,Parent?}` (Column 1=left, 2=right) →
   the control surface, plus `:IsCollapsed()`/`:SetCollapsed(b, animate?)` — see
   **Window state** below for what `Id` is for; plus the tab-identity options and
   setters under **Tabs & the sidebar**
@@ -123,7 +123,8 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   - `Keybind` takes an optional `Mode` (`Toggle`/`Hold`/`Press`/`Always`/`None`);
     `Toggle` is bindable **by default** (empty chip, `Toggle` mode) and takes
     `Keybind`/`KeybindMode`/`KeybindModes`/`KeybindFlag` to preset it or
-    `Keybind = false` to drop it — see **Keybinds & modes** below.
+    `Keybind = false` to drop it — see **Keybinds & modes** below. Both also take
+    `Parent` (the feature this control is a sub-option of) — see **The bind HUD**.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
@@ -427,18 +428,40 @@ registry — which already holds every binding — through two additions there:
 activate / destroy) and `Bind:List()`. A binding carries a `Label`, which
 `Keybind` and `Toggle` fill from their own `Name` and `Window:Bind` takes
 directly; `Binding:IsListed()` is the one place the inclusion rule lives — needs
-a label, a `Mode ~= "None"` (a pure key picker never activates), and **a key or a
-true value**, with `Hud = true/false` on the control as the override. So the
-panel is *everything bound + everything running*. The key clause is what keeps it
-short: a HUD that lists every bindable feature in the menu is a wall of idle
-`— · toggle` rows burying the few the user actually bound — and it is what makes
-every-toggle-is-bindable free. The **active** clause is the other half of the
-HUD's premise: it answers "what's on right now?", and a keyless feature the user
-switched on from the menu is on. It used to be scoped to `Always` only (which
-ignores its key by design), which meant minimizing over a page of enabled
-features left the HUD claiming nothing was live. Idle keyless binds still drop
-out, so the list only ever grows by what's actually running; `Hud.lua`'s
-`paintRow` draws the missing key as `—`.
+a label, a `Mode ~= "None"` (a pure key picker never activates), and **a key, or
+a true value with no parent**, with `Hud = true/false` on the control as the
+override. So the panel is *everything bound + every top-level feature running*.
+The key clause is what keeps it short: a HUD that lists every bindable feature in
+the menu is a wall of idle `— · toggle` rows burying the few the user actually
+bound — and it is what makes every-toggle-is-bindable free. The **active** clause
+is the other half of the HUD's premise: it answers "what's on right now?", and a
+keyless feature the user switched on from the menu is on. It used to be scoped to
+`Always` only (which ignores its key by design), which meant minimizing over a
+page of enabled features left the HUD claiming nothing was live. Idle keyless
+binds still drop out, so the list only ever grows by what's actually running;
+`Hud.lua`'s `paintRow` draws the missing key as `—`.
+
+**The parent clause is what stops that second half from being its own flood.**
+Bindings form a shallow tree: a control declares `Parent = "<feature>"` (matched
+case/space-insensitively against another binding's `Id` — the control's `Flag` —
+or its `Label`, or passed as a handle), and a keyless sub-option that's merely ON
+stays out because its parent's row already says so. Turning Aimbot on turns on
+the eight switches that implement it, and listing each one said nothing the
+`Aimbot` row didn't. `Binding:CountActive()` feeds the `+n` the parent row
+carries instead; a sub-option with its own key is still listed, indented under
+its parent (`Hud.lua`'s `paintRow(row, entry, sub)` — the rows are grouped into
+parent+children *blocks* first so the `MaxRows` sort can't separate them). An ON
+sub-option of an OFF parent is invisible, which is the right answer: it isn't
+running either. `Controls.new(ctx, frame, inheritParent)` is the sugar —
+`CreateGroup{ Parent = "aimbot" }` / `Section{ Parent = ... }` scope a whole
+container, and `Parent = true` means "the first bindable control here is the
+feature", which is the shape those cards are already written in. Only `toggle` /
+`bind` kinds take part.
+
+The Settings panel's own switches (Notifications, Keybind HUD, Auto Load) pass
+`Hud = false`: they're preferences about the UI, not features running in the
+game, and the default rule (keyless + on = listed) would otherwise put "Keybind
+HUD" in the keybind HUD for every user.
 
 Six things to respect:
 
