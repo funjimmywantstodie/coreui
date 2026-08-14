@@ -80,9 +80,9 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,AllowMultiple?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
-  `:SetAccent(Color3)` · `:SetLogo(source)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
+  `:SetAccent(Color3)` · `:SetLogo(source, zoom?)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
@@ -337,7 +337,11 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
   MediaPlayer knobs use `text` (at value 0 the knob sits off the accent fill,
   where a knockout knob would vanish), and the window keeps its neutral black
   drop shadow as elevation. `Theme.Brand` holds the mark
-  (`{ name, logo = <decal id>, radius }`).
+  (`{ name, logo = <source chain>, radius, zoom }`) and `Theme.Metrics.logo` its
+  size. `zoom` exists because the shipped PNG is a full-bleed tile with dead
+  margin baked around the glyph: the titlebar holder clips and draws the art
+  `zoom`× oversized to crop that margin off. Caller-supplied `Logo` art defaults
+  to `zoom = 1` — we can't assume someone else's mark has margin to trim.
 - **Fonts: set `FontFace` (NOT `Font`).** `Font` uses bitmap atlases → soft/
   pixelated scaling; `FontFace` uses the SDF renderer → crisp at any size. Use
   `Theme.Font.{Bold,Medium,Regular,Mono}`.

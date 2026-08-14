@@ -41,7 +41,16 @@ Theme.Brand = {
 	logo = {
 		ASSETS .. "uranium-orbitals-512-square.png", -- 512×512 square mark
 	},
-	radius = 6, -- rounded off with a UICorner (proportional to the 20px titlebar mark)
+	radius = 8, -- rounded off with a UICorner
+	-- The mark is a full-bleed tile, not a transparent glyph: the orbitals only
+	-- span the middle ~58% and the rest is flat #0B0F0A margin baked into the
+	-- PNG. Drawn 1:1 that reads as a tiny logo floating in a box. So the holder
+	-- clips and the art is drawn `zoom`× oversized inside it — the dead margin
+	-- is cropped away and the glyph fills ~82% of the holder instead of 58%.
+	-- The tile's background is exactly `Colors.bg`, so its edges vanish into the
+	-- titlebar and the crop is invisible. 1 = draw the source untouched (the
+	-- default for a caller-supplied Logo, which we can't assume has margin).
+	zoom = 1.42,
 }
 
 -- ── Colors ────────────────────────────────────────────────────────────────
@@ -79,6 +88,7 @@ Theme.Metrics = {
 	windowHeight  = 560,
 	windowRadius  = 12,
 	titlebar      = 50,
+	logo          = 30, -- titlebar brand mark (square)
 	statusbar     = 34,
 	sidebar       = 64,
 	navButton     = 40,

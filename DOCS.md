@@ -112,6 +112,7 @@ local Window = Uranium:CreateWindow({
     Accent       = Color3.fromHex("7cff3b"), -- initial accent color     (default theme accent)
     Logo         = 74808640463075,           -- titlebar mark            (default Uranium logo)
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
+    LogoZoom     = 1,                        -- crop a margin baked into the art (default 1)
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
 })
 ```
@@ -153,7 +154,7 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:Notify(opts)` | Show a toast notification (bottom-right). |
 | `Window:Select(index)` | Switch to tab `index` (1-based). |
 | `Window:SetAccent(color)` | Re-theme the whole UI to `color` (a `Color3`), live. |
-| `Window:SetLogo(source)` | Swap the titlebar mark (asset id, url, or file path). |
+| `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
 | `Window:SaveConfig(name)` → `bool` | Save all flagged values to `<name>.json`. |

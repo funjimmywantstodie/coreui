@@ -31,6 +31,8 @@ return function(opts: any)
 	Log.field("CreateWindow", "ToggleKey", opts.ToggleKey, "EnumItem")
 	Log.field("CreateWindow", "Accent", opts.Accent, "Color3")
 	Log.field("CreateWindow", "ConfigFolder", opts.ConfigFolder, "string")
+	Log.field("CreateWindow", "LogoRadius", opts.LogoRadius, "number")
+	Log.field("CreateWindow", "LogoZoom", opts.LogoZoom, "number")
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 
 	-- where configs are saved on disk + which key shows/hides the window
@@ -176,7 +178,7 @@ return function(opts: any)
 	-- it never resolves (Studio without executor globals, bad id, …).
 	local logo = Create("Frame", {
 		Name = "Logo",
-		Size = UDim2.fromOffset(20, 20),
+		Size = UDim2.fromOffset(M.logo, M.logo),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, M.sidebar / 2, 0.5, 0),
 		BackgroundColor3 = colors.accent,
@@ -192,20 +194,32 @@ return function(opts: any)
 		Size = UDim2.fromScale(1, 1),
 		Text = brandName:sub(1, 1):upper(),
 		TextColor3 = colors.knockout,
-		TextSize = 12,
+		TextSize = 17,
 		FontFace = Theme.Font.Bold,
 		Parent = logo,
 	})
+	-- Fit, not Crop: a brand mark must never lose an edge or change proportion.
+	-- Fit letterboxes non-square art inside the square holder; the zoom below is
+	-- what fills the holder, and it's a scale on both axes so it can't stretch.
 	local logoImage = Create("ImageLabel", {
 		Name = "Mark",
 		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromScale(1, 1),
 		Image = "",
-		ScaleType = Enum.ScaleType.Crop,
+		ScaleType = Enum.ScaleType.Fit,
 		Visible = false,
 		Parent = logo,
 	}) :: ImageLabel
-	local function setLogo(source: any)
+	-- `zoom` > 1 draws the art oversized inside the clipping holder, trimming a
+	-- margin baked into the source (see Theme.Brand.zoom). nil = draw it 1:1.
+	local function setLogo(source: any, zoom: number?)
+		local z = tonumber(zoom) or 1
+		if z <= 0 then
+			z = 1
+		end
+		logoImage.Size = UDim2.fromScale(z, z)
 		-- The mark is ALWAYS visible — it has to be, or the engine never fetches
 		-- the texture — and it's drawn over the accent square, which stays put as
 		-- a backdrop. So the art covers the square when it loads, and if it never
@@ -226,10 +240,14 @@ return function(opts: any)
 		end)
 	end
 	-- `Logo = false` means "no art at all" — keep the accent square + initial.
+	-- The built-in mark gets Theme.Brand.zoom (its margin is known); art the
+	-- caller supplied is drawn 1:1 unless they ask for a zoom themselves.
 	if opts.Logo == false then
 		setLogo(nil)
+	elseif opts.Logo ~= nil then
+		setLogo(opts.Logo, opts.LogoZoom)
 	else
-		setLogo(opts.Logo ~= nil and opts.Logo or Theme.Brand.logo)
+		setLogo(Theme.Brand.logo, opts.LogoZoom or Theme.Brand.zoom)
 	end
 
 	-- Wordmark: uppercase with wide letter-spacing. Roblox has no tracking /
@@ -890,9 +908,10 @@ return function(opts: any)
 	end
 
 	-- Swap the brand mark at runtime — same source types as the Logo option
-	-- (asset id, https url, local file path).
-	function window:SetLogo(source: any)
-		setLogo(source)
+	-- (asset id, https url, local file path). `zoom` crops a margin baked into
+	-- the art (see Theme.Brand.zoom); omit it and the art is drawn 1:1.
+	function window:SetLogo(source: any, zoom: number?)
+		setLogo(source, zoom)
 	end
 
 	function window:SetAccent(color: Color3)
