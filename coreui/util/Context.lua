@@ -680,15 +680,55 @@ end
 -- meta)` stamps, and a host is free to keep its own bookkeeping keys alongside
 -- it. It also means a config written by a build with more controls than this one
 -- still loads the flags this build does have.
-function Context:LoadConfig(data: { [string]: any }): (number, number)
+--
+-- `opts.Filter = function(name, kind) -> boolean` decides, per flag, whether it
+-- is applied at all — for a host that scopes its registry (a portable half and a
+-- per-place half) and wants to land only one of them. It's a *predicate*, not a
+-- list of names, because that classification is computed rather than enumerable.
+-- Three things it promises:
+--   • It only ever sees keys that resolved to a registered flag, so `kind` is
+--     always a real codec kind and `Config.MetaKey` (and any other bookkeeping
+--     key) never reaches it — those are skipped before the filter is consulted.
+--   • A filtered-out key counts as **skipped**, never applied, so LoadConfig's
+--     "applied nothing" still means nothing matched.
+--   • It's called inside a pcall; a filter that errors skips its flag rather
+--     than half-applying a config the host couldn't classify.
+export type LoadOpts = { Filter: ((string, string) -> boolean)? }
+
+function Context:LoadConfig(data: { [string]: any }, opts: LoadOpts?): (number, number)
 	if type(data) ~= "table" then
 		return 0, 0
+	end
+	local filter: ((string, string) -> boolean)? = nil
+	if opts ~= nil then
+		if type(opts) ~= "table" then
+			Log.warn("LoadConfig", ("options must be a table, got %s — ignoring.")
+				:format(typeof(opts)))
+		elseif opts.Filter ~= nil then
+			if type(opts.Filter) ~= "function" then
+				Log.warn("LoadConfig", ("Filter must be a function, got %s — ignoring.")
+					:format(typeof(opts.Filter)))
+			else
+				filter = opts.Filter
+			end
+		end
 	end
 	local applied, skipped = 0, 0
 	for name, raw in data do
 		local entry = self.Flags[name]
 		local codec = entry and Codec[entry.kind]
-		if not codec then
+		local wanted = true
+		if codec and filter then
+			local okFilter, verdict = pcall(filter, name, entry.kind)
+			if not okFilter then
+				Log.warn("LoadConfig", ('filter errored for flag "%s" (%s) — skipped: %s')
+					:format(name, entry.kind, tostring(verdict)))
+				wanted = false
+			else
+				wanted = verdict and true or false
+			end
+		end
+		if not codec or not wanted then
 			skipped += 1
 		else
 			-- Every failure below used to be swallowed by a bare pcall, so one broken

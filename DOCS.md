@@ -249,14 +249,14 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:IsMaximized()` / `:SetMaximized(bool, animate?)` | The maximize state. |
 | `Window:GetSelected()` → `number` | Which tab is open (1-based). |
 | `Window:GetConfig()` → `table` | Snapshot every flag — what `SaveConfig` serializes. |
-| `Window:ApplyConfig(table)` → `applied, skipped` | Apply a flag table — what `LoadConfig` applies. |
+| `Window:ApplyConfig(table, opts?)` → `applied, skipped` | Apply a flag table — what `LoadConfig` applies. `opts.Filter(name, kind)` applies only part of it. |
 | `Window:GetFlags()` → `{[name]=kind}` | Every registered flag and its codec kind. |
 | `Window:RegisterFlag(name, handle, kind)` | Register your own non-control state as a flag. |
 | `Window:OnFlag(fn)` → `unsub` | `fn(name, kind)` as each flag registers, synchronously. |
 | `Window:OnFlagChanged(fn)` → `unsub` | `fn(name, value, kind, source)` as each flag's **value** changes. |
 | `Window:NotifyFlag(name, source?)` | Announce that a flag you registered yourself has moved. |
 | `Window:SaveConfig(name, meta?)` → `bool, reason?` | Save all flagged values to `<name>.json`, optionally stamped with `meta`. |
-| `Window:LoadConfig(name)` → `bool, reason?` | Load + apply a saved config. |
+| `Window:LoadConfig(name, opts?)` → `bool, reason?` | Load + apply a saved config. `opts.Filter(name, kind)` applies only part of it. |
 | `Window:DeleteConfig(name)` → `bool, reason?` | Delete a saved config. |
 | `Window:ListConfigs()` → `{string}` | List saved config names. |
 | `Window:ConfigInfo(name)` → `meta?, reason?` | Read a config's `meta` **without** applying it. |
@@ -985,6 +985,43 @@ Window:ApplyConfig(snapshot)             -- exactly what LoadConfig applies
 skipped, on purpose** — that's a promised part of the format, so a config can
 carry data that isn't a control value, and a file written by a build with more
 controls than yours still applies the flags you do have.
+
+#### Applying only part of a config (`Filter`)
+
+By default a config load applies every flag in the file. If your registry is
+split — a portable half that applies in any game and a per-place half that only
+means something in the game it was written for — pass a predicate and only the
+flags it says yes to are applied:
+
+```lua
+Window:LoadConfig("main", {
+    Filter = function(name, kind)
+        return not perPlace[name]        -- apply the portable half only
+    end,
+})
+```
+
+It's the same option on both, so the in-memory half is filterable too:
+
+```lua
+Window:ApplyConfig(snapshot, { Filter = function(name, kind) ... end })
+```
+
+**One predicate, not a list of names** — the classification a host wants here is
+usually computed (which module registered the flag, which place it belongs to),
+and enumerating it defeats the point.
+
+- `name` is the flag, `kind` is its codec kind — the same pair `GetFlags()`
+  reports.
+- **Return `false` and the key counts as skipped, not applied.** So
+  `LoadConfig`'s `"applied nothing"` failure still means exactly that: a filter
+  that rejects everything in the file is a failed load, not a silent success.
+- **The filter never sees a key that isn't a registered flag.** `Config.MetaKey`
+  (`"__uranium"`) and any bookkeeping key you keep alongside it are skipped
+  before it's consulted, so it doesn't have to know about them.
+- A filter that errors skips its flag (with a warning) rather than half-applying
+  a config you couldn't classify.
+- Omit `Filter` — or the whole options table — and behaviour is unchanged.
 
 `Uranium.Config` is the file layer itself (`util/Config.lua`), if you want to
 read another folder's configs or check a name:

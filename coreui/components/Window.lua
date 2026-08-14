@@ -32,6 +32,10 @@ local SettingsPanel = require(script.Parent.Settings)
 
 local M = Theme.Metrics
 
+-- Options for ApplyConfig / LoadConfig. `Filter(name, kind) -> boolean` decides
+-- per flag whether it's applied; see Context:LoadConfig for the contract.
+type LoadOpts = { Filter: ((string, string) -> boolean)? }
+
 return function(opts: any)
 	opts = opts or {}
 	local colors = Theme.Colors
@@ -1492,16 +1496,22 @@ return function(opts: any)
 	end
 
 	-- Apply a table of flags. Returns how many were applied and how many keys were
-	-- skipped (unknown flag, failed decode, control refused the value). Keys with
-	-- no registered flag are skipped rather than erroring — see Context:LoadConfig,
-	-- where that promise is spelled out.
-	function window:ApplyConfig(data: { [string]: any }): (number, number)
+	-- skipped (unknown flag, failed decode, control refused the value, or filtered
+	-- out). Keys with no registered flag are skipped rather than erroring — see
+	-- Context:LoadConfig, where that promise is spelled out.
+	--
+	-- `opts.Filter = function(name, kind) -> boolean` applies only the flags it
+	-- says yes to, for a host whose registry is split (a portable half, a per-place
+	-- half). One predicate rather than a list of names, because that split is
+	-- computed, not enumerable; `Config.MetaKey` and every other unregistered key
+	-- is skipped before the filter is consulted, so it never sees one.
+	function window:ApplyConfig(data: { [string]: any }, loadOpts: LoadOpts?): (number, number)
 		if type(data) ~= "table" then
 			Log.warn("ApplyConfig", ("expects a table of flags, got %s — ignoring.")
 				:format(typeof(data)))
 			return 0, 0
 		end
-		return ctx:LoadConfig(data)
+		return ctx:LoadConfig(data, loadOpts)
 	end
 
 	-- Every registered flag as `{ [name] = kind }`. Snapshot it at two moments —
@@ -1777,7 +1787,14 @@ return function(opts: any)
 		return ok, reason
 	end
 
-	function window:LoadConfig(name: string): (boolean, string?)
+	-- `opts` is ApplyConfig's, and it's here for the same reason: a host that
+	-- scopes its registry — a portable half applied anywhere, a per-place half
+	-- only in the right game — could otherwise only land *part* of a file by
+	-- abandoning this method entirely and rebuilding it out of `Uranium.Config` +
+	-- ApplyConfig, losing the name validation, the log line and the (ok, reason)
+	-- shape in the process. A filtered-out flag counts as skipped, so "applied
+	-- nothing" still means what it says.
+	function window:LoadConfig(name: string, loadOpts: LoadOpts?): (boolean, string?)
 		if badConfigName("LoadConfig", name) then
 			return false, "invalid name"
 		end
@@ -1787,10 +1804,11 @@ return function(opts: any)
 		if not data then
 			return false, reason
 		end
-		local applied = ctx:LoadConfig(data)
+		local applied = ctx:LoadConfig(data, loadOpts)
 		if applied == 0 then
-			-- The file was fine and nothing in it matched a control we have. That's a
-			-- different failure from "no such config" and it used to read as success.
+			-- The file was fine and nothing in it matched a control we have (or the
+			-- caller's filter wanted none of what did). That's a different failure
+			-- from "no such config" and it used to read as success.
 			return false, "applied nothing"
 		end
 		return true

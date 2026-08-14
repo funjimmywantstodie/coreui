@@ -97,9 +97,9 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` · `:OnHudChanged(fn)` ·
   `:GetPosition()`/`:SetPosition(x,y)` · `:GetSize()`/`:SetSize(w,h)` ·
   `:IsMaximized()`/`:SetMaximized(b, animate?)` · `:GetSelected()` ·
-  `:GetConfig()` · `:ApplyConfig(t)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
+  `:GetConfig()` · `:ApplyConfig(t, opts?)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
   `:OnFlagChanged(fn)` · `:NotifyFlag(name, source?)` ·
-  `:SaveConfig(name, meta?)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
+  `:SaveConfig(name, meta?)` · `:LoadConfig(name, opts?)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:ConfigInfo(name)` · `:GetAutoload()`/`:SetAutoload(name?)` ·
   `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
@@ -234,6 +234,16 @@ layer is reachable without the window:
 - `Window:GetConfig()` / `:ApplyConfig(t)` are the snapshot/apply primitives —
   `Save`/`LoadConfig` are these plus a file. Own persistence entirely with two
   lines instead of wrapping four methods and post-processing JSON.
+- **`opts.Filter(name, kind) -> boolean`** on `ApplyConfig`/`LoadConfig` (threaded
+  down to `Context:LoadConfig`) applies only part of a file — the case a host that
+  splits its registry into a portable half and a per-place half has, where the
+  alternative was abandoning `LoadConfig` and rebuilding it out of `Config.load` +
+  `ApplyConfig`, losing the name validation, the log line and the `(ok, reason)`
+  shape. One **predicate**, not a list of names: that split is computed, not
+  enumerable. A rejected key counts as *skipped*, so `"applied nothing"` still
+  means nothing matched — and the filter is consulted only after a key resolves to
+  a registered flag, so `Config.MetaKey` and a host's own bookkeeping keys never
+  reach it (and `kind` is always real).
 - `Window:GetFlags()` → `{[name]=kind}`, and `OnFlag(fn)` / `CreateWindow{OnFlag}`
   fire **synchronously** inside `RegisterFlag` — that's the point, since the only
   reason to watch registration is to tag a flag with the module/phase building it,
