@@ -5,9 +5,12 @@
 -- It reads util/Bind.lua's registry directly (`Bind:Observe` → `Bind:List`), so
 -- it isn't a second list anyone has to maintain: every Toggle with a `Keybind`,
 -- every activation-mode `Keybind` control and every `Window:Bind` shows up the
--- moment it's registered and lights while it's live. A binding only needs a
--- `Label` to appear — which the controls pass from their own `Name` — so nothing
--- has to be declared twice.
+-- moment it has a key on it, and lights while it's live. The controls pass the
+-- `Label` from their own `Name`, so nothing has to be declared twice.
+--
+-- What it deliberately does NOT show is every bindable feature in the menu:
+-- that's a wall of unbound rows that buries the few you actually use. The
+-- inclusion rule lives in `Binding:IsListed` — a key, or currently active.
 --
 -- Three deliberate shapes here:
 --
@@ -394,7 +397,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 		local active = entry:GetState() == true
 		local keyName = Bind.name(entry:GetKey())
 		if keyName == "None" then
-			keyName = "—" -- unbound: the row still says what the feature is
+			-- Unbound rows are filtered out by Binding:IsListed, so this is either an
+			-- "Always" bind (on with no key by design), something that's live right now
+			-- with nothing bound to turn it off, or a `Hud = true` override.
+			keyName = "—"
 		end
 		row.name.Text = entry:GetLabel() or "Bind"
 		row.name.TextColor3 = active and colors.text or colors.text_muted

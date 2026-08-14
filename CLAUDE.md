@@ -286,8 +286,12 @@ registry — which already holds every binding — through two additions there:
 activate / destroy) and `Bind:List()`. A binding carries a `Label`, which
 `Keybind` and `Toggle` fill from their own `Name` and `Window:Bind` takes
 directly; `Binding:IsListed()` is the one place the inclusion rule lives — needs
-a label, and `Mode ~= "None"` (a pure key picker never activates), with
-`Hud = true/false` on the control as the override.
+a label, a `Mode ~= "None"` (a pure key picker never activates), **and a key**,
+with `Hud = true/false` on the control as the override. The key requirement is
+what keeps the panel short: a HUD that lists every bindable feature in the menu
+is a wall of `— · toggle` rows burying the few the user actually bound. A bind
+that is currently *on* is exempt — `Always` ignores its key by design, and a
+live feature that isn't listed makes the HUD wrong about what's running.
 
 Five things to respect:
 

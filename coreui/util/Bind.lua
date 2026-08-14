@@ -459,16 +459,26 @@ function Binding:SetLabel(label: string?)
 	self.manager:_changed()
 end
 
--- Does this bind belong in a bind list / HUD? It needs a name — an unlabeled
--- binding is internal plumbing, and a row reading "None" tells nobody anything —
--- and a mode that can actually go live: "None" is a pure key picker (the
--- Settings tab's Toggle-UI bind), which never activates. `Hud = true/false` at
--- registration overrides both.
+-- Does this bind belong in a bind list / HUD? Three rules, and the third is the
+-- one that keeps the panel readable:
+--   * it needs a name — an unlabeled binding is internal plumbing, and a row
+--     reading "None" tells nobody anything;
+--   * it needs a mode that can actually go live — "None" is a pure key picker
+--     (the Settings tab's Toggle-UI bind), which never activates;
+--   * it needs a KEY. A HUD listing every bindable feature in the menu is a wall
+--     of "— · toggle" rows for things the user never bound, which buries the
+--     handful they did. The exception is a bind that's currently ON: an "Always"
+--     bind ignores its key by definition and may well have none, and a feature
+--     that is running has to be visible or the panel is lying about what's live.
+-- `Hud = true/false` at registration overrides all three.
 function Binding:IsListed(): boolean
 	if self.hud ~= nil then
 		return self.hud == true
 	end
-	return self.label ~= nil and self.mode ~= "None"
+	if self.label == nil or self.mode == "None" then
+		return false
+	end
+	return self:_value() or Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown
 end
 
 -- Sync the binding's idea of the value without firing the callback — used when

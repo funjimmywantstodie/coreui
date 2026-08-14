@@ -223,8 +223,8 @@ Uranium:CreateWindow({ Hud = {            -- or tune it
 ```
 
 **You don't register anything with it.** It reads the same keybind router the
-controls use, so a bind appears the moment it exists — as long as it has a name
-to be listed under:
+controls use, so a bind appears the moment it has a key on it — as long as it
+has a name to be listed under:
 
 | Where the bind comes from | What the HUD calls it |
 | --- | --- |
@@ -232,9 +232,19 @@ to be listed under:
 | `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
 | `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
 
-Two things stay out: a bind with no name (nothing to call it) and a **key picker**
-— a `Keybind` with no `Mode`, which holds a key but never activates. Pass
-`Hud = true` / `Hud = false` on any of the three to override either rule.
+Three things stay out, so the panel is a short list of what you actually use
+rather than an inventory of the whole menu:
+
+- **anything with no key on it** — an unbound feature is a `— · toggle` row that
+  tells you nothing, and a hub full of them buries the binds you set. The one
+  exception is a bind that's **on right now** (an `Always` bind ignores its key
+  by design, and a running feature has to be visible or the HUD is lying);
+- a bind with **no name** (nothing to call it);
+- a **key picker** — a `Keybind` with no `Mode`, which holds a key but never
+  activates.
+
+Pass `Hud = true` / `Hud = false` on any of the three sources above to override
+all of it.
 
 It lives beside the window rather than inside it, so **minimizing the window (or
 hitting the toggle key) leaves the HUD up** — which is the point of having one.
