@@ -503,19 +503,56 @@ return function(ctx: any, parent: Instance, opts: any): any
 		-- Blocks keep parent and children together through the cap sort below, so
 		-- an indented row can never end up under an unrelated bind (or, worse, be
 		-- the row that got cut).
+		--
+		-- TWO passes, because one pass silently depended on registration order: a
+		-- child seen before its parent found no block to join, opened its own, and
+		-- then the parent opened a second one — so the two drew as unrelated
+		-- top-level rows and the roll-up count went missing. Parent-first is what
+		-- `Parent = true` on a card produces, but an explicit `Parent = "aimbot"`
+		-- is free to name a feature built in a later group, and did.
 		local blocks: { any } = {}
 		local blockOf: { [any]: any } = {}
-		for _, entry in listed do
+		local function parentOf(entry: any): any?
 			local parent = entry.GetParent and entry:GetParent() or nil
-			local block = (parent and isListed[parent]) and blockOf[parent] or nil
-			if block then
-				table.insert(block.entries, entry)
-			else
-				block = { entries = { entry }, active = false }
+			return (parent and isListed[parent]) and parent or nil
+		end
+		-- Roots first, in registration order — that's the order of the panel.
+		for _, entry in listed do
+			if not parentOf(entry) then
+				local block = { entries = { entry }, active = entry:GetState() == true }
+				blockOf[entry] = block
 				table.insert(blocks, block)
 			end
-			blockOf[entry] = block
-			block.active = block.active or entry:GetState() == true
+		end
+		-- ...then everything that sits under one of them, attached to its nearest
+		-- ancestor that owns a block. The tree is documented as shallow, so that
+		-- ancestor is normally just the parent — but walking up rather than reading
+		-- `blockOf[parent]` once keeps this independent of the order pass 2 happens
+		-- to visit a deeper chain in, and flattening a deep chain into its root's
+		-- block is what the renderer draws anyway (one level of indent). The hop
+		-- bound is the cycle guard: `Parent` is matched by name, so nothing stops a
+		-- menu from pointing two binds at each other.
+		for _, entry in listed do
+			if not blockOf[entry] then
+				local block: any = nil
+				local node, hops = parentOf(entry), 0
+				while node and hops <= #listed do
+					block = blockOf[node]
+					if block then
+						break
+					end
+					node = parentOf(node)
+					hops += 1
+				end
+				if block then
+					table.insert(block.entries, entry)
+				else
+					block = { entries = { entry }, active = false }
+					table.insert(blocks, block)
+				end
+				blockOf[entry] = block
+				block.active = block.active or entry:GetState() == true
+			end
 		end
 
 		-- Under the cap, rows stay in registration order so nothing jumps around
@@ -694,6 +731,19 @@ return function(ctx: any, parent: Instance, opts: any): any
 			return
 		end
 		value = value ~= false
+		-- Already there, and the panel agrees — nothing to do. Without this,
+		-- `Window:SetHudVisible(true)` on a HUD that's already up replayed the whole
+		-- entrance (fade to invisible, scale to 0.94, pop back) and announced a
+		-- visibility change that hadn't happened, which the settings switch and any
+		-- host watching OnHudVisible both had to filter out on their own.
+		--
+		-- `root.Visible` is part of the test on purpose rather than `value ==
+		-- visible` alone: the deferred first reveal at the bottom of this file calls
+		-- SetVisible(true) precisely when `visible` is *already* true (it comes from
+		-- the options) and the panel is still hidden, and that call has to go through.
+		if value == visible and root.Visible == value then
+			return
+		end
 		visible = value
 		if value then
 			root.Visible = true

@@ -169,13 +169,35 @@ return function(ctx: any, container: Frame, opts: any)
 	fade:To(Tween.Toast, 0)
 	Tween.play(card, Tween.Toast, { Position = UDim2.fromOffset(0, 0) })
 
+	-- A toast doesn't always live to its own timer: the MAX_TOASTS cap above
+	-- destroys the oldest ones outright, and the window can be unloaded at any
+	-- point. Both used to leave this toast's accent subscription in the registry
+	-- and its exit animation still queued — a quarter-second of tweening a
+	-- destroyed subtree, and a dead closure firing on every SetAccent until the
+	-- timer that was going to clean it up finally came round. Destroying is the
+	-- one signal that covers every way it can go.
+	local finished = false
+	local function retire()
+		if finished then
+			return
+		end
+		finished = true
+		if unsubscribeAccent then
+			unsubscribeAccent()
+			unsubscribeAccent = nil
+		end
+		fade:Destroy()
+	end
+	toast.Destroying:Connect(retire)
+
 	-- hold → out → destroy
 	task.delay(opts.Duration or 3.2, function()
+		if finished then
+			return -- already retired (capped out, or the window went away)
+		end
 		Tween.play(card, Tween.ToastOut, { Position = UDim2.fromOffset(20, 0) })
 		fade:To(Tween.ToastOut, 1, function()
-			if unsubscribeAccent then
-				unsubscribeAccent()
-			end
+			retire()
 			toast:Destroy()
 		end)
 	end)

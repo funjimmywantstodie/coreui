@@ -97,8 +97,12 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		-- HUD's roll-up (util/Bind.lua `Binding:IsListed`) is worth having. An
 		-- explicit `Parent` on the control itself still wins, and controls that
 		-- aren't bindable ignore the field.
+		-- `false` means "this container resolved to no feature" (see api:Section) and
+		-- is skipped like nil — otherwise it was cloned onto every control's
+		-- `Parent`, where util/Bind.lua's refKey discards it anyway.
 		local bindable = kind == "toggle" or kind == "bind"
-		if bindable and inheritParent ~= nil and opts ~= nil and opts.Parent == nil then
+		if bindable and inheritParent ~= nil and inheritParent ~= false
+			and opts ~= nil and opts.Parent == nil then
 			if inheritParent ~= true then
 				opts = table.clone(opts)
 				opts.Parent = inheritParent
@@ -237,9 +241,21 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		-- card's own declaration when the section doesn't make one; under a
 		-- `Parent = true` card that means the feature the card already picked, so a
 		-- section of sub-options doesn't start a second one of its own.
+		--
+		-- Spelled out rather than `(cond and autoParent) or inheritParent`: under a
+		-- `Parent = true` card whose first bindable control had neither a Flag nor a
+		-- Name, `autoParent` is the sentinel `false` — and the idiom fell straight
+		-- through it to `inheritParent` (`true`), so the section started hunting for
+		-- a feature of its own and every control in it became a sub-option of the
+		-- section's first one. There is no feature to point at in that case; "no
+		-- parent" is the honest answer.
 		local inherit = o and o.Parent
 		if inherit == nil then
-			inherit = (inheritParent == true and autoParent ~= nil) and autoParent or inheritParent
+			if inheritParent == true and autoParent ~= nil then
+				inherit = autoParent -- the card's feature, or `false` for "there isn't one"
+			else
+				inherit = inheritParent
+			end
 		end
 		return Controls.new(ctx, body, inherit)
 	end

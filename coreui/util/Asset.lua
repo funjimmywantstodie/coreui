@@ -191,23 +191,31 @@ function Asset.fromUrl(url: string, filename: string?): string?
 	return content
 end
 
--- The one every component calls. Accepts an id, a content url, a file path, an
--- http(s) url, or nil. Always returns a string — "" means "nothing to show", so
--- callers can assign it straight to `Image` and fall back on their placeholder.
+-- The body of Asset.resolve (below), plus the chain-depth counter.
 --
--- It also accepts an ARRAY of any of those: a fallback chain, tried in order,
--- first one that resolves wins. That's how you survive Roblox's asset rules —
--- put a `https://…/logo.png` first (downloaded to disk, loaded via
--- getcustomasset, so moderation / Asset Privacy / decal-vs-image ids never
--- apply) and a plain asset id after it for executors with no file access.
-function Asset.resolve(value: any): string
+-- The counter lives here rather than as a second parameter of `Asset.resolve`
+-- itself, because that one is public (`Uranium.Asset.resolve`) and an optional
+-- trailing argument is exactly what a caller feeds an array index to by
+-- accident: `for i, v in list do Asset.resolve(v, i) end` would silently start
+-- at depth i and refuse a chain. Nothing outside this file can reach it.
+local resolveValue: (any, number) -> string
+
+resolveValue = function(value: any, depth: number): string
 	if value == nil then
 		return ""
 	end
 
 	if type(value) == "table" then
+		-- A chain of chains is legal (a caller composing `{ Theme.Brand.logo, myId }`
+		-- nests one without thinking about it), so the recursion is real — but a
+		-- table that contains itself would spin here forever, and this runs on the
+		-- render path for every image in the UI. Four levels is far past any honest
+		-- fallback chain.
+		if depth >= 4 then
+			return ""
+		end
 		for _, candidate in value do
-			local resolved = Asset.resolve(candidate)
+			local resolved = resolveValue(candidate, depth + 1)
 			if resolved ~= "" then
 				return resolved
 			end
@@ -243,6 +251,21 @@ function Asset.resolve(value: any): string
 	end
 	-- otherwise treat it as a path on disk
 	return Asset.fromFile(value) or ""
+end
+
+-- The one every component calls. Accepts an id, a content url, a file path, an
+-- http(s) url, or nil. Always returns a string — "" means "nothing to show", so
+-- callers can assign it straight to `Image` and fall back on their placeholder.
+--
+-- It also accepts an ARRAY of any of those: a fallback chain, tried in order,
+-- first one that resolves wins. That's how you survive Roblox's asset rules —
+-- put a `https://…/logo.png` first (downloaded to disk, loaded via
+-- getcustomasset, so moderation / Asset Privacy / decal-vs-image ids never
+-- apply) and a plain asset id after it for executors with no file access.
+--
+-- One argument, exactly as before.
+function Asset.resolve(value: any): string
+	return resolveValue(value, 0)
 end
 
 -- ── Actually loading it ──────────────────────────────────────────────────────

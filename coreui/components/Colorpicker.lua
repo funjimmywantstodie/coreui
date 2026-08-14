@@ -4,6 +4,7 @@
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
+local Log = require(script.Parent.Parent.util.Log)
 local Field = require(script.Parent.Field)
 
 -- Uranium accent ramp first, then the useful off-palette signals.
@@ -22,6 +23,9 @@ end
 
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
+	local where = Log.where("Colorpicker", opts.Name)
+	Log.field(where, "Default", opts.Default, "Color3")
+	Log.field(where, "Presets", opts.Presets, "table")
 	local f = Field.new(ctx, opts)
 	-- ctx.Accent, not the static theme accent: a window built with a custom accent
 	-- would otherwise hand an un-defaulted picker theme green as its swatch and as
@@ -94,11 +98,20 @@ return function(ctx: any, opts: any)
 	end
 
 	for i, hex in (opts.Presets or DEFAULT_PRESETS) do
+		-- Presets are caller-supplied, and Color3.fromHex throws on anything it
+		-- can't parse — so one typo in a menu's palette used to kill the whole
+		-- window build with a raw engine error rather than the offending swatch.
+		local okHex, preset = pcall(Color3.fromHex, hex)
+		if not okHex then
+			Log.warn(where, ('Preset #%d ("%s") isn\'t a hex colour — skipped.')
+				:format(i, tostring(hex)))
+			continue
+		end
 		local chip = Create("TextButton", {
 			Name = "Chip" .. i,
 			AutoButtonColor = false,
 			Text = "",
-			BackgroundColor3 = Color3.fromHex(hex),
+			BackgroundColor3 = preset,
 			LayoutOrder = i,
 			Parent = grid,
 		}, {

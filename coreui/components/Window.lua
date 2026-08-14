@@ -139,9 +139,10 @@ return function(opts: any)
 	main:GetPropertyChangedSignal("Size"):Connect(syncShadow)
 
 	-- Never exceed the viewport — on small screens the window shrinks to fit
-	-- (centered) instead of spilling content off the right/bottom edge. Skipped
-	-- while maximized, which owns the size itself (this used to fight it and snap
-	-- a maximized window back to its default size on any viewport change).
+	-- (centered) instead of spilling content off the right/bottom edge. Maximized
+	-- goes through the same reconciliation rather than around it (an earlier
+	-- version skipped the clamp entirely while maximized, which is how a maximized
+	-- window could end up bigger than the screen it was on).
 	local maximized = false
 	-- The size the window wants to be, which is the theme's until someone says
 	-- otherwise (`Window:SetSize`, or a restored `uranium_window` record). It's the
@@ -151,22 +152,35 @@ return function(opts: any)
 	local baseWidth, baseHeight = M.windowWidth, M.windowHeight
 	-- Below this the sidebar and the two columns stop being a layout.
 	local MIN_W, MIN_H = 420, 320
-	local function fitWindow()
+	local VIEWPORT_INSET = 24 -- air left around the window at full size
+	-- The size the window should be right now, reconciling the wish (`baseWidth`/
+	-- `baseHeight`, or "as big as it goes" while maximized) with the viewport.
+	--
+	-- One function, because the two callers used to spell the same arithmetic out
+	-- separately and disagreed: maximize was `math.max(baseWidth, vp.X - 24)`,
+	-- which takes the LARGER of the two — so a window whose saved size came off a
+	-- bigger monitor maximized to that saved size on a laptop and hung off the
+	-- screen, and `fitWindow` then couldn't pull it back because it took the
+	-- maximized branch too. The floor belongs at MIN_W/MIN_H (the point below
+	-- which the sidebar and two columns stop being a layout), not at whatever the
+	-- window happened to be. Returns nil when the viewport hasn't been measured.
+	local function targetSize(): UDim2?
 		local vp = screenGui.AbsoluteSize
-		if vp.X <= 0 then
-			return
+		if vp.X <= 0 or vp.Y <= 0 then
+			return nil
 		end
+		local availW = math.max(MIN_W, vp.X - VIEWPORT_INSET)
+		local availH = math.max(MIN_H, vp.Y - VIEWPORT_INSET)
 		if maximized then
-			main.Size = UDim2.fromOffset(
-				math.max(baseWidth, vp.X - 24),
-				math.max(baseHeight, vp.Y - 24)
-			)
-			return
+			return UDim2.fromOffset(availW, availH)
 		end
-		main.Size = UDim2.fromOffset(
-			math.min(baseWidth, vp.X - 24),
-			math.min(baseHeight, vp.Y - 24)
-		)
+		return UDim2.fromOffset(math.min(baseWidth, availW), math.min(baseHeight, availH))
+	end
+	local function fitWindow()
+		local size = targetSize()
+		if size then
+			main.Size = size
+		end
 	end
 	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitWindow)
 	task.defer(fitWindow)
@@ -410,12 +424,16 @@ return function(opts: any)
 		icon.Position = UDim2.fromScale(0.5, 0.5);
 		(icon :: any).Parent = btn
 
+		-- Icons.tween, not Tween.play: Icons.new falls back to a glyph TextLabel for
+		-- any name it can't resolve, which has no ImageColor3 — so hovering a
+		-- fallback icon threw rather than just not animating. (Nothing in the
+		-- shipped set falls back today; `bundle.py --shake` is where it bites.)
 		local over = name == "close" and colors.danger or colors.text
 		btn.MouseEnter:Connect(function()
-			Tween.play(icon, Tween.Fast, { ImageColor3 = over })
+			Icons.tween(icon, Tween.Fast, over)
 		end)
 		btn.MouseLeave:Connect(function()
-			Tween.play(icon, Tween.Fast, { ImageColor3 = colors.text_muted })
+			Icons.tween(icon, Tween.Fast, colors.text_muted)
 		end)
 		winBtns[name] = btn
 	end
@@ -950,12 +968,23 @@ return function(opts: any)
 		LayoutOrder = 1,
 		Parent = restoreHint,
 	})
+	-- What the minimized card says. `CreateWindow{ ToggleKey = Enum.KeyCode.Unknown }`
+	-- is a legal way to say "no toggle key", and building the label inline printed
+	-- the literal "Press None to show it again." for it — a window with no way back
+	-- telling the user to press a key that doesn't exist. SetToggleKey already had
+	-- the right wording; this is the same answer at build time.
+	local function hintText(): string
+		if toggleKey == nil or toggleKey == Enum.KeyCode.Unknown then
+			return "Re-bind a toggle key to show it again."
+		end
+		return ("Press %s to show it again."):format(Bind.name(toggleKey))
+	end
 	local restoreHintText = Create("TextLabel", {
 		Name = "Text",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Text = ("Press %s to show it again."):format(Bind.name(toggleKey)),
+		Text = hintText(),
 		TextColor3 = colors.text_muted,
 		TextSize = 12,
 		FontFace = Theme.Font.Regular,
@@ -1048,14 +1077,13 @@ return function(opts: any)
 			return
 		end
 		maximized = value
-		local vp = screenGui.AbsoluteSize
-		local size = maximized
-			and UDim2.fromOffset(math.max(baseWidth, vp.X - 24), math.max(baseHeight, vp.Y - 24))
-			or UDim2.fromOffset(math.min(baseWidth, vp.X - 24), math.min(baseHeight, vp.Y - 24))
-		if animate == false then
-			main.Size = size
-		else
-			Tween.play(main, Tween.Normal, { Size = size })
+		local size = targetSize()
+		if size then
+			if animate == false then
+				main.Size = size
+			else
+				Tween.play(main, Tween.Normal, { Size = size })
+			end
 		end
 		ctx:WindowStateChanged()
 	end
@@ -1248,9 +1276,7 @@ return function(opts: any)
 				:format(typeof(key)))
 		end
 		toggleKey = key or Enum.KeyCode.Unknown
-		restoreHintText.Text = toggleKey ~= Enum.KeyCode.Unknown
-			and ("Press %s to show it again."):format(Bind.name(toggleKey))
-			or "Re-bind a toggle key to show it again."
+		restoreHintText.Text = hintText()
 	end
 
 	function window:GetToggleKey(): Enum.KeyCode

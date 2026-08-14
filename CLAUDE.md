@@ -458,6 +458,26 @@ container, and `Parent = true` means "the first bindable control here is the
 feature", which is the shape those cards are already written in. Only `toggle` /
 `bind` kinds take part.
 
+**Two invariants hold that tree up — break either and it fails quietly.**
+
+- **`Bind` keeps two counters, and mutations must pick the right one.**
+  `revision` moves on every change and is what observers repaint off;
+  `structure` moves only when the *graph* can have changed (register, destroy,
+  `SetLabel`, `SetParent`), and `GetParent` / `_children` memoize against that
+  one. A mutation that renames or re-parents a binding and calls `_changed()`
+  instead of `_restructured()` leaves those memos stale, and the HUD mis-groups
+  with nothing to show for it. They were one counter, which meant every keypress
+  invalidated the whole graph and a repaint re-resolved it from scratch — an
+  O(n) scan plus a `lower()`/`gsub()` per candidate, per bound control, on the
+  input thread. Names are normalized once at registration (`_normId` /
+  `_normLabel`) for the same reason.
+- **`Hud.lua`'s block grouping runs in two passes** — roots, then everything
+  under one — because a single pass silently assumed parents register before
+  their children. `Parent = true` guarantees that; an explicit
+  `Parent = "aimbot"` naming a feature built in a later group does not, and a
+  child seen first opened its own block, so the pair drew as two unrelated
+  top-level rows with no `+n`.
+
 The Settings panel's own switches (Notifications, Keybind HUD, Auto Load) pass
 `Hud = false`: they're preferences about the UI, not features running in the
 game, and the default rule (keyless + on = listed) would otherwise put "Keybind

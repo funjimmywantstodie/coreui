@@ -102,14 +102,20 @@ return function(ctx: any, opts: any)
 	function handle:Get(): string
 		return box.Text
 	end
-	function handle:Set(value: string)
+	function handle:Set(value: any)
 		-- Filter here and write under the same guard the live filter uses, then
 		-- fire by hand: leaving the callback to the Text signal means setting the
 		-- value the box already holds fires nothing, so a LoadConfig that restores
 		-- an Input to its current text never re-applies it downstream. The guard
 		-- is what keeps a genuine change from firing twice.
+		--
+		-- Coerced first: `TextBox.Text` refuses anything but a string, so a caller
+		-- handing a number (which is what `Input{ Type = "number" }` invites — the
+		-- control's whole job is numeric text) errored inside the engine instead of
+		-- setting the field. The filters below assume a string too.
+		local text = value == nil and "" or tostring(value)
 		guard = true
-		box.Text = clean and clean(value) or value
+		box.Text = clean and clean(text) or text
 		guard = false
 		if opts.Callback then
 			task.spawn(opts.Callback, box.Text)

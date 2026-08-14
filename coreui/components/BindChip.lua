@@ -206,7 +206,12 @@ return function(ctx: any, opts: any): (Frame, any)
 	binding.onState = function()
 		paint()
 	end
-	ctx:RegisterAccent(function()
+	-- Kept so handle:Destroy can drop it. Unlike most controls a chip really can
+	-- outlive nothing — `Keybind`/`Toggle` handles expose :Destroy — and the
+	-- registry has no idea the instances are gone, so a dropped chip's closure
+	-- would keep painting a destroyed pill on every SetAccent for the life of the
+	-- window (see the note on Context:RegisterAccent).
+	local unsubscribeAccent = ctx:RegisterAccent(function()
 		paint()
 	end)
 
@@ -233,6 +238,10 @@ return function(ctx: any, opts: any): (Frame, any)
 	end
 	chip.Destroying:Connect(function()
 		disarm(false)
+		-- Also the path a chip taken down by an ancestor goes out on (a tab or
+		-- group rebuilt under it), where handle:Destroy is never called.
+		-- Unsubscribing twice is a no-op.
+		unsubscribeAccent()
 	end)
 
 	keyBtn.Activated:Connect(function()
@@ -389,6 +398,7 @@ return function(ctx: any, opts: any): (Frame, any)
 	end
 	function handle:Destroy()
 		disarm(false)
+		unsubscribeAccent()
 		binding:Destroy()
 	end
 

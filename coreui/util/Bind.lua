@@ -189,10 +189,21 @@ function Bind.new(ctx: any): any
 		entries = {} :: { any },
 		connections = {} :: { RBXScriptConnection },
 		observers = {} :: { () -> () },
-		-- Bumped on every registry change; `Binding:GetParent` memoizes against it,
-		-- so one HUD repaint resolves each parent reference once instead of walking
-		-- the whole registry per row per row.
+		-- Bumped on every registry change — what observers (the HUD) repaint off.
 		revision = 0,
+		-- Bumped only when the bind TREE itself can have moved: a binding
+		-- registered or destroyed, a label renamed, a parent re-pointed. The
+		-- parent/children lookups memoize against THIS, not `revision`.
+		--
+		-- They used to memoize against `revision`, which moves on every
+		-- activation — so a single key press (and again on release) invalidated
+		-- every cached parent in the window, and the HUD's repaint re-resolved the
+		-- whole graph from scratch: an O(n) scan per parented binding, with a
+		-- `:lower():gsub()` per candidate, plus an O(n) child walk per drawn row.
+		-- Since components/Toggle.lua gives every toggle a binding, a big hub is
+		-- 100+ entries and that was thousands of string allocations per keystroke,
+		-- on the input thread. None of it can change from an activation.
+		structure = 0,
 	}, Bind)
 
 	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -253,6 +264,15 @@ function Bind:_changed()
 	for _, fn in table.clone(self.observers) do
 		fn()
 	end
+end
+
+-- A change that can move the parent/child graph, as opposed to one that only
+-- moves a value. The structural counter is bumped BEFORE the observers run, so
+-- a HUD repainting from inside `fn` resolves against the new tree rather than a
+-- memo of the old one.
+function Bind:_restructured()
+	self.structure += 1
+	self:_changed()
 end
 
 -- Unknown is NOT a key: it's what an unbound binding stores (a fresh chip, one
@@ -316,6 +336,12 @@ function Bind:Register(opts: any): any
 		enabled = true,
 		label = (type(opts.Label) == "string" and opts.Label ~= "") and opts.Label or nil,
 		id = (type(opts.Id) == "string" and opts.Id ~= "") and opts.Id or nil,
+		-- Normalized once here (and again in SetLabel) rather than per comparison:
+		-- `Binding:_named` is called O(entries) times per unresolved parent, and
+		-- lowercasing + stripping spaces on both sides of every one of those was
+		-- the bulk of a HUD repaint's cost.
+		_normId = nil :: string?,
+		_normLabel = nil :: string?,
 		parentKey = refKey(opts.Parent),
 		hud = opts.Hud,
 		callback = opts.Callback,
@@ -326,9 +352,13 @@ function Bind:Register(opts: any): any
 		_downKey = nil :: any,
 		_parentRev = nil :: number?,
 		_parentCache = nil :: any,
+		_childRev = nil :: number?,
+		_childCache = nil :: { any }?,
 	}, Binding)
+	entry._normId = entry.id and normalize(entry.id) or nil
+	entry._normLabel = entry.label and normalize(entry.label) or nil
 	table.insert(self.entries, entry)
-	self:_changed()
+	self:_restructured()
 
 	-- "Always" means on, so a control that loads in Always mode is on from the
 	-- first frame without anyone touching a key. Deferred so the caller has its
@@ -348,8 +378,23 @@ function Bind:Destroy()
 		conn:Disconnect()
 	end
 	table.clear(self.connections)
+	-- Mark before clearing. `Binding:GetParent` reports a direct-reference parent
+	-- as live purely on `not ref.destroyed`, so dropping the entries list on its
+	-- own left every binding in a torn-down window still claiming to exist — a
+	-- control the caller kept a handle to (or a `Parent = <handle>` child that
+	-- outlives us) then went on consulting a dead tree. Clearing the callbacks is
+	-- the other half: a `_pulse` timer already in flight must not resume into the
+	-- old window's code.
+	for _, entry in self.entries do
+		entry.destroyed = true
+		entry.callback = nil
+		entry.onChanged = nil
+		entry.onState = nil
+	end
 	table.clear(self.entries)
 	table.clear(self.observers)
+	self.structure += 1
+	self.revision += 1
 end
 
 -- ── binding ─────────────────────────────────────────────────────────────────
@@ -511,21 +556,24 @@ end
 
 function Binding:SetLabel(label: string?)
 	self.label = (type(label) == "string" and label ~= "") and label or nil
-	self.manager:_changed()
+	self._normLabel = self.label and normalize(self.label) or nil
+	-- Structural: a child pointing at this bind by name resolves differently now.
+	self.manager:_restructured()
 end
 
 -- ── the tree ────────────────────────────────────────────────────────────────
--- Does `key` (already normalized) name this binding?
+-- Does `key` (already normalized) name this binding? `key` is never nil here —
+-- `refKey` rejects the empty string and `GetParent` returns early on nil — so a
+-- binding with neither an id nor a label can't match by both being absent.
 function Binding:_named(key: string): boolean
-	if self.id and normalize(self.id) == key then
-		return true
-	end
-	return self.label ~= nil and normalize(self.label) == key
+	return self._normId == key or self._normLabel == key
 end
 
 -- The feature this bind is a sub-option of, or nil. Resolved lazily and cached
--- against the manager's revision: the parent may not have been registered yet
--- when the child was, and it can be destroyed and rebuilt under it.
+-- against the manager's STRUCTURAL revision: the parent may not have been
+-- registered yet when the child was, and it can be destroyed and rebuilt under
+-- it — but nothing a keypress does can change the answer, which is why this
+-- memo deliberately doesn't key off `revision` (see Bind.new).
 --
 -- An unresolvable name is nil, deliberately — a typo, or a parent the host
 -- didn't build in this game, degrades to "top-level feature" rather than
@@ -539,7 +587,7 @@ function Binding:GetParent(): any?
 		return (not ref.destroyed) and ref or nil
 	end
 	local manager = self.manager
-	if self._parentRev == manager.revision then
+	if self._parentRev == manager.structure then
 		return self._parentCache
 	end
 	local found: any = nil
@@ -549,7 +597,7 @@ function Binding:GetParent(): any?
 			break
 		end
 	end
-	self._parentRev = manager.revision
+	self._parentRev = manager.structure
 	self._parentCache = found
 	return found
 end
@@ -557,18 +605,33 @@ end
 function Binding:SetParent(parent: any)
 	self.parentKey = refKey(parent)
 	self._parentRev = nil
-	self.manager:_changed()
+	self.manager:_restructured()
 end
 
--- Sub-options of this bind, in registration order.
-function Binding:GetChildren(): { any }
+-- The live children list, memoized against the manager's structural revision.
+-- Only the membership is cached — every caller reads the children's *state*
+-- fresh — so an activation never has to invalidate it.
+function Binding:_children(): { any }
+	local manager = self.manager
+	if self._childRev == manager.structure and self._childCache then
+		return self._childCache
+	end
 	local out = {}
-	for _, entry in self.manager.entries do
+	for _, entry in manager.entries do
 		if entry ~= self and entry:GetParent() == self then
 			table.insert(out, entry)
 		end
 	end
+	self._childRev = manager.structure
+	self._childCache = out
 	return out
+end
+
+-- Sub-options of this bind, in registration order. A copy: the cache above is
+-- the library's, and a caller sorting or appending to it would corrupt every
+-- later read.
+function Binding:GetChildren(): { any }
+	return table.clone(self:_children())
 end
 
 -- Does this bind belong in a bind list / HUD? Four rules:
@@ -623,7 +686,7 @@ end
 -- bare minimum switched on.
 function Binding:CountActive(): number
 	local n = 0
-	for _, child in self:GetChildren() do
+	for _, child in self:_children() do
 		if child:_value() and not child:IsListed() then
 			n += 1
 		end
@@ -665,7 +728,7 @@ function Binding:Destroy()
 	self.callback = nil
 	self.onChanged = nil
 	self.onState = nil
-	self.manager:_changed()
+	self.manager:_restructured()
 end
 
 return Bind

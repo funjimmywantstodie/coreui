@@ -10,6 +10,7 @@
 
 local Create = require(script.Parent.util.Create)
 local Theme = require(script.Parent.Theme)
+local Tween = require(script.Parent.util.Tween)
 local LucideData = require(script.Parent.LucideData)
 
 local SET = LucideData["48px"]
@@ -77,15 +78,25 @@ function Icons.new(name: string, size: number, color: Color3): GuiObject
 end
 
 -- Apply an icon onto an existing ImageLabel/ImageButton (matches the design's
--- `Icons.apply` helper). No-op for unknown names.
-function Icons.apply(image: ImageLabel | ImageButton, name: string)
+-- `Icons.apply` helper). No-op for unknown names — and no-op on an instance
+-- that isn't an image at all, because `Icons.new` hands back a glyph TextLabel
+-- for any name with no Lucide entry and callers hold the result as one variable
+-- they later `apply` a *different* name to (MediaPlayer's play↔pause,
+-- repeat↔repeat-1, the three volume icons). Writing `.Image` on a TextLabel is a
+-- hard error, so one unresolved name used to take the whole control down the
+-- first time its icon changed rather than just leaving the glyph in place.
+function Icons.apply(image: GuiObject, name: string)
+	if not (image:IsA("ImageLabel") or image:IsA("ImageButton")) then
+		return
+	end
 	local entry = entryFor(name)
 	if not entry then
 		return
 	end
-	image.Image = "rbxassetid://" .. entry[1]
-	image.ImageRectSize = Vector2.new(entry[2][1], entry[2][2])
-	image.ImageRectOffset = Vector2.new(entry[3][1], entry[3][2])
+	local img = image :: ImageLabel
+	img.Image = "rbxassetid://" .. entry[1]
+	img.ImageRectSize = Vector2.new(entry[2][1], entry[2][2])
+	img.ImageRectOffset = Vector2.new(entry[3][1], entry[3][2])
 end
 
 -- Tint an icon regardless of whether it resolved to an ImageLabel or a glyph.
@@ -94,6 +105,19 @@ function Icons.tint(icon: GuiObject, color: Color3)
 		icon.ImageColor3 = color
 	elseif icon:IsA("TextLabel") then
 		icon.TextColor3 = color
+	end
+end
+
+-- `Icons.tint`, animated. Same reason it exists: the colour property differs
+-- between the two shapes `Icons.new` can return, so a caller tweening
+-- `{ ImageColor3 = ... }` by hand errors the moment it's handed a glyph
+-- fallback. Callers that animate an icon's colour should use this, not
+-- Tween.play directly.
+function Icons.tween(icon: GuiObject, info: TweenInfo, color: Color3)
+	if icon:IsA("ImageLabel") or icon:IsA("ImageButton") then
+		Tween.play(icon, info, { ImageColor3 = color })
+	elseif icon:IsA("TextLabel") then
+		Tween.play(icon, info, { TextColor3 = color })
 	end
 end
 

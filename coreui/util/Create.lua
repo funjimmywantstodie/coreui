@@ -3,9 +3,17 @@
 --
 --   Create("Frame", { Size = ..., Parent = ... }, { childA, childB })
 --
--- Props are assigned in order; `Parent` is always applied last so children
--- exist before the instance enters the tree. Helper constructors (corner,
--- stroke, padding, listLayout) cover the boilerplate instances used everywhere.
+-- `Parent` is always applied LAST, so children exist before the instance enters
+-- the tree. Everything else is assigned in whatever order the table iterates —
+-- which is a hash order, i.e. arbitrary and not the source order, whatever the
+-- literal looks like. (This used to be documented as "props are assigned in
+-- order", which is not true and is exactly the sort of thing someone eventually
+-- writes an order-dependent pair against.) Nothing in the library depends on
+-- one property landing before another; if you ever need that, set it explicitly
+-- after the call rather than relying on the literal's layout.
+--
+-- Helper constructors (corner, stroke, padding, listLayout) cover the
+-- boilerplate instances used everywhere.
 
 local Create = setmetatable({}, {
 	__call = function(_, className: string, props: { [string]: any }?, children: { Instance }?): any

@@ -144,7 +144,18 @@ return function(ctx: any, opts: any)
 	local function setFromX(x: number)
 		local span = rail.AbsoluteSize.X
 		local pct = span > 0 and clamp((x - rail.AbsolutePosition.X) / span, 0, 1) or 0
-		value = clamp(snap(min + pct * (max - min)), min, max)
+		local target = clamp(snap(min + pct * (max - min)), min, max)
+		-- The mouse moves ~60 times a second and the value is quantized to `step`,
+		-- so most of those frames land on the value we're already at. Firing anyway
+		-- meant dragging a plain 0–100 slider one notch handed the consumer's
+		-- callback a few dozen identical values — and the consumer is game code
+		-- doing real work per call (a tween, a remote, a property write on every
+		-- part it manages). Nothing downstream can tell those apart from a genuine
+		-- change, so the filter belongs here.
+		if target == value then
+			return
+		end
+		value = target
 		render()
 		if opts.Callback then
 			ctx:User(task.spawn, opts.Callback, value)
@@ -163,6 +174,12 @@ return function(ctx: any, opts: any)
 		table.clear(dragConns)
 		Tween.play(knobScale, Tween.Spring, { Scale = 1 }) -- settle back on release
 	end
+	-- The move/release pair lives on UserInputService, which outlives the tree the
+	-- slider is in: unloading the window (or a config swapping a tab out) mid-drag
+	-- left them connected forever, running setFromX against a destroyed rail on
+	-- every mouse move for the rest of the session. Releasing the button is the
+	-- normal exit; this is the one that can't be relied on to happen.
+	track.Destroying:Connect(endDrag)
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then

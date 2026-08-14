@@ -299,7 +299,13 @@ local function build(ctx: any, opts: any, multi: boolean)
 	end)
 	hover(box, colors.control, colors.control_hi)
 
-	ctx:RegisterAccent(function() end) -- ticks/box read ctx.Accent live on open
+	-- No accent subscription on purpose, and this is why: everything accent-tinted
+	-- here is created or written at OPEN time — the option ticks are built by
+	-- `rebuild()`, the box stroke by `setOpenVisual` — so both already read the
+	-- live `ctx.Accent`. (There used to be a `RegisterAccent(function() end)` here
+	-- with this comment attached; an empty consumer isn't documentation, it's a
+	-- dead closure the accent broadcast walks past on every SetAccent, once per
+	-- dropdown in the menu.)
 	relabel()
 
 	local handle = {}
