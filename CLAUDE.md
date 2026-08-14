@@ -70,6 +70,7 @@ coreui/
     Tween.lua         shared TweenInfo presets + Tween.play
     Context.lua       per-window object threaded into EVERY component
     Collapse.lua      height-animate a frame open/closed
+    Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
   components/         one file per control
 ```
 
@@ -84,7 +85,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetLogo(source, zoom?)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
-  `:ListConfigs()` · `:Destroy(immediate?)`
+  `:ListConfigs()` · `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
@@ -98,6 +99,9 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
     a full server is reachable. `:Get()` resolves live Player instances (single) or
     a live `{Player}` (multi) by UserId, so someone leaving just drops out. Flag
     codec `playerselect` persists UserId(s), not instances.
+  - `Keybind` takes an optional `Mode` (`Toggle`/`Hold`/`Press`/`Always`/`None`)
+    and `Toggle` an optional `Keybind`/`KeybindMode`/`KeybindFlag` — see
+    **Keybinds & modes** below.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
@@ -138,6 +142,45 @@ keybind, notifications switch, config save/load/delete + auto-load, Unload). Its
 controls are themselves flagged, so saving a config captures them too. **Call it
 LAST** — its deferred auto-load pass only sees flags registered before it runs.
 Dropdown gained `handle:SetOptions(list)` for refreshing the saved-config list.
+
+## Keybinds & modes
+
+`util/Bind.lua` is the router: **one** pair of `UserInputService` listeners
+(created by Window right after the Context, tracked in its `connections` and
+killed by `Window:Destroy`) fans every press out to the registered bindings, so
+N bound controls cost 2 connections, not 2N. It gates on `gameProcessed` and
+`ctx:IsCapturing()` in one place — *except releases*, which always land, or a
+Hold bind would stick on when focus moved to a textbox mid-hold. `Bind.get(ctx)`
+returns the per-window manager (stored as `ctx._binds`).
+
+A binding is a **key + a mode**, and the mode is the whole feature:
+`Toggle` (press flips) · `Hold` (true only while down) · `Press` (one-shot
+command, no state) · `Always` (pinned on, key ignored) · `None` (no activation —
+just a key picker). Keys may be an `Enum.KeyCode` **or** a mouse
+`Enum.UserInputType` (`MB1`/`MB2`/`MB3`); the click-to-rebind UI only captures
+keyboard keys, since a click there means cancel.
+
+`components/BindChip.lua` is the shared mono chip — click to rebind (Escape
+cancels, Backspace/Delete clears, an outside click abandons), **right-click to
+cycle the mode** through `Modes` (default `Toggle/Hold/Always`). It lights accent
+while the bind is active. Two consumers:
+
+- **`Keybind`** — `Mode` defaults to `"None"`, which is exactly the old picker
+  behaviour (`Callback(key)` on rebind), so existing menus and the Settings tab's
+  Toggle-UI bind are untouched. Any other `Mode` makes `Callback(active, info)`
+  the *activation* callback (`info = { Key, Mode, KeyName }`); `OnChanged(key,
+  mode)` fires on rebind/mode-cycle in every mode.
+- **`Toggle{ Keybind = Enum.KeyCode.B, KeybindMode = "Hold", KeybindFlag = "…" }`**
+  — the sugar path, a compact chip in the toggle's own row. The toggle's value
+  stays the source of truth (the binding asks for it via `GetState`), so a manual
+  click and a keypress can't disagree. `handle.Bind` exposes the chip handle.
+
+Flags: the `bind` codec persists `{ key, mode }`, not a bare key. That needed a
+general hook — a control whose *persisted* value isn't its primary value exposes
+**`:GetFlag()` / `:SetFlag(v)`** and `Context:GetConfig/LoadConfig` prefer those
+over `:Get()`/`:Set()`. Old configs holding a plain key-name string still decode.
+`Controls.lua` registers Keybind under kind `"bind"`; the legacy `keybind` codec
+is kept for anything still passing that kind.
 
 ## Key utilities
 

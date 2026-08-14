@@ -66,10 +66,22 @@ Inputs:Slider({
 	Min = 0, Max = 100, Default = 50, Suffix = "%", Flag = "volume",
 	Callback = function(v) print("volume:", v) end,
 })
+-- A plain keybind is a key PICKER: no Mode, so nothing is bound and the callback
+-- just tells you which key was chosen.
 Inputs:Keybind({
 	Name = "Toggle Menu", Desc = "This is a keybind — click, then press a key.",
 	Default = Enum.KeyCode.RightShift, Flag = "menu_key",
 	Callback = function(key) print("bound:", key) end,
+})
+-- Give it a `Mode` and it becomes a live bind: the key drives a value and the
+-- callback fires on every activation. Right-click the chip to cycle the mode.
+--   "Toggle" press flips it · "Hold" on only while held · "Press" one-shot
+--   command · "Always" pinned on · "None" the picker above.
+Inputs:Keybind({
+	Name = "Sprint", Desc = "Hold to sprint — right-click the chip for Toggle / Hold / Always.",
+	Default = Enum.KeyCode.LeftShift, Mode = "Hold", Flag = "sprint_key",
+	Callback = function(active, info) print("sprint:", active, info.KeyName, info.Mode) end,
+	OnChanged = function(key, mode) print("re-bound to", key, "as", mode) end,
 })
 
 local Selection = Components:CreateGroup({ Title = "Selection", Column = 1 })
@@ -142,6 +154,19 @@ Controls:Toggle({
 	Callback = function(on) print("feature:", on) end,
 })
 Controls:Toggle({ Name = "Auto Mode", Default = false, Flag = "auto_mode" })
+-- Any toggle can carry its own key — `Keybind` binds it, `KeybindMode` says what
+-- the key does. `KeybindFlag` persists the key + mode alongside the value, so a
+-- saved config restores "hold B" as well as "on".
+Controls:Toggle({
+	Name = "Walkspeed", Desc = "Bound to B — right-click the chip to switch Toggle / Hold / Always.",
+	Keybind = Enum.KeyCode.B, KeybindMode = "Hold",
+	Flag = "walkspeed", KeybindFlag = "walkspeed_key",
+	Callback = function(on)
+		local char = game:GetService("Players").LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = on and 50 or 16 end
+	end,
+})
 Controls:Button({
 	Name = "Primary Button", Desc = "This is an accent button.",
 	Label = "Confirm", Accent = true,
@@ -203,5 +228,12 @@ Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for not
 -- Create it LAST so its auto-load pass sees every flagged control above.
 --------------------------------------------------------------------------------
 Window:CreateSettingsTab()
+
+-- A keybind with no control attached, for logic the menu doesn't expose. Same
+-- modes, same router (so it pauses while a keybind chip is capturing a key).
+-- Returns the binding: :SetKey / :SetMode / :GetState / :Destroy.
+Window:Bind(Enum.KeyCode.F, function()
+	Window:Notify({ Title = "Bind", Text = "F pressed." })
+end, "Press")
 
 print("[Uranium] demo built — Home / Components / Settings tabs ready")

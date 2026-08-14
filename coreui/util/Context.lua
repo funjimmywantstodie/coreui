@@ -10,6 +10,7 @@
 local Create = require(script.Parent.Create)
 local Tween = require(script.Parent.Tween)
 local Log = require(script.Parent.Log)
+local Bind = require(script.Parent.Bind)
 
 local Context = {}
 Context.__index = Context
@@ -152,6 +153,27 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			return (ok and key) or Enum.KeyCode.Unknown
 		end,
 	},
+	-- A bind is a key AND a mode (Toggle / Hold / Press / Always / None), so it
+	-- persists as a pair via the handle's GetFlag/SetFlag. Configs written before
+	-- modes existed hold a bare key name, so decode still accepts a plain string.
+	bind = {
+		encode = function(v)
+			if typeof(v) == "EnumItem" then
+				return { key = Bind.name(v), mode = "None" }
+			elseif type(v) == "table" then
+				return { key = Bind.name(v.Key), mode = v.Mode or "None" }
+			end
+			return { key = "None", mode = "None" }
+		end,
+		decode = function(v)
+			if type(v) == "string" then
+				return { Key = Bind.parse(v) }
+			elseif type(v) == "table" then
+				return { Key = Bind.parse(v.key), Mode = v.mode }
+			end
+			return { Key = Bind.parse(v) } -- anything unrecognized parses to Unknown
+		end,
+	},
 	colorpicker = {
 		encode = function(v) return typeof(v) == "Color3" and v:ToHex() or tostring(v) end,
 		decode = function(v)
@@ -195,11 +217,18 @@ function Context:RegisterFlag(name: string?, handle: any, kind: string?)
 end
 
 -- Snapshot every flagged control into a JSON-safe table.
+--
+-- A control whose persisted value isn't its primary value — a keybind, which is
+-- a key *and* a mode, while `:Get()` is just the key — exposes `:GetFlag()` /
+-- `:SetFlag()` and those win. Everything else round-trips through `:Get()`/`:Set()`.
 function Context:GetConfig(): { [string]: any }
 	local data = {}
 	for name, entry in self.Flags do
 		local codec = Codec[entry.kind]
 		local ok, value = pcall(function()
+			if entry.handle.GetFlag then
+				return entry.handle:GetFlag()
+			end
 			return entry.handle:Get()
 		end)
 		if ok and codec then
@@ -222,7 +251,11 @@ function Context:LoadConfig(data: { [string]: any })
 				local okDecode, value = pcall(codec.decode, raw)
 				if okDecode then
 					pcall(function()
-						entry.handle:Set(value)
+						if entry.handle.SetFlag then
+							entry.handle:SetFlag(value)
+						else
+							entry.handle:Set(value)
+						end
 					end)
 				end
 			end

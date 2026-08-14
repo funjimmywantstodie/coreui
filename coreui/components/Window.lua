@@ -12,6 +12,7 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Context = require(script.Parent.Parent.util.Context)
+local Bind = require(script.Parent.Parent.util.Bind)
 local Config = require(script.Parent.Parent.util.Config)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
@@ -536,6 +537,14 @@ return function(opts: any)
 
 	local ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
 
+	-- The keybind router (util/Bind.lua): one pair of input listeners shared by
+	-- every bound control, created here so its connections are tracked and die
+	-- with the window like the toggle-key listener below.
+	local binds = Bind.get(ctx)
+	for _, conn in binds.connections do
+		table.insert(connections, conn)
+	end
+
 	-- the logo's accent square is only visible behind the fallback initial, but
 	-- it still needs to track SetAccent for that case
 	ctx:RegisterAccent(function(accent)
@@ -938,6 +947,27 @@ return function(opts: any)
 		notificationsEnabled = enabled ~= false
 	end
 
+	-- ── settings: headless keybinds ───────────────────────────────────────────
+	-- A bind with no control attached, for logic the menu doesn't expose:
+	--   Window:Bind(Enum.KeyCode.B, function(on) ... end, "Hold")
+	--   Window:Bind({ Key = Enum.KeyCode.B, Mode = "Toggle", Callback = fn })
+	-- Returns the binding — :SetKey / :SetMode / :GetState / :Destroy. It rides
+	-- the same router as the controls, so it honours gameProcessed and pauses
+	-- while a Keybind chip is capturing.
+	function window:Bind(keyOrOpts: any, callback: any, mode: any): any
+		local o = keyOrOpts
+		if typeof(keyOrOpts) == "EnumItem" then
+			o = { Key = keyOrOpts, Callback = callback, Mode = mode }
+		elseif type(keyOrOpts) ~= "table" then
+			Log.fail("Bind", ("expects a key or an options table, got %s (try Window:Bind(Enum.KeyCode.B, fn, \"Hold\"))")
+				:format(typeof(keyOrOpts)))
+		end
+		Log.field("Bind", "Key", o.Key, "EnumItem")
+		Log.field("Bind", "Callback", o.Callback, "function")
+		Log.field("Bind", "Mode", o.Mode, "string")
+		return binds:Register(o)
+	end
+
 	-- ── settings: config persistence ──────────────────────────────────────────
 	-- These read/write the flag registry (any control built with a `Flag`).
 	window.ConfigSupported = Config.supported
@@ -1006,6 +1036,7 @@ return function(opts: any)
 			conn:Disconnect()
 		end
 		table.clear(connections)
+		binds:Destroy() -- drops every registered binding with the listeners
 		ctx:ClosePopover()
 		Singleton.release(record)
 

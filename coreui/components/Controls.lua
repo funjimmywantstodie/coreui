@@ -96,7 +96,8 @@ function Controls.new(ctx: any, frame: Frame)
 	function api:Slider(o) return mount(Slider, o, "slider") end
 	function api:Input(o) return mount(Input, o, "input") end
 	function api:Code(o) return mount(Code, o, "code") end
-	function api:Keybind(o) return mount(Keybind, o, "keybind") end
+	-- "bind" (not "keybind") — the flag persists the key AND the mode.
+	function api:Keybind(o) return mount(Keybind, o, "bind", "Keybind") end
 	function api:Colorpicker(o) return mount(Colorpicker, o, "colorpicker") end
 	function api:Paragraph(o) return mount(Paragraph, o, nil, "Paragraph") end
 	function api:Label(o) return mount(Label, o, nil, "Label") end

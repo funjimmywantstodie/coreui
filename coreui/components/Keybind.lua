@@ -1,99 +1,58 @@
 --!strict
--- components/Keybind.lua — click to listen, capture the next key pressed.
+-- components/Keybind.lua — click to listen, capture the next key pressed;
+-- right-click to cycle the mode.
+--
+-- The chip, the routing and the mode machine live in components/BindChip.lua +
+-- util/Bind.lua; this file is the field row around them and the callback
+-- contract:
+--
+--   Mode = "None" (the default)  — a pure key PICKER. Nothing is bound; the
+--       control just holds a key and `Callback(key)` fires whenever it changes.
+--       This is the original Keybind behaviour, kept so existing menus (and the
+--       Settings tab's Toggle-UI bind) don't change under them.
+--   Mode = "Toggle" / "Hold" / "Press" / "Always" — an ACTIVATION bind. The key
+--       drives a value and `Callback(active, info)` fires on every activation,
+--       with `info = { Key, Mode, KeyName }`.
+--
+-- `OnChanged(key, mode)` fires when the bind itself is re-keyed or its mode is
+-- cycled, in every mode.
 
-local UserInputService = game:GetService("UserInputService")
-
-local Create = require(script.Parent.Parent.util.Create)
-local Theme = require(script.Parent.Parent.Theme)
+local Log = require(script.Parent.Parent.util.Log)
+local Bind = require(script.Parent.Parent.util.Bind)
 local Field = require(script.Parent.Field)
+local BindChip = require(script.Parent.BindChip)
 
 return function(ctx: any, opts: any)
-	local colors = Theme.Colors
+	opts = opts or {}
+	local where = Log.where("Keybind", opts.Name)
+	Log.field(where, "Default", opts.Default, "EnumItem")
+	Log.field(where, "Mode", opts.Mode, "string")
+	Log.field(where, "Modes", opts.Modes, "table")
+	Log.field(where, "OnChanged", opts.OnChanged, "function")
+
 	local f = Field.new(ctx, opts)
-	local key: Enum.KeyCode = opts.Default or Enum.KeyCode.Unknown
-	local listening = false
+	local mode = Bind.mode(opts.Mode, where, "None")
+	local picker = mode == "None"
 
-	local button = Create("TextButton", {
-		Name = "Keybind",
-		AutoButtonColor = false,
-		AutomaticSize = Enum.AutomaticSize.X,
-		Size = UDim2.fromOffset(70, 32),
-		BackgroundColor3 = colors.control,
-		Text = key ~= Enum.KeyCode.Unknown and key.Name or "None",
-		TextColor3 = colors.text,
-		TextSize = 12,
-		FontFace = Theme.Font.Mono,
-		LayoutOrder = 2,
-		Parent = f.row,
-	}, {
-		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
-		Create.padding(0, 14),
-		Create("UISizeConstraint", { MinSize = Vector2.new(70, 32) }),
-	})
-	local stroke = button:FindFirstChildOfClass("UIStroke") :: UIStroke
-
-	button.Activated:Connect(function()
-		if listening then
-			return
-		end
-		listening = true
-		-- Claim key capture so the window's toggle-key listener ignores input until
-		-- the bind completes — otherwise binding e.g. RightShift also hid the window.
-		ctx:BeginCapture()
-		button.Text = "..."
-		button.TextColor3 = ctx.Accent
-		stroke.Color = ctx.Accent
-
-		local conn: RBXScriptConnection
-		conn = UserInputService.InputBegan:Connect(function(input)
-			local fromKey = input.UserInputType == Enum.UserInputType.Keyboard
-			-- A click anywhere else abandons the bind. Without this the control sat
-			-- in "..." forever holding key capture, which silently killed the
-			-- window's toggle key until some key was eventually pressed.
-			local fromClick = input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.MouseButton2
-				or input.UserInputType == Enum.UserInputType.Touch
-			if not fromKey and not fromClick then
-				return
-			end
-			conn:Disconnect()
-			listening = false
-			ctx:EndCapture()
-			if fromKey then
-				-- Escape cancels (keep the current bind); Backspace/Delete clears it.
-				if input.KeyCode == Enum.KeyCode.Escape then
-					-- leave `key` untouched
-				elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.Delete then
-					key = Enum.KeyCode.Unknown
-				else
-					key = input.KeyCode
-				end
-			end
-			button.Text = key ~= Enum.KeyCode.Unknown and key.Name or "None"
-			button.TextColor3 = colors.text
-			stroke.Color = colors.border
-			if fromKey and opts.Callback then
+	local chip, handle = BindChip(ctx, {
+		Key = opts.Default,
+		Mode = mode,
+		Modes = opts.Modes,
+		Default = opts.DefaultState,
+		Where = where,
+		-- Picker mode has no activation, so `Callback` keeps its original
+		-- "the key changed" meaning there and only there.
+		OnActivate = not picker and opts.Callback or nil,
+		OnChanged = function(key, m)
+			if picker and opts.Callback then
 				task.spawn(opts.Callback, key)
 			end
-		end)
-	end)
-
-	local handle = {}
-	function handle:Get(): Enum.KeyCode
-		return key
-	end
-	function handle:Set(value: Enum.KeyCode)
-		key = value
-		button.Text = key ~= Enum.KeyCode.Unknown and key.Name or "None"
-		-- A config load can land mid-listen; drop the "..." styling with it so the
-		-- control doesn't stay stuck looking like it's still waiting for a key.
-		button.TextColor3 = colors.text
-		stroke.Color = colors.border
-		if opts.Callback then
-			task.spawn(opts.Callback, key)
-		end
-	end
+			if opts.OnChanged then
+				task.spawn(opts.OnChanged, key, m)
+			end
+		end,
+	})
+	chip.Parent = f.row
 
 	return f.field, handle, true
 end
