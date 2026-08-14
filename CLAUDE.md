@@ -88,9 +88,10 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetLogo(source, zoom?)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
+  `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
@@ -231,13 +232,27 @@ A binding is a **key + a mode**, and the mode is the whole feature:
 `Toggle` (press flips) · `Hold` (true only while down) · `Press` (one-shot
 command, no state) · `Always` (pinned on, key ignored) · `None` (no activation —
 just a key picker). Keys may be an `Enum.KeyCode` **or** a mouse
-`Enum.UserInputType` (`MB1`/`MB2`/`MB3`); the click-to-rebind UI only captures
-keyboard keys, since a click there means cancel.
+`Enum.UserInputType` (`MB1`/`MB2`/`MB3`) — the click-to-rebind UI captures
+keyboard keys plus MB2/MB3 (see BindChip below for why MB1 is left out).
 
-`components/BindChip.lua` is the shared mono chip — click to rebind (Escape
-cancels, Backspace/Delete clears, an outside click abandons), **right-click to
-cycle the mode** through `Modes` (default `Toggle/Hold/Always`). It lights accent
-while the bind is active. Two consumers:
+`components/BindChip.lua` is the shared mono chip, and it's **two click targets
+in one pill**: a key half (click to arm, then press the key) and — whenever
+there's more than one mode in `Modes` (default `Toggle/Hold/Always`) — a mode
+half labelled with the current mode, which cycles on left-click. Hovering lifts
+the whole pill and brightens the half under the pointer; the chip lights accent
+while the bind is active.
+
+The split is by *position*, not by mouse button, and that's the point: mode
+cycling used to live on right-clicking the chip, which was invisible (nothing on
+screen said so) and made the button people most want to bind unbindable — a
+right-click meant to bind MB2 just flipped the mode. Now every click on the key
+half is about the key, so while armed a **right/middle click on the chip binds
+MB2/MB3** and a click anywhere else abandons (Escape cancels, Backspace/Delete
+clears). Left-click stays unbindable from the UI — it's how you operate the menu,
+and a left-click on an armed chip is a deliberate no-op rather than a cancel —
+but `handle:Set(Enum.UserInputType.MouseButton1)` still works for a caller that
+wants it. `Mode = "None"` (a pure picker) has nothing to cycle, so it draws as a
+single plain segment exactly like before. Two consumers:
 
 - **`Keybind`** — `Mode` defaults to `"None"`, which is exactly the old picker
   behaviour (`Callback(key)` on rebind), so existing menus and the Settings tab's
@@ -255,6 +270,51 @@ general hook — a control whose *persisted* value isn't its primary value expos
 over `:Get()`/`:Set()`. Old configs holding a plain key-name string still decode.
 `Controls.lua` registers Keybind under kind `"bind"`; the legacy `keybind` codec
 is kept for anything still passing that kind.
+
+## The bind HUD
+
+`components/Hud.lua` is the floating panel that answers "what's on right now?"
+with the menu closed: every named bind + its mode, lit while it's live, over an
+FPS / ping readout. Opt-in (`CreateWindow{ Hud = true }` or a table of overrides
+— `Title/X/Y/MaxRows/Visible/Collapsed/Stats/Fps/Ping`), reachable at runtime via
+`Window:CreateHud/GetHud/SetHudVisible`, and switchable from the Settings tab.
+
+The design pressure here was **not building a second list**. A HUD you have to
+register features with is a HUD that goes stale, so it reads `util/Bind.lua`'s
+registry — which already holds every binding — through two additions there:
+`Bind:Observe(fn)` (fires synchronously on register / re-key / mode-cycle /
+activate / destroy) and `Bind:List()`. A binding carries a `Label`, which
+`Keybind` and `Toggle` fill from their own `Name` and `Window:Bind` takes
+directly; `Binding:IsListed()` is the one place the inclusion rule lives — needs
+a label, and `Mode ~= "None"` (a pure key picker never activates), with
+`Hud = true/false` on the control as the override.
+
+Five things to respect:
+
+- **It's a SIBLING of `main` in the ScreenGui, not a child.** Minimize and the
+  toggle key hide `main`; the HUD has to survive both or it's pointless. It still
+  dies with the ScreenGui, and `Window:Destroy` calls `hud:Destroy()` because its
+  drag/Heartbeat listeners outlive instances like the window's own do.
+- **Rows are pooled and repainted in place.** The registry notifies on every
+  press — a Hold key down/up must not build instances.
+- **One accent element per row.** The live dot is it; an active row lifts to
+  `card` rather than tinting accent, so a screen full of active binds still reads
+  as a list. Same reason the panel is a miniature of the window (chrome header
+  over `bg`, one border, matching radius) instead of a differently-styled box.
+- **The paint is re-run when the panel is revealed** (`fade:To(…, 0, refresh)`).
+  A row that changed state while hidden had its transparency driven by
+  `util/Fade.lua`'s snapshot, not by its own paint, so the fill is stale until
+  the snapshot is released at alpha 0.
+- **Config: the HUD is the flag, not the Settings switch.** It persists as
+  `{visible, collapsed, x, y}` under `uranium_hud` (kind `hud`) via
+  `GetFlag/SetFlag`; the Settings toggle is deliberately *unflagged* and mirrors
+  the HUD through `hud.OnVisible`, because two flags for one thing fight on load.
+  Both directions no-op when already in step, so the sync can't loop. The flag is
+  a small proxy in `Window.lua`, so a config with the HUD off never builds one.
+
+`Binding:_pulse()` came out of this too: a `Press` bind carries no state, so it
+now blinks `state` true→false (0.12s) instead of only poking the chip's `onState`
+— same visual, but the registry sees it, so a one-shot command flashes in the HUD.
 
 ## Key utilities
 

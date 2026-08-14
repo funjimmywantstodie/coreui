@@ -191,6 +191,33 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			return { Key = Bind.parse(v) } -- anything unrecognized parses to Unknown
 		end,
 	},
+	-- The bind HUD (components/Hud.lua) isn't a control and has no single value —
+	-- it persists as where you put it and whether it was up, through the same
+	-- GetFlag/SetFlag pair the bind codec uses.
+	hud = {
+		encode = function(v)
+			if type(v) ~= "table" then
+				return { visible = false }
+			end
+			return {
+				visible = v.Visible == true,
+				collapsed = v.Collapsed == true,
+				x = math.floor(tonumber(v.X) or 0),
+				y = math.floor(tonumber(v.Y) or 0),
+			}
+		end,
+		decode = function(v)
+			if type(v) ~= "table" then
+				return { Visible = v == true }
+			end
+			return {
+				Visible = v.visible == true,
+				Collapsed = v.collapsed == true,
+				X = tonumber(v.x),
+				Y = tonumber(v.y),
+			}
+		end,
+	},
 	colorpicker = {
 		encode = function(v) return typeof(v) == "Color3" and v:ToHex() or tostring(v) end,
 		decode = function(v)
@@ -248,8 +275,19 @@ function Context:GetConfig(): { [string]: any }
 			end
 			return entry.handle:Get()
 		end)
-		if ok and codec then
-			data[name] = codec.encode(value)
+		if not ok then
+			-- Silence here is what makes "save did nothing" impossible to debug: the
+			-- flag just goes missing from the file. Name it and carry on with the rest.
+			Log.warn("SaveConfig", ('flag "%s" (%s) failed to read — skipped: %s')
+				:format(name, entry.kind, tostring(value)))
+		elseif codec then
+			local okEncode, encoded = pcall(codec.encode, value)
+			if okEncode then
+				data[name] = encoded
+			else
+				Log.warn("SaveConfig", ('flag "%s" (%s) failed to encode — skipped: %s')
+					:format(name, entry.kind, tostring(encoded)))
+			end
 		end
 	end
 	return data
@@ -262,18 +300,26 @@ function Context:LoadConfig(data: { [string]: any })
 	end
 	for name, raw in data do
 		local entry = self.Flags[name]
-		if entry then
-			local codec = Codec[entry.kind]
-			if codec then
-				local okDecode, value = pcall(codec.decode, raw)
-				if okDecode then
-					pcall(function()
-						if entry.handle.SetFlag then
-							entry.handle:SetFlag(value)
-						else
-							entry.handle:Set(value)
-						end
-					end)
+		local codec = entry and Codec[entry.kind]
+		if codec then
+			-- Every failure below used to be swallowed by a bare pcall, so one broken
+			-- control read as "the whole config didn't load". Skip the bad flag, say
+			-- which one, and keep applying the rest.
+			local okDecode, value = pcall(codec.decode, raw)
+			if not okDecode then
+				Log.warn("LoadConfig", ('flag "%s" (%s) failed to decode — skipped: %s')
+					:format(name, entry.kind, tostring(value)))
+			else
+				local okSet, err = pcall(function()
+					if entry.handle.SetFlag then
+						entry.handle:SetFlag(value)
+					else
+						entry.handle:Set(value)
+					end
+				end)
+				if not okSet then
+					Log.warn("LoadConfig", ('flag "%s" (%s) failed to apply — skipped: %s')
+						:format(name, entry.kind, tostring(err)))
 				end
 			end
 		end

@@ -17,8 +17,15 @@
 --
 -- Bindings never poll input themselves; the router pushes to them. Mouse
 -- buttons are routed as well as keyboard keys (pass
--- `Enum.UserInputType.MouseButton2` as the key), though the click-to-rebind UI
--- only captures keyboard keys — a click there means "cancel".
+-- `Enum.UserInputType.MouseButton2` as the key); components/BindChip.lua binds
+-- MB2/MB3 from a click on the armed chip, and leaves MB1 to the caller.
+--
+-- The router is also the *registry* every binding is already in, which is what
+-- components/Hud.lua reads: `Bind:Observe(fn)` fires on any change (a bind
+-- registered, re-keyed, mode-cycled, activated, destroyed) and `Bind:List()`
+-- hands back the live entries. A binding carries a `Label` so it has something
+-- to be called in that list — an unlabeled one is internal plumbing and stays
+-- out of it (`Binding:IsListed`).
 
 local UserInputService = game:GetService("UserInputService")
 
@@ -138,6 +145,7 @@ function Bind.new(ctx: any): any
 		ctx = ctx,
 		entries = {} :: { any },
 		connections = {} :: { RBXScriptConnection },
+		observers = {} :: { () -> () },
 	}, Bind)
 
 	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -165,9 +173,47 @@ function Bind.get(ctx: any): any
 	return existing
 end
 
+-- ── registry observers ──────────────────────────────────────────────────────
+-- Anything that draws the bind list (components/Hud.lua) subscribes here rather
+-- than hooking each binding's `onState` — which is already spoken for by the
+-- chip that owns it. Returns an unsubscribe function; a consumer that outlives
+-- nothing (a HUD is destroyed with the window) must still call it, or its dead
+-- closure runs on every keypress forever.
+function Bind:Observe(fn: () -> ()): () -> ()
+	table.insert(self.observers, fn)
+	return function()
+		local list = self.observers
+		for i = #list, 1, -1 do
+			if list[i] == fn then
+				table.remove(list, i)
+				break
+			end
+		end
+	end
+end
+
+-- Every registered binding, in registration order. A snapshot: callers are free
+-- to add or drop bindings while walking it.
+function Bind:List(): { any }
+	return table.clone(self.entries)
+end
+
+-- Called synchronously on every change, so a HUD repaints in the same frame as
+-- the key that moved it (the same reason Binding:_set paints before it spawns
+-- the user callback).
+function Bind:_changed()
+	for _, fn in table.clone(self.observers) do
+		fn()
+	end
+end
+
+-- Unknown is NOT a key: it's what an unbound binding stores (a fresh chip, one
+-- cleared with Backspace, a config whose key name didn't parse). The engine also
+-- reports KeyCode.Unknown for keys it has no mapping for, and without this every
+-- unbound binding in the window would fire on one of them at once.
 local function keyOf(input: InputObject): any?
 	if input.UserInputType == Enum.UserInputType.Keyboard then
-		return input.KeyCode
+		return input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode or nil
 	end
 	return MOUSE_NAME[input.UserInputType] and input.UserInputType or nil
 end
@@ -197,6 +243,8 @@ end
 --   Mode       "Toggle" | "Hold" | "Press" | "Always" | "None"
 --   Modes      the cycle list a UI chip offers (defaults to Bind.DefaultModes)
 --   Default    starting state for Toggle/Hold
+--   Label      what to call this bind in a bind list / HUD (unnamed = hidden)
+--   Hud        true / false to force it into or out of that list
 --   Callback   fn(active, info) — info = { Key, Mode, KeyName }
 --   OnChanged  fn(key, mode) — the bind itself changed
 --   OnState    internal, synchronous paint hook (used by the chip)
@@ -211,6 +259,8 @@ function Bind:Register(opts: any): any
 		modes = opts.Modes or Bind.DefaultModes,
 		state = opts.Default == true,
 		enabled = true,
+		label = (type(opts.Label) == "string" and opts.Label ~= "") and opts.Label or nil,
+		hud = opts.Hud,
 		callback = opts.Callback,
 		onChanged = opts.OnChanged,
 		onState = opts.OnState,
@@ -218,6 +268,7 @@ function Bind:Register(opts: any): any
 		_downKey = nil :: any,
 	}, Binding)
 	table.insert(self.entries, entry)
+	self:_changed()
 
 	-- "Always" means on, so a control that loads in Always mode is on from the
 	-- first frame without anyone touching a key. Deferred so the caller has its
@@ -238,6 +289,7 @@ function Bind:Destroy()
 	end
 	table.clear(self.connections)
 	table.clear(self.entries)
+	table.clear(self.observers)
 end
 
 -- ── binding ─────────────────────────────────────────────────────────────────
@@ -253,9 +305,28 @@ function Binding:_set(active: boolean)
 	if self.onState then
 		self.onState(active)
 	end
+	self.manager:_changed()
 	if self.callback then
 		task.spawn(self.callback, active, self:_info())
 	end
+end
+
+-- A "Press" bind carries no state, so it blinks instead: on for a beat, then
+-- back off. Same signal the chip already showed, now visible to the registry
+-- too, so a HUD row flashes when a one-shot command fires.
+function Binding:_pulse()
+	self.state = true
+	if self.onState then
+		self.onState(true)
+	end
+	self.manager:_changed()
+	task.delay(0.12, function()
+		self.state = false
+		if self.onState then
+			self.onState(false)
+		end
+		self.manager:_changed()
+	end)
 end
 
 function Binding:_press()
@@ -274,14 +345,7 @@ function Binding:_press()
 		if self.callback then
 			task.spawn(self.callback, true, self:_info())
 		end
-		if self.onState then
-			self.onState(true)
-			task.delay(0.12, function()
-				if self.onState then
-					self.onState(false)
-				end
-			end)
-		end
+		self:_pulse()
 	else -- Toggle
 		local current = self.getState and self.getState() or self.state
 		self:_set(not current)
@@ -300,8 +364,17 @@ function Binding:GetKey(): any
 end
 
 function Binding:SetKey(key: any, silent: boolean?)
+	-- Re-keying with a press still outstanding strands the feature ON: _downKey is
+	-- cleared below, so the old key's release matches nothing and there is no
+	-- longer anything that turns it off. Drop it first. Gated on `_downKey` rather
+	-- than on `state` alone — a Hold bind whose key isn't down but whose value is
+	-- true is a config being restored, and that value is the caller's to keep.
+	if self._downKey ~= nil and self.mode == "Hold" and self.state then
+		self:_set(false)
+	end
 	self.key = Bind.isKey(key) and key or Enum.KeyCode.Unknown
 	self._downKey = nil
+	self.manager:_changed()
 	if not silent and self.onChanged then
 		self.onChanged(self.key, self.mode)
 	end
@@ -314,10 +387,14 @@ end
 function Binding:SetMode(mode: string, silent: boolean?)
 	local previous = self.mode
 	self.mode = Bind.mode(mode, "Keybind", previous)
-	self._downKey = nil
 	if self.mode == previous then
+		-- _downKey deliberately untouched on a no-op: clearing it mid-hold would
+		-- strand a Hold bind on. Config load calls this unconditionally whenever the
+		-- saved record carries a Mode, so the no-op path is the common one.
 		return
 	end
+	self._downKey = nil
+	self.manager:_changed()
 	if self.mode == "Always" then
 		self:_set(true)
 	elseif previous == "Hold" and self.state then
@@ -339,6 +416,27 @@ function Binding:GetState(): boolean
 	return self.state
 end
 
+function Binding:GetLabel(): string?
+	return self.label
+end
+
+function Binding:SetLabel(label: string?)
+	self.label = (type(label) == "string" and label ~= "") and label or nil
+	self.manager:_changed()
+end
+
+-- Does this bind belong in a bind list / HUD? It needs a name — an unlabeled
+-- binding is internal plumbing, and a row reading "None" tells nobody anything —
+-- and a mode that can actually go live: "None" is a pure key picker (the
+-- Settings tab's Toggle-UI bind), which never activates. `Hud = true/false` at
+-- registration overrides both.
+function Binding:IsListed(): boolean
+	if self.hud ~= nil then
+		return self.hud == true
+	end
+	return self.label ~= nil and self.mode ~= "None"
+end
+
 -- Sync the binding's idea of the value without firing the callback — used when
 -- something else (a click on the toggle, a config load) moved it.
 function Binding:SetState(active: boolean, fire: boolean?)
@@ -350,10 +448,12 @@ function Binding:SetState(active: boolean, fire: boolean?)
 	if self.onState then
 		self.onState(self.state)
 	end
+	self.manager:_changed()
 end
 
 function Binding:SetEnabled(enabled: boolean)
 	self.enabled = enabled ~= false
+	self.manager:_changed()
 end
 
 function Binding:Destroy()
@@ -367,6 +467,7 @@ function Binding:Destroy()
 	self.callback = nil
 	self.onChanged = nil
 	self.onState = nil
+	self.manager:_changed()
 end
 
 return Bind

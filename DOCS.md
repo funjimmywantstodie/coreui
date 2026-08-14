@@ -114,6 +114,7 @@ local Window = Uranium:CreateWindow({
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
     LogoZoom     = 1,                        -- crop a margin baked into the art (default 1)
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
+    Hud          = true,                     -- floating bind HUD (default off; see below)
 })
 ```
 
@@ -157,6 +158,9 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
+| `Window:CreateHud(opts?)` | Build (or fetch) the floating bind HUD. See below. |
+| `Window:GetHud()` | The HUD handle, or `nil` if there isn't one. |
+| `Window:SetHudVisible(bool)` | Show/hide it, building it on first use. |
 | `Window:SaveConfig(name)` → `bool` | Save all flagged values to `<name>.json`. |
 | `Window:LoadConfig(name)` → `bool` | Load + apply a saved config. |
 | `Window:DeleteConfig(name)` → `bool` | Delete a saved config. |
@@ -181,6 +185,75 @@ Window:Notify({
 (success = accent check, info = neutral, warning = amber triangle, error = red).
 It is case-insensitive and `"warn"` aliases `"warning"`. Omit `Type` (or pass
 anything unrecognized) for the original accent-colored toast with no icon.
+
+### Bind HUD
+
+A small draggable panel that answers *"what's on right now?"* without opening the
+menu — every bind you've named, its key and mode, lit while it's live, plus FPS
+and ping.
+
+```
+┌───────────────────────────────┐
+│ ▍ Active Binds              ⌃ │   drag anywhere · caret collapses it
+├───────────────────────────────┤
+│  142 FPS     38 MS            │
+├───────────────────────────────┤
+│ ● Auto Parry        F · toggle │   ← lit: running right now
+│ ○ Aim Assist        E · hold   │
+│ ● ESP               X · always │
+└───────────────────────────────┘
+```
+
+It's **off by default**. Turn it on with `Hud = true` at build time, from the
+Settings tab's *Keybind HUD* switch, or in code:
+
+```lua
+Uranium:CreateWindow({ Hud = true })      -- defaults
+Uranium:CreateWindow({ Hud = {            -- or tune it
+    Title    = "Active Binds",  -- header text     (default "Active Binds")
+    X        = 16,              -- offset from the left  (default 16)
+    Y        = 140,             -- offset from the top   (default 140)
+    MaxRows  = 10,              -- rows before "+N more" (default 10)
+    Visible  = true,            -- start shown           (default true)
+    Collapsed = false,          -- start collapsed to the header (default false)
+    Stats    = true,            -- the FPS / ping row    (default true)
+    Fps      = true,            -- FPS readout           (default true)
+    Ping     = true,            -- ping readout          (default true)
+} })
+```
+
+**You don't register anything with it.** It reads the same keybind router the
+controls use, so a bind appears the moment it exists — as long as it has a name
+to be listed under:
+
+| Where the bind comes from | What the HUD calls it |
+| --- | --- |
+| `Group:Toggle{ Name = "Aim", Keybind = ..., KeybindMode = "Hold" }` | the toggle's `Name` |
+| `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
+| `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
+
+Two things stay out: a bind with no name (nothing to call it) and a **key picker**
+— a `Keybind` with no `Mode`, which holds a key but never activates. Pass
+`Hud = true` / `Hud = false` on any of the three to override either rule.
+
+It lives beside the window rather than inside it, so **minimizing the window (or
+hitting the toggle key) leaves the HUD up** — which is the point of having one.
+Closing/unloading the window takes it with it.
+
+```lua
+local hud = Window:GetHud()          -- nil until something builds one
+hud:SetVisible(true)  hud:Show()  hud:Hide()  hud:IsVisible()
+hud:SetCollapsed(true)               -- collapse to just the header
+hud:SetPosition(20, 200)  hud:GetPosition()   -- → Vector2
+hud:SetTitle("Binds")
+hud:SetStat("PLRS", 12)              -- add/update a pill next to FPS / MS
+hud:SetStat("PLRS", nil)             -- and remove it
+hud:Destroy()
+```
+
+The HUD is captured by config save/load under the flag `uranium_hud` (whether
+it's up, whether it's collapsed, and where you dragged it), so a saved config
+puts it back exactly where you left it.
 
 ---
 
@@ -443,7 +516,73 @@ h:Get()                       -- → Enum.KeyCode
 h:Set(Enum.KeyCode.F)
 ```
 
-Click the chip, then press any key to bind it.
+Click the chip, then press the key you want bound. While it's listening
+(`...`):
+
+| Input | Result |
+| --- | --- |
+| any key | binds it |
+| right / middle click **on the chip** | binds `MB2` / `MB3` |
+| `Escape` | cancels — keeps the current bind |
+| `Backspace` / `Delete` | clears the bind |
+| a click anywhere **else** | abandons |
+
+Left click isn't bindable from the UI — it's what you click the chip *with* — but
+`h:Set(Enum.UserInputType.MouseButton1)` binds it if you really want it.
+
+#### Modes
+
+By default a Keybind is a pure key **picker**: nothing is bound, and `Callback`
+just tells you the key changed. Pass a `Mode` and it becomes a real activation
+bind — `Callback(active, info)` fires whenever the key drives the value, with
+`info = { Key, Mode, KeyName }`:
+
+| `Mode` | Behaviour |
+| --- | --- |
+| `"None"` *(default)* | no activation — just picks a key |
+| `"Toggle"` | press flips the value |
+| `"Hold"` | true only while the key is held |
+| `"Press"` | one-shot command, carries no state |
+| `"Always"` | pinned on; the key is ignored |
+
+When a bind has more than one mode to choose from, the chip grows a second
+half labelled with the current mode — **click it to cycle**
+`toggle → hold → always`. Pass `Modes` to choose what it cycles through.
+
+```lua
+Group:Keybind({
+    Name = "Speed Boost",
+    Default = Enum.KeyCode.LeftAlt,
+    Mode  = "Hold",                          -- chip reads `LAlt │ hold`
+    Modes = { "Toggle", "Hold" },            -- what clicking the mode half offers
+    Flag  = "speed_key",
+    Callback  = function(active) print("boost:", active) end,
+    OnChanged = function(key, mode) print("rebound:", key, mode) end,
+})
+```
+
+A `Flag` on a bind persists the **key and the mode** together, so a saved config
+restores "hold LAlt", not just the key.
+
+#### Keybind on a Toggle
+
+Any `Toggle` can carry the same chip inline instead of being wired to a separate
+Keybind control. The toggle's value stays the source of truth, so a click and a
+keypress can't disagree:
+
+```lua
+Group:Toggle({
+    Name = "Fly", Flag = "fly",
+    Keybind      = Enum.KeyCode.B,
+    KeybindMode  = "Hold",           -- Toggle | Hold | Always
+    KeybindModes = { "Toggle", "Hold", "Always" },
+    KeybindFlag  = "fly_key",        -- persists the key + mode separately
+    Callback = function(on) print(on) end,
+})
+```
+
+`handle.Bind` exposes the chip's handle (`:Get()` / `:Set(key)` / `:GetMode()` /
+`:SetMode(m)`).
 
 ### Dropdown (single select)
 
@@ -606,8 +745,9 @@ Window:CreateSettingsTab({
 ```
 
 A drop-in panel that wires up: accent color picker, the toggle-UI keybind, a
-notifications switch, and config **save / load / delete / refresh** plus an
-**Auto Load** toggle and an **Unload** button.
+notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
+config **save / load / delete / refresh** plus an **Auto Load** toggle and an
+**Unload** button.
 
 > **Call it last.** Its auto-load pass runs deferred and only sees flags that
 > were registered *before* it. Create all your other tabs and controls first.

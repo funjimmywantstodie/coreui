@@ -18,6 +18,13 @@ local Window = Uranium:CreateWindow({
 		Duration = 2.2,
 		Steps    = { "initializing", "loading components", "ready" },
 	},
+	-- Floating bind HUD — `Hud = true` for the defaults, or a table to place it.
+	-- It lists every named bind with its mode, lights the ones that are live right
+	-- now, and reads out FPS / ping. Drag it anywhere, click the caret to collapse
+	-- it to a title bar. It stays up while the window is minimized (that's the
+	-- point), the Settings tab has a switch for it, and a saved config remembers
+	-- where you left it.
+	Hud          = { X = 16, Y = 120 },
 	-- ScreenGui is parented to LocalPlayer.PlayerGui
 })
 
@@ -61,6 +68,39 @@ Session:Button({
 	end,
 })
 
+-- Three bound features, one per mode — this is what the HUD is for. Each shows up
+-- in it as soon as it's built (the toggle's own `Name` is the label), and lights
+-- while it's live, so you can read the state of the menu with the menu closed.
+local Bound = Home:CreateGroup({ Title = "Bound Features", Column = 2 })
+Bound:Toggle({
+	Name = "Auto Parry", Desc = "Toggle — the key flips it.",
+	Keybind = Enum.KeyCode.F, KeybindMode = "Toggle",
+	Flag = "autoparry", KeybindFlag = "autoparry_key",
+	Callback = function(on) print("autoparry:", on) end,
+})
+Bound:Toggle({
+	Name = "Aim Assist", Desc = "Hold — on only while the key is down.",
+	Keybind = Enum.KeyCode.E, KeybindMode = "Hold",
+	Flag = "aim_assist", KeybindFlag = "aim_assist_key",
+	Callback = function(on) print("aim:", on) end,
+})
+Bound:Toggle({
+	Name = "ESP", Desc = "Always — pinned on, the key does nothing.",
+	Keybind = Enum.KeyCode.X, KeybindMode = "Always",
+	Flag = "esp", KeybindFlag = "esp_key",
+	Callback = function(on) print("esp:", on) end,
+})
+
+-- The HUD's readout row is extensible: SetStat(label, value) adds or updates a
+-- pill next to FPS / MS, SetStat(label, nil) drops it again. GetHud() returns nil
+-- once the window is unloaded, which is what ends this loop.
+task.spawn(function()
+	while Window:GetHud() do
+		Window:GetHud():SetStat("PLRS", #game:GetService("Players"):GetPlayers())
+		task.wait(5)
+	end
+end)
+
 --------------------------------------------------------------------------------
 -- TAB 2 · Components
 --------------------------------------------------------------------------------
@@ -93,11 +133,12 @@ Inputs:Keybind({
 	Callback = function(key) print("bound:", key) end,
 })
 -- Give it a `Mode` and it becomes a live bind: the key drives a value and the
--- callback fires on every activation. Right-click the chip to cycle the mode.
+-- callback fires on every activation. The chip grows a second half you click to
+-- cycle the mode; right/middle click on the key half binds MB2 / MB3.
 --   "Toggle" press flips it · "Hold" on only while held · "Press" one-shot
 --   command · "Always" pinned on · "None" the picker above.
 Inputs:Keybind({
-	Name = "Sprint", Desc = "Hold to sprint — right-click the chip for Toggle / Hold / Always.",
+	Name = "Sprint", Desc = "Hold to sprint — click the chip's mode half for Toggle / Hold / Always.",
 	Default = Enum.KeyCode.LeftShift, Mode = "Hold", Flag = "sprint_key",
 	Callback = function(active, info) print("sprint:", active, info.KeyName, info.Mode) end,
 	OnChanged = function(key, mode) print("re-bound to", key, "as", mode) end,
@@ -176,10 +217,13 @@ Controls:Toggle({ Name = "Auto Mode", Default = false, Flag = "auto_mode" })
 -- Any toggle can carry its own key — `Keybind` binds it, `KeybindMode` says what
 -- the key does. `KeybindFlag` persists the key + mode alongside the value, so a
 -- saved config restores "hold B" as well as "on".
+-- Flags are one global namespace: this can't be `walkspeed`, because the Movement
+-- tab's WalkSpeed slider already owns that one and the second registration would
+-- quietly take over the slot (only the last one saves or loads).
 Controls:Toggle({
-	Name = "Walkspeed", Desc = "Bound to B — right-click the chip to switch Toggle / Hold / Always.",
+	Name = "Walkspeed", Desc = "Bound to B — click the chip's mode half for Toggle / Hold / Always.",
 	Keybind = Enum.KeyCode.B, KeybindMode = "Hold",
-	Flag = "walkspeed", KeybindFlag = "walkspeed_key",
+	Flag = "walkspeed_boost", KeybindFlag = "walkspeed_boost_key",
 	Callback = function(on)
 		local char = game:GetService("Players").LocalPlayer.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -270,7 +314,7 @@ local Movement = Universal:CreateGroup({ Title = "Movement", Column = 1 })
 Movement:Slider({ Name = "WalkSpeed", Min = 16, Max = 200, Default = 16, Flag = "walkspeed" })
 Movement:Slider({ Name = "JumpPower", Min = 50, Max = 300, Default = 50, Flag = "jumppower" })
 Movement:Toggle({
-	Name = "Infinite Jump", Desc = "Bound to J — right-click the chip for the mode.",
+	Name = "Infinite Jump", Desc = "Bound to J — click the chip's mode half for the mode.",
 	Keybind = Enum.KeyCode.J, KeybindMode = "Toggle", Flag = "infjump",
 })
 local Safety = Universal:CreateGroup({ Title = "Safety", Column = 2 })

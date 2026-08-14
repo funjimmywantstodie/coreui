@@ -21,6 +21,7 @@ local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 local Splash = require(script.Parent.Splash)
+local Hud = require(script.Parent.Hud)
 
 local M = Theme.Metrics
 
@@ -38,6 +39,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "LogoZoom", opts.LogoZoom, "number")
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 	Log.field("CreateWindow", "Splash", opts.Splash, { "boolean", "table" })
+	Log.field("CreateWindow", "Hud", opts.Hud, { "boolean", "table" })
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "uranium"
@@ -684,6 +686,10 @@ return function(opts: any)
 	local window = {}
 	local applySearch -- forward declaration (used by select)
 	local splash: any = nil -- the boot screen, while it's playing (see the mount)
+	-- The bind HUD, once something asks for one (components/Hud.lua). It's a
+	-- sibling of `main` in the ScreenGui, not a child, so minimize leaves it up.
+	local hud: any = nil
+	local onHudVisible: ((boolean) -> ())? = nil -- Settings tab's switch, if it exists
 
 	local searchOpen = false
 	local function currentQuery(): string
@@ -1096,6 +1102,59 @@ return function(opts: any)
 		notificationsEnabled = enabled ~= false
 	end
 
+	-- ── settings: the bind HUD ────────────────────────────────────────────────
+	-- A small draggable overlay listing every named bind, lit while it's live,
+	-- plus FPS / ping — the answer to "what's on right now?" with the menu closed.
+	-- It reads util/Bind.lua's registry, so it needs nothing declared twice; a
+	-- bind appears as soon as it has a `Label` (the controls pass their `Name`).
+	--
+	-- Built on demand and only once: `CreateWindow{ Hud = true }`, the Settings
+	-- tab's switch and a loaded config all land here.
+	function window:CreateHud(hudOpts: any?): any
+		if hud then
+			return hud
+		end
+		if hudOpts ~= nil and type(hudOpts) ~= "table" then
+			Log.fail("CreateHud", ("options must be a table like { Title = ... }, got %s")
+				:format(typeof(hudOpts)))
+		end
+		-- CreateWindow{ Hud = {...} } is the baseline; a later CreateHud{...} (or the
+		-- Settings switch, which passes nothing) overrides field by field.
+		local merged: any = {}
+		if type(opts.Hud) == "table" then
+			for key, value in opts.Hud :: any do
+				merged[key] = value
+			end
+		end
+		if type(hudOpts) == "table" then
+			for key, value in hudOpts :: any do
+				merged[key] = value
+			end
+		end
+		hud = Hud(ctx, screenGui, merged)
+		-- Keep the Settings tab's switch in step with the HUD however it moved
+		-- (its own :SetVisible, a loaded config, the panel being dismissed).
+		hud.OnVisible = function(value: boolean)
+			if onHudVisible then
+				onHudVisible(value)
+			end
+		end
+		return hud
+	end
+
+	function window:GetHud(): any
+		return hud
+	end
+
+	-- Show/hide the HUD, building it the first time it's asked for. Hiding one
+	-- that was never built is a no-op rather than a pointless build.
+	function window:SetHudVisible(value: boolean)
+		if not hud and value == false then
+			return
+		end
+		window:CreateHud():SetVisible(value ~= false)
+	end
+
 	-- ── settings: headless keybinds ───────────────────────────────────────────
 	-- A bind with no control attached, for logic the menu doesn't expose:
 	--   Window:Bind(Enum.KeyCode.B, function(on) ... end, "Hold")
@@ -1103,6 +1162,9 @@ return function(opts: any)
 	-- Returns the binding — :SetKey / :SetMode / :GetState / :Destroy. It rides
 	-- the same router as the controls, so it honours gameProcessed and pauses
 	-- while a Keybind chip is capturing.
+	--
+	-- Give it a `Label` to have it listed in the bind HUD; without one it's
+	-- treated as internal plumbing and stays out (there'd be nothing to call it).
 	function window:Bind(keyOrOpts: any, callback: any, mode: any): any
 		local o = keyOrOpts
 		if typeof(keyOrOpts) == "EnumItem" then
@@ -1114,6 +1176,8 @@ return function(opts: any)
 		Log.field("Bind", "Key", o.Key, "EnumItem")
 		Log.field("Bind", "Callback", o.Callback, "function")
 		Log.field("Bind", "Mode", o.Mode, "string")
+		Log.field("Bind", "Label", o.Label, "string")
+		Log.field("Bind", "Hud", o.Hud, "boolean")
 		return binds:Register(o)
 	end
 
@@ -1193,6 +1257,11 @@ return function(opts: any)
 			splash:Destroy() -- torn down mid-boot: don't leave the splash on screen
 			splash = nil
 		end
+		-- The HUD's own input listeners outlive the ScreenGui, same as ours.
+		if hud then
+			hud:Destroy()
+			hud = nil
+		end
 
 		if immediate then
 			screenGui:Destroy()
@@ -1260,6 +1329,44 @@ return function(opts: any)
 			end,
 		})
 
+		-- The bind HUD switch. Deliberately NOT flagged itself: the HUD is the
+		-- source of truth (it also persists its position and collapsed state), and
+		-- two flags for one thing would fight each other on load. Instead the flag
+		-- below proxies to the HUD — built on demand, so a config that has it off
+		-- never creates one — and the switch mirrors whatever the HUD ends up at.
+		-- Both directions no-op when already in step, so the sync can't loop.
+		local hudSwitch = iface:Toggle({
+			Name = "Keybind HUD",
+			Desc = "Floating panel: active binds, FPS and ping.",
+			Default = hud ~= nil and hud:IsVisible(),
+			Callback = function(on)
+				if hud and hud:IsVisible() == on then
+					return
+				end
+				window:SetHudVisible(on)
+			end,
+		})
+		onHudVisible = function(value: boolean)
+			if hudSwitch:Get() ~= value then
+				hudSwitch:Set(value)
+			end
+		end
+		ctx:RegisterFlag("uranium_hud", {
+			GetFlag = function(): any
+				return hud and hud:GetFlag() or { Visible = false }
+			end,
+			SetFlag = function(_, value: any)
+				if type(value) ~= "table" then
+					return
+				end
+				if value.Visible == true then
+					window:CreateHud():SetFlag(value)
+				elseif hud then
+					hud:SetFlag(value)
+				end
+			end,
+		}, "hud")
+
 		-- Configuration ────────────────────────────────────────────────────────────
 		local cfg = tab:CreateGroup({ Title = "Configuration", Column = 2 })
 		if not Config.supported then
@@ -1270,11 +1377,33 @@ return function(opts: any)
 			})
 		else
 			local nameBox = cfg:Input({ Name = "Config Name", Placeholder = "my config" })
-			local list = cfg:Dropdown({
+			local list: any
+			local autoSwitch: any
+			-- Auto Load points at whatever is selected NOW. It used to be written only
+			-- from the switch's own callback, so picking a different config afterwards
+			-- left the pointer on the old one — and flipping the switch on with nothing
+			-- selected wrote nil, silently clearing it while the switch read "on".
+			local function syncAutoload()
+				if not autoSwitch then
+					return
+				end
+				local on = autoSwitch:Get()
+				local name = list:Get()
+				if on and (name == nil or name == "") then
+					Config.setAutoload(configFolder, nil)
+					autoSwitch:Set(false) -- re-enters here with `on` false; terminates
+					window:Notify({ Title = "Config", Text = "Pick a config to auto-load first." })
+					return
+				end
+				Config.setAutoload(configFolder, on and name or nil)
+			end
+
+			list = cfg:Dropdown({
 				Name = "Saved Configs",
 				Placeholder = "None saved",
 				Stack = true,
 				Options = window:ListConfigs(),
+				Callback = syncAutoload,
 			})
 			local function refresh()
 				list:SetOptions(window:ListConfigs())
@@ -1327,13 +1456,11 @@ return function(opts: any)
 				},
 				{ Label = "Refresh", Callback = refresh },
 			})
-			cfg:Toggle({
+			autoSwitch = cfg:Toggle({
 				Name = "Auto Load",
 				Desc = "Apply the selected config on launch.",
 				Default = Config.getAutoload(configFolder) ~= nil,
-				Callback = function(on)
-					Config.setAutoload(configFolder, on and list:Get() or nil)
-				end,
+				Callback = syncAutoload,
 			})
 
 			-- Apply the auto-load config once the rest of the UI has finished
@@ -1362,6 +1489,14 @@ return function(opts: any)
 		end
 		print(("[Uranium] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
 		return tab
+	end
+
+	-- ── bind HUD ──────────────────────────────────────────────────────────────
+	-- Opt-in, like the splash: `Hud = true` (or a table of overrides). Built here,
+	-- before the caller has created a single control — it fills itself in from the
+	-- bind registry as the binds are registered, so ordering doesn't matter.
+	if opts.Hud ~= nil and opts.Hud ~= false then
+		window:CreateHud()
 	end
 
 	-- mount — pop the window in from a touch smaller and faded so it eases in

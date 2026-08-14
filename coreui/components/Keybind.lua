@@ -1,6 +1,7 @@
 --!strict
--- components/Keybind.lua — click to listen, capture the next key pressed;
--- right-click to cycle the mode.
+-- components/Keybind.lua — click the key half of the chip to listen, then press
+-- the key (or right/middle click the chip for MB2/MB3); the chip's mode half
+-- cycles Toggle/Hold/Always when there's more than one mode to pick.
 --
 -- The chip, the routing and the mode machine live in components/BindChip.lua +
 -- util/Bind.lua; this file is the field row around them and the callback
@@ -29,6 +30,7 @@ return function(ctx: any, opts: any)
 	Log.field(where, "Mode", opts.Mode, "string")
 	Log.field(where, "Modes", opts.Modes, "table")
 	Log.field(where, "OnChanged", opts.OnChanged, "function")
+	Log.field(where, "Hud", opts.Hud, "boolean")
 
 	local f = Field.new(ctx, opts)
 	local mode = Bind.mode(opts.Mode, where, "None")
@@ -40,6 +42,10 @@ return function(ctx: any, opts: any)
 		Modes = opts.Modes,
 		Default = opts.DefaultState,
 		Where = where,
+		-- The field's own label is what the bind HUD lists it under. A picker
+		-- (Mode = "None") never activates, so it stays out of the HUD regardless.
+		Label = opts.Name,
+		Hud = opts.Hud,
 		-- Picker mode has no activation, so `Callback` keeps its original
 		-- "the key changed" meaning there and only there.
 		OnActivate = not picker and opts.Callback or nil,

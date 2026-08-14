@@ -25,6 +25,7 @@ return function(ctx: any, opts: any)
 	Log.field(where, "KeybindMode", opts.KeybindMode, "string")
 	Log.field(where, "KeybindModes", opts.KeybindModes, "table")
 	Log.field(where, "KeybindFlag", opts.KeybindFlag, "string")
+	Log.field(where, "Hud", opts.Hud, "boolean")
 
 	local f = Field.new(ctx, opts)
 	local state = opts.Default == true
@@ -101,6 +102,10 @@ return function(ctx: any, opts: any)
 			Compact = true,
 			LayoutOrder = 2,
 			Where = where,
+			-- The toggle's own label is what the bind HUD lists it under, so
+			-- "hold B for aim" appears there without a second declaration.
+			Label = opts.Name,
+			Hud = opts.Hud,
 			GetState = function()
 				return state
 			end,
