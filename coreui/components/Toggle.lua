@@ -11,9 +11,11 @@
 -- in Toggle mode — because "is this bindable?" isn't a decision the menu author
 -- should have to make on the user's behalf. It used to be opt-in, which meant
 -- hubs hardcoded a default key just to get the chip on screen, and every one of
--- those landed in the bind HUD as a bind nobody asked for. An *unbound* chip
--- costs the HUD nothing (util/Bind.lua's `IsListed` keeps keyless binds out),
--- so the default is free. `Keybind` / `KeybindMode` / `KeybindModes` still
+-- those landed in the bind HUD as a bind nobody asked for. An unbound chip on an
+-- *off* toggle costs the HUD nothing (util/Bind.lua's `IsListed` keeps idle
+-- keyless binds out; switching the toggle on lists it, keyed or not, because the
+-- HUD's job is to say what's running), so the default is free.
+-- `Keybind` / `KeybindMode` / `KeybindModes` still
 -- preset it exactly as before; `Keybind = false` opts one control out, and
 -- `CreateWindow{ Keybinds = false }` opts the whole window out.
 

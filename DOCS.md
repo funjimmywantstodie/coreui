@@ -213,8 +213,8 @@ anything unrecognized) for the original accent-colored toast with no icon.
 ### Bind HUD
 
 A small draggable panel that answers *"what's on right now?"* without opening the
-menu — every bind you've named, its key and mode, lit while it's live, plus FPS
-and ping.
+menu — every bind you've named plus everything currently switched on, with its
+key and mode, lit while it's live, plus FPS and ping.
 
 ```
 ┌────────────────────────────────┐
@@ -223,6 +223,7 @@ and ping.
 │ ● Auto Parry         F · toggle│   ← lit: running right now
 │ ○ Aim Assist         E · hold  │
 │ ● ESP                X · always│
+│ ● Infinite Jump      — · toggle│   ← on, but never bound to a key
 └────────────────────────────────┘
 ┌────────────────────────────────┐
 │ 142 FPS   38 MS                │   ← its own bar: stays up when collapsed
@@ -252,25 +253,25 @@ Uranium:CreateWindow({ Hud = {            -- or tune it
 ```
 
 **You don't register anything with it.** It reads the same keybind router the
-controls use, so a bind appears the moment it has a key on it — as long as it
-has a name to be listed under:
+controls use, so a feature appears the moment it has a key on it **or** is
+switched on — as long as it has a name to be listed under:
 
 | Where the bind comes from | What the HUD calls it |
 | --- | --- |
-| `Group:Toggle{ Name = "Aim" }`, once the user binds a key to its chip | the toggle's `Name` |
+| `Group:Toggle{ Name = "Aim" }`, once it's enabled or bound to a key | the toggle's `Name` |
 | `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
 | `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
 
-Three things stay out, so the panel is a short list of what you actually use
-rather than an inventory of the whole menu:
+So the panel is **everything you bound + everything that's running**. A keyless
+feature you turned on from the menu lists with a `—` where its key would be:
+there isn't one, and it's running anyway. Turn it back off and the row goes.
 
-- **anything with no key on it** — an unbound feature is a `— · toggle` row that
-  tells you nothing, and since [every toggle carries a chip](#toggle) a hub full
-  of them would bury the binds you set. The one exception is an **`Always`**
-  bind that's on: it ignores its key by design and may well have none, and a
-  feature pinned on has to be visible or the HUD is lying. (Being *on* is not
-  itself enough — otherwise the panel becomes a list of every feature you have
-  enabled.);
+Three things stay out, so it stays a short list rather than an inventory of the
+whole menu:
+
+- **anything that's off and has no key on it** — an idle unbound feature is a
+  `— · toggle` row that tells you nothing, and since [every toggle carries a
+  chip](#toggle) a hub full of them would bury the binds you set;
 - a bind with **no name** (nothing to call it);
 - a **key picker** — a `Keybind` with no `Mode`, which holds a key but never
   activates.
@@ -428,8 +429,9 @@ h:Set(false)
 **Every toggle is bindable.** It carries a [bind chip](#keybind-on-a-toggle) in
 its row with nothing bound and the mode set to `Toggle`, so the user picks a key
 whenever they want one — the call site doesn't have to decide up front. An
-unbound chip stays out of the [bind HUD](#bind-hud), so this costs nothing on
-screen but the pill itself.
+unbound chip on an *off* toggle stays out of the [bind HUD](#bind-hud), so this
+costs nothing on screen but the pill itself. (Switch the toggle on and it does
+list, key or no key — the HUD's job is to report what's running.)
 
 ```lua
 Group:Toggle({ Name = "Fly" })                  -- chip: `None │ toggle`

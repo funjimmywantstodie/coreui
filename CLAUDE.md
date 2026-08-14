@@ -362,16 +362,18 @@ registry — which already holds every binding — through two additions there:
 activate / destroy) and `Bind:List()`. A binding carries a `Label`, which
 `Keybind` and `Toggle` fill from their own `Name` and `Window:Bind` takes
 directly; `Binding:IsListed()` is the one place the inclusion rule lives — needs
-a label, a `Mode ~= "None"` (a pure key picker never activates), **and a key**,
-with `Hud = true/false` on the control as the override. The key requirement is
-what keeps the panel short: a HUD that lists every bindable feature in the menu
-is a wall of `— · toggle` rows burying the few the user actually bound — and it
-is what makes every-toggle-is-bindable free. An **`Always`** bind that's on is
-exempt, since it ignores its key by design and a pinned-on feature that isn't
-listed makes the HUD wrong about what's running. That exemption is scoped to
-`Always` deliberately: as "on in any mode" it was fine while a chip meant someone
-had chosen to make the feature bindable, but with a chip on every toggle it would
-turn the panel into a list of every feature you have enabled.
+a label, a `Mode ~= "None"` (a pure key picker never activates), and **a key or a
+true value**, with `Hud = true/false` on the control as the override. So the
+panel is *everything bound + everything running*. The key clause is what keeps it
+short: a HUD that lists every bindable feature in the menu is a wall of idle
+`— · toggle` rows burying the few the user actually bound — and it is what makes
+every-toggle-is-bindable free. The **active** clause is the other half of the
+HUD's premise: it answers "what's on right now?", and a keyless feature the user
+switched on from the menu is on. It used to be scoped to `Always` only (which
+ignores its key by design), which meant minimizing over a page of enabled
+features left the HUD claiming nothing was live. Idle keyless binds still drop
+out, so the list only ever grows by what's actually running; `Hud.lua`'s
+`paintRow` draws the missing key as `—`.
 
 Six things to respect:
 

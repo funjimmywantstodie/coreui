@@ -3,14 +3,16 @@
 -- answers "what's on right now?" without opening the menu.
 --
 -- It reads util/Bind.lua's registry directly (`Bind:Observe` → `Bind:List`), so
--- it isn't a second list anyone has to maintain: every Toggle with a `Keybind`,
--- every activation-mode `Keybind` control and every `Window:Bind` shows up the
--- moment it has a key on it, and lights while it's live. The controls pass the
--- `Label` from their own `Name`, so nothing has to be declared twice.
+-- it isn't a second list anyone has to maintain: every Toggle, every
+-- activation-mode `Keybind` control and every `Window:Bind` shows up the moment
+-- it has a key on it *or* is switched on, and lights while it's live. The
+-- controls pass the `Label` from their own `Name`, so nothing has to be declared
+-- twice.
 --
 -- What it deliberately does NOT show is every bindable feature in the menu:
--- that's a wall of unbound rows that buries the few you actually use. The
--- inclusion rule lives in `Binding:IsListed` — a key, or currently active.
+-- that's a wall of unbound, idle rows that buries the few you actually use. The
+-- inclusion rule lives in `Binding:IsListed` — a key, or currently active — so
+-- the panel is exactly "everything bound + everything running".
 --
 -- Three deliberate shapes here:
 --
@@ -417,8 +419,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 		local active = entry:GetState() == true
 		local keyName = Bind.name(entry:GetKey())
 		if keyName == "None" then
-			-- Unbound rows are filtered out by Binding:IsListed, so this is either an
-			-- "Always" bind that's on (no key by design) or a `Hud = true` override.
+			-- Idle unbound rows are filtered out by Binding:IsListed, so this is a
+			-- keyless bind that's currently ON (an "Always", or a toggle switched on
+			-- from the menu) or a `Hud = true` override. The em dash is the honest
+			-- answer to "what key?" — there isn't one, it's running anyway.
 			keyName = "—"
 		end
 		row.name.Text = entry:GetLabel() or "Bind"

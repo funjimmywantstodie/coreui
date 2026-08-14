@@ -459,25 +459,26 @@ function Binding:SetLabel(label: string?)
 	self.manager:_changed()
 end
 
--- Does this bind belong in a bind list / HUD? Three rules, and the third is the
--- one that keeps the panel readable:
+-- Does this bind belong in a bind list / HUD? Three rules:
 --   * it needs a name — an unlabeled binding is internal plumbing, and a row
 --     reading "None" tells nobody anything;
 --   * it needs a mode that can actually go live — "None" is a pure key picker
 --     (the Settings tab's Toggle-UI bind), which never activates;
---   * it needs a KEY. A HUD listing every bindable feature in the menu is a wall
---     of "— · toggle" rows for things the user never bound, which buries the
---     handful they did. The one exception is an "Always" bind, which ignores its
---     key by definition and may well have none — a feature pinned on has to be
---     visible or the panel is lying about what's live.
+--   * it needs a KEY **or** it has to be on right now.
 --
--- That exception is scoped to "Always" on purpose. It used to be "on right now"
--- in any mode, which was right while a chip meant somebody had deliberately made
--- the feature bindable — but components/Toggle.lua now gives *every* toggle one,
--- and "listed because its value is true" would turn the panel into a list of
--- every feature you have enabled. A live Hold or a keyed Toggle still lists via
--- the key clause; only a keyless one drops out, and a keyless bind is one the
--- user can't have turned on from the keyboard anyway.
+-- The key clause is what keeps the panel from being an inventory of the whole
+-- menu: since components/Toggle.lua gives *every* toggle a chip, listing the
+-- unbound ones would be a wall of "— · toggle" rows burying the handful the user
+-- actually bound.
+--
+-- The "on right now" clause is the other half of the HUD's job. The panel
+-- answers "what's running?", and a feature the user enabled by clicking it is
+-- running whether or not they ever put a key on it — an "Always" bind ignores
+-- its key by definition, and a keyless Toggle switched on from the menu is no
+-- different from the outside. Restricting the panel to keyed binds meant the
+-- window could be minimized over a page of enabled features and the HUD would
+-- claim nothing was live. Idle keyless binds still stay out, so the list only
+-- grows by what's actually on.
 -- `Hud = true/false` at registration overrides all three.
 function Binding:IsListed(): boolean
 	if self.hud ~= nil then
@@ -486,8 +487,7 @@ function Binding:IsListed(): boolean
 	if self.label == nil or self.mode == "None" then
 		return false
 	end
-	return (self.mode == "Always" and self:_value())
-		or (Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown)
+	return self:_value() or (Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown)
 end
 
 -- Sync the binding's idea of the value without firing the callback — used when
