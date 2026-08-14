@@ -19,6 +19,7 @@ local Log = require(script.Parent.Parent.util.Log)
 local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
+local Splash = require(script.Parent.Splash)
 
 local M = Theme.Metrics
 
@@ -35,6 +36,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "LogoRadius", opts.LogoRadius, "number")
 	Log.field("CreateWindow", "LogoZoom", opts.LogoZoom, "number")
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
+	Log.field("CreateWindow", "Splash", opts.Splash, { "boolean", "table" })
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "uranium"
@@ -243,13 +245,17 @@ return function(opts: any)
 	-- `Logo = false` means "no art at all" — keep the accent square + initial.
 	-- The built-in mark gets Theme.Brand.zoom (its margin is known); art the
 	-- caller supplied is drawn 1:1 unless they ask for a zoom themselves.
+	-- Resolved into locals because the splash screen shows the same mark.
+	local logoSource: any = nil
+	local logoZoom: number? = nil
 	if opts.Logo == false then
-		setLogo(nil)
+		logoSource = nil
 	elseif opts.Logo ~= nil then
-		setLogo(opts.Logo, opts.LogoZoom)
+		logoSource, logoZoom = opts.Logo, opts.LogoZoom
 	else
-		setLogo(Theme.Brand.logo, opts.LogoZoom or Theme.Brand.zoom)
+		logoSource, logoZoom = Theme.Brand.logo, opts.LogoZoom or Theme.Brand.zoom
 	end
+	setLogo(logoSource, logoZoom)
 
 	-- Wordmark: uppercase with wide letter-spacing. Roblox has no tracking /
 	-- letter-spacing property on TextLabel, so the spacing is literal — a space
@@ -603,6 +609,7 @@ return function(opts: any)
 	local activeIndex = 1
 	local window = {}
 	local applySearch -- forward declaration (used by select)
+	local splash: any = nil -- the boot screen, while it's playing (see the mount)
 
 	local searchOpen = false
 	local function currentQuery(): string
@@ -1039,6 +1046,10 @@ return function(opts: any)
 		binds:Destroy() -- drops every registered binding with the listeners
 		ctx:ClosePopover()
 		Singleton.release(record)
+		if splash then
+			splash:Destroy() -- torn down mid-boot: don't leave the splash on screen
+			splash = nil
+		end
 
 		if immediate then
 			screenGui:Destroy()
@@ -1203,11 +1214,51 @@ return function(opts: any)
 	mainScale.Scale = 0.92
 	main.GroupTransparency = 1
 	syncShadow()
-	task.defer(function()
+	local function mountWindow()
+		if destroyed then
+			return -- unloaded while the splash was still playing
+		end
+		main.Visible = true
 		Tween.play(mainScale, Tween.Pop, { Scale = 1 })
 		Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
 		Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
-	end)
+	end
+
+	-- ── boot splash ────────────────────────────────────────────────────────────
+	-- `Splash = true` (or a table of overrides) plays components/Splash.lua first
+	-- and mounts the window when it's on its way out. The window is built either
+	-- way — the caller's tabs populate it while the splash is up — it's just kept
+	-- hidden, so nothing about the rest of the API changes. Off by default: a
+	-- boot screen on every re-run of a loader that doesn't want one is a tax.
+	local splashOpts = opts.Splash
+	if splashOpts ~= nil and splashOpts ~= false then
+		local so: any = type(splashOpts) == "table" and splashOpts or {}
+		-- The splash shows the window's mark unless it's given one of its own;
+		-- its own art brings its own zoom (a different source, a different crop).
+		local splashLogo, splashZoom = logoSource, logoZoom
+		if so.Logo ~= nil then
+			splashLogo, splashZoom = so.Logo, so.LogoZoom
+		elseif so.LogoZoom ~= nil then
+			splashZoom = so.LogoZoom
+		end
+		main.Visible = false
+		splash = Splash(ctx, screenGui, {
+			Title = so.Title or brandName,
+			Subtitle = so.Subtitle or opts.Subtitle,
+			Logo = splashLogo,
+			LogoZoom = splashZoom,
+			LogoRadius = so.LogoRadius,
+			Duration = so.Duration,
+			Dim = so.Dim,
+			Steps = so.Steps,
+		})
+		splash:Play(function()
+			splash = nil -- it fades itself out from here; the window takes over
+			mountWindow()
+		end)
+	else
+		task.defer(mountWindow)
+	end
 
 	local localPlayer = Players.LocalPlayer
 	if localPlayer then

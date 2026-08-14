@@ -11,6 +11,13 @@ local Window = Uranium:CreateWindow({
 	Version      = "v1.0.0",
 	ConfigFolder = "uranium",                -- where saved configs live on disk
 	ToggleKey    = Enum.KeyCode.RightShift, -- show/hide the window
+	-- Boot animation — `Splash = true` for the defaults, or a table to tune it.
+	-- Duration is the whole thing (1–8s); the bar fills for whatever is left
+	-- after the intro, and Steps captions it as it goes.
+	Splash       = {
+		Duration = 2.2,
+		Steps    = { "initializing", "loading components", "ready" },
+	},
 	-- ScreenGui is parented to LocalPlayer.PlayerGui
 })
 

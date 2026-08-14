@@ -81,7 +81,7 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetLogo(source, zoom?)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
@@ -125,6 +125,31 @@ ScreenGuis named `Theme.Brand.name`, which covers a broken/cleared record or a
 pre-guard build still on screen. `AllowMultiple = true` opts a window out of both
 halves. `Singleton.release` no-ops unless the stored record is still ours, so a
 late teardown can't evict a newer window.
+
+## Boot splash
+
+`components/Splash.lua` is the opt-in boot animation —
+`CreateWindow{ Splash = true }`, or a table of overrides
+(`{ Title, Subtitle, Steps, Duration, Dim, Logo, LogoZoom, LogoRadius }`).
+**Off by default**: a boot screen on every re-run of a loader that didn't ask
+for one is a tax. It mounts into the window's own ScreenGui at `ZIndex = 1000`
+(a sibling of `main`, so it draws over the frame *and* its overlay) and dies
+with it.
+
+`Duration` (default 2s, clamped 1–8) is the **whole** on-screen time: the 4-beat
+entrance stagger and the exit fade are subtracted and the progress bar fills for
+whatever is left, so a longer duration is a slower bar, not a longer wait on a
+full one. `Steps` is a list of status strings cycled through the subtitle across
+that fill. The composition (mark / wordmark / status / bar) is placed by hand,
+**not** on a UIListLayout — a layout owns its children's Position, which would
+suppress the slide-up each element enters with.
+
+Two integration points in `Window.lua`: the mount tweens moved into
+`mountWindow()`, and with a splash the window is built but `main.Visible =
+false` until it plays. The caller's tabs populate the hidden window while the
+splash is up, so nothing else in the API changes. `onDone` fires when the fade
+*begins*, so the window pops in behind the dim and the two cross-fade instead of
+the screen blinking empty between them.
 
 ## Config & settings (Flag system)
 
