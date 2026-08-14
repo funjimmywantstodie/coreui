@@ -592,7 +592,7 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 			ownsSound = false
 		elseif data.SoundId then
 			local snd = Instance.new("Sound")
-			snd.Name = "Krypton_MediaPlayerSound"
+			snd.Name = "Uranium_MediaPlayerSound"
 			snd.SoundId = data.SoundId
 			snd.Parent = SoundService
 			activeSound = snd

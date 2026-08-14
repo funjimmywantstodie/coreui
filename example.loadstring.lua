@@ -1,15 +1,15 @@
--- example.loadstring.lua — the Krypton demo, loaded over HTTP from the bundle.
+-- example.loadstring.lua — the Uranium demo, loaded over HTTP from the bundle.
 -- Paste this whole thing into your executor. No instance tree / require needed:
 -- loadstring runs the bundled source and returns the library table.
 
 local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/heads/main/coreui.bundle.lua"
-local Krypton = loadstring(game:HttpGet(URL .. "?v=" .. tick()))()
+local Uranium = loadstring(game:HttpGet(URL .. "?v=" .. tick()))()
 
-local Window = Krypton:CreateWindow({
-	Title        = "Krypton",
+local Window = Uranium:CreateWindow({
+	Title        = "Uranium",
 	Subtitle     = "script hub",
 	Version      = "v1.0.0",
-	ConfigFolder = "krypton",                -- where saved configs live on disk
+	ConfigFolder = "uranium",                -- where saved configs live on disk
 	ToggleKey    = Enum.KeyCode.RightShift, -- show/hide the window
 	-- ScreenGui is parented to LocalPlayer.PlayerGui
 })
@@ -33,7 +33,7 @@ Profile:Paragraph({
 })
 
 local Session = Home:CreateGroup({ Title = "Session", Column = 2 }) -- 2 = right
-Session:Label({ Key = "Library",    Value = "Krypton" })
+Session:Label({ Key = "Library",    Value = "Uranium" })
 Session:Label({ Key = "Version",    Value = "1.0.0" })
 Session:Label({ Key = "Components", Value = "15" })
 Session:Label({ Key = "Status",     Value = "Connected" })
@@ -42,7 +42,7 @@ Session:Button({
 	Label  = "Send Notification",
 	Accent = true,
 	Callback = function()
-		Window:Notify({ Title = "Notification", Text = "A toast from Krypton." })
+		Window:Notify({ Title = "Notification", Text = "A toast from Uranium." })
 	end,
 })
 
@@ -157,16 +157,17 @@ Controls:ButtonRow({
 -- an ARRAY of those as a fallback chain. Same for Player.Avatar and a
 -- MediaPlayer track's Cover.
 --
--- Prefer a URL first, id second (what this does): the URL is cached to disk and
--- loaded via getcustomasset, so it dodges Roblox moderation / Asset Privacy /
--- decal-id issues entirely, and the id covers executors with no file access.
--- `Krypton.Asset.url("name.png")` resolves a filename against the public
--- Krypton asset repo, so shipping new art is just committing the file.
+-- Prefer a URL first, id second: the URL is cached to disk and loaded via
+-- getcustomasset, so it dodges Roblox moderation / Asset Privacy / decal-id
+-- issues entirely, and the id covers executors with no file access. The Uranium
+-- mark isn't uploaded as an asset yet, so this chain is URL-only for now.
+-- `Uranium.Asset.url("name.png")` resolves a filename against the public
+-- asset repo, so shipping new art is just committing the file.
 local Media = Components:CreateGroup({ Title = "Media", Column = 2 })
 local banner = Media:Image({
 	Name    = "Logo",
 	Desc    = "A 512×512 mark, rounded off by the frame.",
-	Image   = { Krypton.Asset.url("krypton-512-square.png"), "rbxassetid://74808640463075" },
+	Image   = { Uranium.Asset.url("uranium-orbitals-512-square.png") },
 	Height  = 150,
 	Fit     = "contain",
 	Caption = "Image = <id> | \"https://…\" | \"folder/art.png\" | { chain, of, these }",
@@ -176,7 +177,7 @@ Media:Button({
 	Callback = function()
 		-- :Set takes the same source types; a headshot is a handy live example.
 		local me = game:GetService("Players").LocalPlayer
-		banner:Set(Krypton.Asset.headshot(me and me.UserId or 1, 352))
+		banner:Set(Uranium.Asset.headshot(me and me.UserId or 1, 352))
 	end,
 })
 
@@ -203,4 +204,4 @@ Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for not
 --------------------------------------------------------------------------------
 Window:CreateSettingsTab()
 
-print("[Krypton] demo built — Home / Components / Settings tabs ready")
+print("[Uranium] demo built — Home / Components / Settings tabs ready")

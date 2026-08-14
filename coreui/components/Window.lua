@@ -34,7 +34,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 
 	-- where configs are saved on disk + which key shows/hides the window
-	local configFolder = opts.ConfigFolder or "krypton"
+	local configFolder = opts.ConfigFolder or "uranium"
 	local toggleKey: Enum.KeyCode = opts.ToggleKey or Enum.KeyCode.RightShift
 	local notificationsEnabled = true
 	-- UserInputService connections live past the ScreenGui's lifetime, so they're
@@ -42,15 +42,15 @@ return function(opts: any)
 	local connections: { RBXScriptConnection } = {}
 
 	-- ── single instance ───────────────────────────────────────────────────────
-	-- Only one Krypton on screen at a time: re-running the loadstring unloads the
+	-- Only one Uranium on screen at a time: re-running the loadstring unloads the
 	-- window the previous run left behind (util/Singleton.lua — the handle lives
-	-- on getgenv()._KRYPTON_LOADED so it survives across chunks), then builds
+	-- on getgenv()._URANIUM_LOADED so it survives across chunks), then builds
 	-- fresh below. That way the loader refreshes the UI instead of stacking a
 	-- second copy over the first. `AllowMultiple = true` opts out of both halves.
 	local singleton = opts.AllowMultiple ~= true
 	local record: any = nil
 	if singleton and Singleton.unloadExisting(Theme.Brand.name) then
-		print("[Krypton] already loaded — unloaded the previous window and refreshing.")
+		print("[Uranium] already loaded — unloaded the previous window and refreshing.")
 	end
 
 	-- ── ScreenGui + window frame ────────────────────────────────────────────
@@ -176,7 +176,7 @@ return function(opts: any)
 	-- it never resolves (Studio without executor globals, bad id, …).
 	local logo = Create("Frame", {
 		Name = "Logo",
-		Size = UDim2.fromOffset(26, 26),
+		Size = UDim2.fromOffset(20, 20),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, M.sidebar / 2, 0.5, 0),
 		BackgroundColor3 = colors.accent,
@@ -192,7 +192,7 @@ return function(opts: any)
 		Size = UDim2.fromScale(1, 1),
 		Text = brandName:sub(1, 1):upper(),
 		TextColor3 = colors.knockout,
-		TextSize = 15,
+		TextSize = 12,
 		FontFace = Theme.Font.Bold,
 		Parent = logo,
 	})
@@ -232,11 +232,23 @@ return function(opts: any)
 		setLogo(opts.Logo ~= nil and opts.Logo or Theme.Brand.logo)
 	end
 
+	-- Wordmark: uppercase with wide letter-spacing. Roblox has no tracking /
+	-- letter-spacing property on TextLabel, so the spacing is literal — a space
+	-- between every glyph. A word break becomes three spaces, which still reads
+	-- as a wordmark. Short brand names only; that's what a titlebar title is.
+	local function wordmark(s: string): string
+		local out = {}
+		for _, c in utf8.codes(s:upper()) do
+			table.insert(out, utf8.char(c))
+		end
+		return table.concat(out, " ")
+	end
+
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Text = brandName,
+		Text = wordmark(brandName),
 		TextColor3 = colors.text,
 		TextSize = 16,
 		FontFace = Theme.Font.Bold,
@@ -458,9 +470,9 @@ return function(opts: any)
 		Position = UDim2.fromScale(1, 0),
 		Size = UDim2.fromScale(0.4, 1),
 		Text = opts.Version or "",
-		TextColor3 = colors.text_muted,
+		TextColor3 = colors.text_dim,
 		TextSize = 12,
-		FontFace = Theme.Font.Regular,
+		FontFace = Theme.Font.Mono,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		Parent = status,
 	})
@@ -885,7 +897,7 @@ return function(opts: any)
 
 	function window:SetAccent(color: Color3)
 		if typeof(color) ~= "Color3" then
-			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7c5cff\"))")
+			Log.fail("SetAccent", ("expects a Color3, got %s (try Color3.fromHex(\"7cff3b\"))")
 				:format(typeof(color)))
 		end
 		ctx:SetAccent(color)
@@ -930,7 +942,7 @@ return function(opts: any)
 		for _ in snapshot do
 			n += 1
 		end
-		print(("[Krypton] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
+		print(("[Uranium] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
 		return ok
 	end
 	function window:LoadConfig(name: string): boolean
@@ -938,7 +950,7 @@ return function(opts: any)
 			return false
 		end
 		local data = Config.load(configFolder, name)
-		print(("[Krypton] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
+		print(("[Uranium] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
 		if data then
 			ctx:LoadConfig(data)
 			return true
@@ -996,7 +1008,7 @@ return function(opts: any)
 	-- auto-load pass sees every flagged control your other tabs registered.
 	function window:CreateSettingsTab(settingsOpts: any?)
 		settingsOpts = settingsOpts or {}
-		print(("[Krypton] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
+		print(("[Uranium] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
 		local tab = window:CreateTab({
 			Name = settingsOpts.Name or "Settings",
 			Icon = settingsOpts.Icon or "gear",
@@ -1007,7 +1019,7 @@ return function(opts: any)
 		iface:Colorpicker({
 			Name = "Accent Color",
 			Desc = "Re-themes the whole UI.",
-			Flag = "krypton_accent",
+			Flag = "uranium_accent",
 			Default = ctx.Accent,
 			Callback = function(c)
 				window:SetAccent(c)
@@ -1016,7 +1028,7 @@ return function(opts: any)
 		iface:Keybind({
 			Name = "Toggle UI",
 			Desc = "Show or hide the window.",
-			Flag = "krypton_togglekey",
+			Flag = "uranium_togglekey",
 			Default = toggleKey,
 			Callback = function(k)
 				window:SetToggleKey(k)
@@ -1025,7 +1037,7 @@ return function(opts: any)
 		iface:Toggle({
 			Name = "Notifications",
 			Desc = "Show toast notifications.",
-			Flag = "krypton_notifications",
+			Flag = "uranium_notifications",
 			Default = true,
 			Callback = function(on)
 				window:SetNotificationsEnabled(on)
@@ -1132,7 +1144,7 @@ return function(opts: any)
 		for _ in ctx.Flags do
 			flagCount += 1
 		end
-		print(("[Krypton] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
+		print(("[Uranium] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
 		return tab
 	end
 

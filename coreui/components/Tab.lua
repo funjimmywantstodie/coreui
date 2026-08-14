@@ -38,7 +38,7 @@ return function(ctx: any, opts: any)
 		Create.corner(M.navRadius),
 	})
 
-	-- No glow behind the active button: the Krypton palette is flat fills only,
+	-- No glow behind the active button: the Uranium palette is flat fills only,
 	-- so the accent tile itself is the whole active state.
 
 	local icon = Icons.new(opts.Icon or "gear", M.navIcon, colors.text_dim)

@@ -1,16 +1,16 @@
 --!strict
--- util/Singleton.lua — the "only one Krypton at a time" guard.
+-- util/Singleton.lua — the "only one Uranium at a time" guard.
 --
 -- Every loadstring run is a brand new chunk with brand new module state, so the
 -- ONLY place a previous run can leave a note for the next one is the shared
 -- executor env (getgenv). We stash a small record there:
 --
---   getgenv()._KRYPTON_LOADED = { Name = "Krypton", Window = <handle>, Unload = fn }
+--   getgenv()._URANIUM_LOADED = { Name = "Uranium", Window = <handle>, Unload = fn }
 --
 -- Re-running the loader finds that record, unloads the old window, then builds a
 -- fresh one — so the loadstring refreshes the UI in place instead of stacking a
 -- second copy on top of the first. Consumers can also test the key themselves
--- (`if getgenv()._KRYPTON_LOADED then ... end`) since a table is truthy.
+-- (`if getgenv()._URANIUM_LOADED then ... end`) since a table is truthy.
 --
 -- Everything is feature-detected + pcall-guarded exactly like util/Config.lua:
 -- Studio has no getgenv, and some sandboxes throw merely on touching it.
@@ -19,7 +19,14 @@ local Players = game:GetService("Players")
 
 local Singleton = {}
 
-Singleton.Key = "_KRYPTON_LOADED"
+Singleton.Key = "_URANIUM_LOADED"
+
+-- Pre-rebrand slots. A build older than the Uranium rename is still a live
+-- window on screen, but it parked its record (and named its ScreenGui) under the
+-- old brand — so unloadExisting has to look there too, or re-running the loader
+-- stacks a Uranium window on top of a Krypton one instead of replacing it.
+Singleton.LegacyKeys = { "_KRYPTON_LOADED" }
+Singleton.LegacyNames = { "Krypton" }
 
 -- Shared env, with a fallback chain: getgenv() (executors) → _G (Studio and
 -- anywhere getgenv is missing — same cross-run persistence, different table).
@@ -107,7 +114,7 @@ local function sweep(guiName: string): number
 	return removed
 end
 
--- Tear down whatever Krypton is already on screen. Returns true if something was
+-- Tear down whatever Uranium is already on screen. Returns true if something was
 -- actually unloaded, so the caller can log a refresh instead of a fresh load.
 function Singleton.unloadExisting(guiName: string): boolean
 	local record = Singleton.get()
@@ -121,8 +128,30 @@ function Singleton.unloadExisting(guiName: string): boolean
 		setKey(nil)
 		unloaded = true
 	end
+	-- Same treatment for anything a pre-rebrand build left behind.
+	if type(env) == "table" then
+		for _, key in Singleton.LegacyKeys do
+			local ok, old = pcall(function()
+				return env[key]
+			end)
+			if ok and type(old) == "table" then
+				if type(old.Unload) == "function" then
+					pcall(old.Unload)
+				end
+				pcall(function()
+					env[key] = nil
+				end)
+				unloaded = true
+			end
+		end
+	end
 	if sweep(guiName) > 0 then
 		unloaded = true
+	end
+	for _, name in Singleton.LegacyNames do
+		if name ~= guiName and sweep(name) > 0 then
+			unloaded = true
+		end
 	end
 	return unloaded
 end

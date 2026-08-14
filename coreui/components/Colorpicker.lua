@@ -6,10 +6,10 @@ local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Field = require(script.Parent.Field)
 
--- Krypton accent ramp first, then the useful off-palette signals.
+-- Uranium accent ramp first, then the useful off-palette signals.
 local DEFAULT_PRESETS = {
-	"00c46a", "1fe087", "0a6b3e", "2dd4bf", "ffc24d", "ff5e5e",
-	"3b82f6", "8b5cf6", "ec4899", "e4eee8", "8a9a90", "142019",
+	"7cff3b", "9bff6b", "46801f", "2dd4bf", "ffd400", "ff5e5e",
+	"3b82f6", "8b5cf6", "ec4899", "e9f5e4", "909c96", "18220f",
 }
 
 local function toHex(color: Color3): string

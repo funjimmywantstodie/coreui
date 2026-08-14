@@ -10,7 +10,7 @@
 --
 --   Asset.resolve(91296376944710)                    -- number / numeric string
 --   Asset.resolve("rbxassetid://91296376944710")     -- already a content url
---   Asset.resolve("krypton/logo.png")                -- local file (getcustomasset)
+--   Asset.resolve("uranium/logo.png")                -- local file (getcustomasset)
 --   Asset.resolve("https://example.com/logo.png")    -- downloaded, cached, loaded
 --   Asset.headshot(userId)                           -- avatar thumbnail
 --
@@ -62,7 +62,7 @@ Asset.canDownload = Asset.supported and type(g_writefile) == "function"
 
 -- Where downloaded images are cached. Set once at startup if you want them
 -- somewhere other than the default (e.g. alongside your configs).
-Asset.CacheFolder = "krypton/images"
+Asset.CacheFolder = "uranium/images"
 
 -- Base URL for art hosted in the public asset repo. init.lua points this at
 -- `Theme.Brand.assets`; `Asset.url("logo.png")` then builds the full URL, so
@@ -91,7 +91,7 @@ local function ensureFolder()
 		return
 	end
 	pcall(function()
-		-- Walk the path so a nested default like "krypton/images" creates both
+		-- Walk the path so a nested default like "uranium/images" creates both
 		-- levels — makefolder doesn't do parents.
 		local built = ""
 		for segment in tostring(Asset.CacheFolder):gmatch("[^/\\]+") do

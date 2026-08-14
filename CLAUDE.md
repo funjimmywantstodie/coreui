@@ -1,12 +1,17 @@
-# Krypton — agent guide
+# Uranium — agent guide
 
-**Branding:** the library is **Krypton** (the author's script-hub UI kit). The
-repo, the `coreui/` source folder and `coreui.bundle.lua` deliberately keep their
-old names — the loadstring URL is pinned to those paths, so renaming them breaks
-every shipped loader. The rebrand is user-visible strings only: window title +
-ScreenGui name, the `[Krypton]` log prefix, and the default config folder
-(`krypton`). The library table is `Krypton` (`init.lua`); the callers' local name
-is theirs to choose.
+**Branding:** the library is **Uranium** (the author's script-hub UI kit; it was
+Krypton before). The repo, the `coreui/` source folder, `coreui.bundle.lua` and
+the separate public **`Krypton`** art repo deliberately keep their old names —
+the loadstring URL and the raw asset URLs are pinned to those paths, so renaming
+them breaks every shipped loader. The rebrand is user-visible strings + palette
+only: window title + ScreenGui name, the `[Uranium]` log prefix, the default
+config folder (`uranium`), `Asset.CacheFolder` (`uranium/images`), the settings
+flags (`uranium_*`) and `Singleton.Key` (`_URANIUM_LOADED`). The library table is
+`Uranium` (`init.lua`); the callers' local name is theirs to choose.
+`util/Singleton.lua` also carries `LegacyKeys`/`LegacyNames` so re-running the
+loader over a still-live pre-rebrand Krypton window unloads it instead of
+stacking on top of it.
 
 Dark-theme Roblox UI component library in Luau. `coreui/` is a ModuleScript tree
 (`init.lua` = entry) that ports `coreui referance/reference/*` (HTML/CSS/JS mock)
@@ -75,12 +80,12 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Krypton:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,AllowMultiple?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,AllowMultiple?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)` · `:SetLogo(source)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Destroy(immediate?)`
-- Library-level: `Krypton:IsLoaded()` · `Krypton:Unload()` (see single instance below)
+- Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
@@ -105,7 +110,7 @@ slot → fade → `screenGui:Destroy()`). Listeners come off *before* the fade s
 toggle-key press during it can't "restore" a window that's on its way out.
 Minimize (and the toggle key) is the hide-temporarily path.
 
-`util/Singleton.lua` keeps `getgenv()._KRYPTON_LOADED` (falls back to `_G` where
+`util/Singleton.lua` keeps `getgenv()._URANIUM_LOADED` (falls back to `_G` where
 `getgenv` is absent) = `{ Name, Window, ScreenGui, Unload }`. A separate
 loadstring run is a fresh chunk with fresh module state, so that shared-env
 record is the only cross-run handle. `Window()` calls `Singleton.unloadExisting`
@@ -180,7 +185,8 @@ body can't be cached as a `.png`.
 
 **Two repos, don't conflate them.** This one (`coreui`) is the library source +
 bundle, public only so the loadstring resolves. Art is hosted in the separate
-public **`Krypton`** repo (`Assets/`), whose raw base is `Theme.Brand.assets`;
+public **`Krypton`** repo (`Assets/`, still under the old name), whose raw base
+is `Theme.Brand.assets`;
 `init.lua` copies it into `Asset.Base`, so `Asset.url("name.png")` builds the
 full URL and shipping new art is just committing the file there.
 
@@ -319,10 +325,12 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
 
 - `--!strict` at top of every Luau module (generated/data files use `--!nocheck`).
 - Colors via `Color3.fromHex(...)`; pull from `Theme.Colors`, never hardcode.
-- **Palette: Krypton / Deep Emerald.** `#00C46A` accent on a greyscale-green ramp
-  (bg `#0A100C`, surfaces `#142019`, hover `#1B2A21`, lines `#1A2B20`, text
-  `#E4EEE8` / `#8A9A90` / `#5A6862`). Anything drawn **on** an accent fill uses
-  `knockout` (`#04150C`), never white — accent button labels, the active nav
+- **Palette: Uranium / Uranium Glass.** `#7CFF3B` accent on a greyscale-green ramp
+  (bg `#0B0F0A`, surfaces `#18220F`, hover `#212D16`, lines `#2C3A24`, text
+  `#E9F5E4` / `#909C96` / `#5A6B52`). The accent is very bright — used widely it
+  stops reading as an accent, so the one-per-row rule matters more than it did on
+  the old emerald. Anything drawn **on** an accent fill uses
+  `knockout` (`#0A1604`), never white — accent button labels, the active nav
   icon, the toggle-on knob. Flat fills only: no gradients, no glows, no accent
   wash behind large areas, at most one accent element per row; hover shifts a
   fill one step lighter and nothing else. Two deliberate exceptions: slider /

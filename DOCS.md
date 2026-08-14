@@ -1,4 +1,4 @@
-# Krypton — documentation
+# Uranium — documentation
 
 A dark-theme UI component library for Roblox, written in Luau. One window, a
 sidebar of tabs, two-column cards, and a full set of controls (buttons, toggles,
@@ -16,24 +16,24 @@ build flow, see [CLAUDE.md](CLAUDE.md).
 
 ```lua
 local URL = "https://raw.githubusercontent.com/funjimmywantstodie/coreui/refs/heads/main/coreui.bundle.lua"
-local Krypton = loadstring(game:HttpGet(URL))()
+local Uranium = loadstring(game:HttpGet(URL))()
 ```
 
 If you want to guard the network/load step, wrap it in `pcall` — but mind the
 return order: **`pcall` returns `(ok, result)`, so the library is the *second*
 value, not the first.** Getting this backwards is the most common load bug (you
-end up with `Krypton = true` and every `Krypton:Method(...)` call throws "attempt
+end up with `Uranium = true` and every `Uranium:Method(...)` call throws "attempt
 to index boolean"):
 
 ```lua
-local ok, Krypton = pcall(function()
+local ok, Uranium = pcall(function()
     return loadstring(game:HttpGet(URL))()
 end)
 if not ok then
-    warn("[Krypton] failed to load:", Krypton) -- on failure, `Krypton` holds the error
+    warn("[Uranium] failed to load:", Uranium) -- on failure, `Uranium` holds the error
     return
 end
--- Krypton is the library table here
+-- Uranium is the library table here
 ```
 
 > Tip: `raw.githubusercontent.com` CDN-caches each path for ~5 min and ignores
@@ -46,10 +46,10 @@ end
 Drop the `coreui/` tree into your place and `require` its `init`:
 
 ```lua
-local Krypton = require(path.to.coreui)
+local Uranium = require(path.to.coreui)
 ```
 
-The bundle prints `[Krypton] build <timestamp> <sha>` on load so you can confirm
+The bundle prints `[Uranium] build <timestamp> <sha>` on load so you can confirm
 the build that's actually running.
 
 ---
@@ -57,8 +57,8 @@ the build that's actually running.
 ## Quick start
 
 ```lua
-local Window = Krypton:CreateWindow({
-    Title    = "Krypton",
+local Window = Uranium:CreateWindow({
+    Title    = "Uranium",
     Subtitle = "script hub",
     Version  = "v1.0.0",
 })
@@ -86,7 +86,7 @@ A complete, annotated example lives in
 ## Structure
 
 ```
-Window                         Krypton:CreateWindow{...}
+Window                         Uranium:CreateWindow{...}
 ├── Tab                        Window:CreateTab{...}
 │   └── Group  (card)          Tab:CreateGroup{...}     -- left/right column
 │       ├── Section            Group:Section{...}        -- nested, collapsible
@@ -103,14 +103,14 @@ control methods.
 ## Window
 
 ```lua
-local Window = Krypton:CreateWindow({
-    Title        = "Krypton",                -- titlebar title           (default "Krypton")
+local Window = Uranium:CreateWindow({
+    Title        = "Uranium",                -- titlebar title           (default "Uranium")
     Subtitle     = "script hub",             -- status-bar left text     (default "")
     Version      = "v1.0.0",                 -- status-bar right text    (default "")
-    ConfigFolder = "krypton",                -- on-disk config folder    (default "krypton")
+    ConfigFolder = "uranium",                -- on-disk config folder    (default "uranium")
     ToggleKey    = Enum.KeyCode.RightShift,  -- show/hide key            (default RightShift)
-    Accent       = Color3.fromHex("00c46a"), -- initial accent color     (default theme accent)
-    Logo         = 74808640463075,           -- titlebar mark            (default Krypton logo)
+    Accent       = Color3.fromHex("7cff3b"), -- initial accent color     (default theme accent)
+    Logo         = 74808640463075,           -- titlebar mark            (default Uranium logo)
     LogoRadius   = 8,                        -- corner radius on the mark(default 8)
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
 })
@@ -129,19 +129,19 @@ disconnected and the ScreenGui is destroyed, exactly like the Settings tab's
 `CreateWindow` publishes a record on the shared executor env:
 
 ```lua
-getgenv()._KRYPTON_LOADED = { Name = "Krypton", Window = ..., ScreenGui = ..., Unload = fn }
+getgenv()._URANIUM_LOADED = { Name = "Uranium", Window = ..., ScreenGui = ..., Unload = fn }
 ```
 
 Re-running the loadstring finds that record, unloads the old window (instantly,
 no fade) and then builds the new one — so the loader **refreshes in place**
 instead of stacking a second UI. The key is cleared on `Window:Destroy()`, and a
 stale record can't wedge you: the guard also sweeps any leftover ScreenGui named
-`Krypton`. Pass `AllowMultiple = true` to opt a window out of both halves (it
+`Uranium`. Pass `AllowMultiple = true` to opt a window out of both halves (it
 neither unloads the existing window nor claims the slot).
 
 ```lua
-if Krypton:IsLoaded() then ... end   -- same as testing getgenv()._KRYPTON_LOADED
-Krypton:Unload()                     -- tear down the live window; true if there was one
+if Uranium:IsLoaded() then ... end   -- same as testing getgenv()._URANIUM_LOADED
+Uranium:Unload()                     -- tear down the live window; true if there was one
 ```
 
 ### Window methods
@@ -436,7 +436,7 @@ The menu stays open while you toggle items; each selected option gets a check.
 ```lua
 local h = Group:Colorpicker({
     Name = "Accent", Desc = "Re-themes the UI.",
-    Default = Color3.fromHex("00c46a"),
+    Default = Color3.fromHex("7cff3b"),
     Presets = { "1fe087", "3b82f6", ... },  -- optional hex grid (12 defaults)
     Flag = "accent",
     Callback = function(c) Window:SetAccent(c) end,  -- live re-theme
@@ -577,8 +577,8 @@ are kept. If you pass a raw Lucide name that isn't bundled, add it to
 ## Images & assets
 
 Roblox's `Image` property only accepts content URLs, which is why every image
-field in Krypton (the `Image` control, `Player.Avatar`, a MediaPlayer track's
-`Cover`, the window `Logo`) runs its value through `Krypton.Asset.resolve`
+field in Uranium (the `Image` control, `Player.Avatar`, a MediaPlayer track's
+`Cover`, the window `Logo`) runs its value through `Uranium.Asset.resolve`
 first. That means all of these work, interchangeably:
 
 | You pass | What happens |
@@ -596,16 +596,17 @@ actually loads:
 
 ```lua
 Group:Image({ Image = {
-    Krypton.Asset.url("krypton-512-square.png"), -- preferred: hosted PNG
-    "rbxassetid://74808640463075",               -- fallback: uploaded asset
+    Uranium.Asset.url("uranium-orbitals-512-square.png"), -- preferred: hosted PNG
+    "rbxassetid://74808640463075",                      -- fallback: uploaded asset id
 } })
 ```
 
 `Asset.url(name)` resolves a bare filename against `Asset.Base` — the public
-[Krypton asset repo](https://github.com/funjimmywantstodie/Krypton), which is
-separate from the UI library's own repo. Commit a file to its `Assets/` folder
+[art repo](https://github.com/funjimmywantstodie/Krypton) (still named `Krypton`
+— the raw asset URLs are pinned to that path), which is separate from the UI
+library's own repo. Commit a file to its `Assets/` folder
 and it's referenceable by name; pass an absolute URL and it's returned as-is.
-Point `Krypton.Asset.Base` somewhere else to host art yourself.
+Point `Uranium.Asset.Base` somewhere else to host art yourself.
 
 Put the **URL first**. It's downloaded once, cached on disk, and handed to the
 engine through `getcustomasset` — so it never touches Roblox's asset pipeline:
@@ -617,7 +618,7 @@ Downloads are validated by magic bytes before they're cached, so a 404 page
 can't poison the cache as a `.png`.
 
 ```lua
-local Asset = Krypton.Asset
+local Asset = Uranium.Asset
 
 Asset.resolve(74808640463075)                  -- → "rbxassetid://74808640463075"
 Asset.fromFile("myhub/logo.png")               -- → content id, or nil
@@ -625,7 +626,7 @@ Asset.fromUrl("https://example.com/art.png")   -- downloads + caches, → conten
 Asset.headshot(userId, 150)                    -- → rbxthumb avatar url
 Asset.preload({ id1, url2, "art/x.png" })      -- warm them off-thread
 
-Asset.CacheFolder = "myhub/images"  -- where downloads land (default "krypton/images")
+Asset.CacheFolder = "myhub/images"  -- where downloads land (default "uranium/images")
 Asset.supported                     -- can we load local files? (getcustomasset)
 Asset.canDownload                   -- can we fetch + cache remote images?
 ```
@@ -641,11 +642,12 @@ paste the id straight into `Image = <id>`. No `rbxassetid://` prefix needed.
 
 ## Theming
 
-Krypton ships the **Deep Emerald** palette: `#00C46A` accent on a
-greyscale-green ramp (`#0A100C` background, `#142019` surfaces, `#1A2B20`
-lines), with `#04150C` knocked out of anything sitting on an accent fill. Flat
+Uranium ships the **Uranium Glass** palette: `#7CFF3B` accent on a
+greyscale-green ramp (`#0B0F0A` background, `#18220F` surfaces, `#2C3A24`
+lines), with `#0A1604` knocked out of anything sitting on an accent fill. Flat
 fills only — no gradients, glows, or accent washes behind large areas, and at
-most one accent element per row.
+most one accent element per row. The accent is bright enough that using it
+widely stops it reading as an accent at all, hence the one-per-row rule.
 
 The accent color drives toggles, sliders, active tabs, buttons, and more. Change
 it any time:
@@ -656,7 +658,7 @@ Window:SetAccent(Color3.fromHex("3b82f6"))
 
 Every accent-aware element updates live. The Colorpicker in the built-in
 Settings tab is wired to this out of the box. The full token table is
-`Krypton.Theme.Colors`, and the brand mark lives in `Krypton.Theme.Brand`.
+`Uranium.Theme.Colors`, and the brand mark lives in `Uranium.Theme.Brand`.
 
 ---
 
@@ -667,4 +669,4 @@ Window:Destroy()   -- fades out, disconnects input listeners, destroys the GUI
 ```
 
 The close (×) button only *hides* the window; `Destroy()` fully unloads it. The
-built-in Settings tab's "Unload Krypton" button calls `Destroy()`.
+built-in Settings tab's "Unload Uranium" button calls `Destroy()`.

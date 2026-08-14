@@ -2,19 +2,26 @@
 -- Theme.lua — design tokens (colors, metrics, fonts).
 -- Offset pixels map directly to Roblox offsets.
 --
--- Palette: **Krypton (Deep Emerald)**. Greyscale-green everywhere, one accent
+-- Palette: **Uranium (Uranium Glass)**. Greyscale-green everywhere, one accent
 -- element per row at most, flat fills only — no gradients, glows or accent
 -- washes behind large areas. Anything sitting *on* an accent fill (button text,
 -- the active nav icon, the toggle-on knob) uses `knockout`, not white.
+--
+-- The accent is a very bright yellow-green; used widely it stops being readable,
+-- so it's rationed to one element per row (toggle-on track, slider fill left of
+-- the knob, active nav, focus stroke, primary button, links).
 
 local Theme = {}
 
 -- ── Brand ─────────────────────────────────────────────────────────────────
 -- `assets` is the **Krypton public repo** — the author's asset host, a separate
 -- thing from this UI library (which lives in the `coreui` repo and is only
--- public so the loadstring works). Art the UI ships with goes there, not here;
+-- public so the loadstring works). Both keep their old names on purpose: the
+-- loadstring URL and the raw asset URLs are pinned to those paths, and renaming
+-- either breaks every shipped loader. The rebrand to Uranium is user-visible
+-- strings + palette only. Art the UI ships with goes in that repo, not here;
 -- drop a file in its `Assets/` folder and reference it as
--- `Theme.Brand.assets .. "name.png"` (or `Krypton.Asset.url("name.png")`).
+-- `Theme.Brand.assets .. "name.png"` (or `Uranium.Asset.url("name.png")`).
 --
 -- The logo is a fallback chain — util/Asset.lua walks it in order, so
 -- `Window{ Logo = ... }` can be a single source or a chain of its own.
@@ -22,47 +29,48 @@ local Theme = {}
 -- The PNG comes FIRST on purpose — that's the Infinite Yield approach. It's
 -- downloaded once, cached on disk, and handed to the engine via getcustomasset,
 -- so it sidesteps every Roblox asset rule: no moderation wait, no Asset Privacy
--- restriction, no decal-vs-image id confusion. The uploaded asset id is the
--- fallback for executors with no file access, where those rules do apply.
+-- restriction, no decal-vs-image id confusion. An uploaded asset id would be the
+-- fallback for executors with no file access — there isn't one for the Uranium
+-- mark yet, so those fall through to the accent square + "U" initial instead of
+-- showing the old Krypton art. Add the id here once it's uploaded.
 local ASSETS = "https://raw.githubusercontent.com/funjimmywantstodie/Krypton/main/Assets/"
 
 Theme.Brand = {
-	name   = "Krypton",
+	name   = "Uranium",
 	assets = ASSETS,
 	logo = {
-		ASSETS .. "krypton-512-square.png",
-		"rbxassetid://74808640463075", -- 512×512 square mark
+		ASSETS .. "uranium-orbitals-512-square.png", -- 512×512 square mark
 	},
-	radius = 8, -- rounded off with a UICorner
+	radius = 6, -- rounded off with a UICorner (proportional to the 20px titlebar mark)
 }
 
 -- ── Colors ────────────────────────────────────────────────────────────────
 Theme.Colors = {
-	bg          = Color3.fromHex("0A100C"), -- window body   (background)
-	chrome      = Color3.fromHex("0A100C"), -- titlebar / sidebar / status bar
-	card        = Color3.fromHex("142019"), -- group card fill        (surface)
-	pop         = Color3.fromHex("142019"), -- dropdown / colorpicker / toast
-	control     = Color3.fromHex("142019"), -- input / dropdown / button fill
-	control_hi  = Color3.fromHex("1B2A21"), -- hovered control  (surface hover)
+	bg          = Color3.fromHex("0B0F0A"), -- window body   (background)
+	chrome      = Color3.fromHex("0B0F0A"), -- titlebar / sidebar / status bar
+	card        = Color3.fromHex("18220F"), -- group card fill        (surface)
+	pop         = Color3.fromHex("18220F"), -- dropdown / colorpicker / toast
+	control     = Color3.fromHex("18220F"), -- input / dropdown / button fill
+	control_hi  = Color3.fromHex("212D16"), -- hovered control  (surface hover)
 	-- Toggle / slider track. The spec calls it "surface", but cards are surface
 	-- too — one step lighter is what keeps the track readable on the card.
-	toggle_off  = Color3.fromHex("1B2A21"),
-	knob        = Color3.fromHex("5A6862"), -- toggle knob (off) — text faint
-	border      = Color3.fromHex("1A2B20"), -- every 1px line
-	border_soft = Color3.fromHex("1A2B20"), -- between-field dividers
-	text        = Color3.fromHex("E4EEE8"), -- primary text / headings
-	text_muted  = Color3.fromHex("8A9A90"), -- descriptions, placeholders, readouts
-	text_dim    = Color3.fromHex("5A6862"), -- small caps headers, hints, idle icons
-	accent      = Color3.fromHex("00C46A"), -- toggle-on, slider fill, active nav, focus
-	accent_2    = Color3.fromHex("1FE087"), -- accent hover
-	accent_dim  = Color3.fromHex("0A6B3E"), -- pressed / disabled accent
-	knockout    = Color3.fromHex("04150C"), -- text + icons ON an accent fill
-	scroll      = Color3.fromHex("22362A"), -- scrollbar thumb
+	toggle_off  = Color3.fromHex("212D16"),
+	knob        = Color3.fromHex("5A6B52"), -- toggle knob (off) — text faint
+	border      = Color3.fromHex("2C3A24"), -- every 1px line
+	border_soft = Color3.fromHex("2C3A24"), -- between-field dividers
+	text        = Color3.fromHex("E9F5E4"), -- primary text / headings
+	text_muted  = Color3.fromHex("909C96"), -- descriptions, placeholders, readouts
+	text_dim    = Color3.fromHex("5A6B52"), -- small caps headers, hints, idle icons
+	accent      = Color3.fromHex("7CFF3B"), -- toggle-on, slider fill, active nav, focus
+	accent_2    = Color3.fromHex("9BFF6B"), -- accent hover
+	accent_dim  = Color3.fromHex("46801F"), -- pressed / disabled accent
+	knockout    = Color3.fromHex("0A1604"), -- text + icons ON an accent fill
+	scroll      = Color3.fromHex("2C3A24"), -- scrollbar thumb
 	white       = Color3.fromHex("FFFFFF"),
 	danger      = Color3.fromHex("FF5E5E"), -- destructive buttons + notify "error"
-	success     = Color3.fromHex("00C46A"), -- notify "success"
-	warning     = Color3.fromHex("FFC24D"), -- risky toggles + notify "warning"
-	info        = Color3.fromHex("8A9A90"), -- notify "info" (neutral, off-accent)
+	success     = Color3.fromHex("7CFF3B"), -- notify "success"
+	warning     = Color3.fromHex("FFD400"), -- risky toggles + notify "warning"
+	info        = Color3.fromHex("909C96"), -- notify "info" (neutral, off-accent)
 }
 
 -- ── Metrics (offset px) ───────────────────────────────────────────────────
