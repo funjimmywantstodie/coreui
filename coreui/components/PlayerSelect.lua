@@ -142,10 +142,11 @@ local function build(ctx: any, opts: any, multi: boolean)
 	(chevron :: any).Parent = box
 
 	-- menu ─────────────────────────────────────────────────────────────────── (parented to overlay on open)
-	-- The CanvasGroup auto-sizes to the scroller, whose height is fitted to the row
-	-- list up to MENU_MAX_H (see fitMenu) — past that the canvas overflows and the
-	-- list scrolls instead of being silently cut off.
-	local menu = Create("CanvasGroup", {
+	-- The menu auto-sizes to the scroller, whose height is fitted to the row list
+	-- up to MENU_MAX_H (see fitMenu) — past that the content overflows and the
+	-- list scrolls instead of being silently cut off. A Frame, not a CanvasGroup:
+	-- a group buffer would blur every name in the list (see util/Fade.lua).
+	local menu = Create("Frame", {
 		Name = "PlayerMenu",
 		Visible = false,
 		AutomaticSize = Enum.AutomaticSize.Y,

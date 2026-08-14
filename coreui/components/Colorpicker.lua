@@ -38,7 +38,9 @@ return function(ctx: any, opts: any)
 		Create.stroke(colors.border),
 	})
 
-	local menu = Create("CanvasGroup", {
+	-- Frame, not CanvasGroup — the hex readout inside it would come out blurry
+	-- (see util/Fade.lua); Context:OpenPopover fades it in without a buffer.
+	local menu = Create("Frame", {
 		Name = "ColorMenu",
 		Visible = false,
 		Size = UDim2.fromOffset(168, 0),

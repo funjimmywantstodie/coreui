@@ -84,7 +84,11 @@ local function build(ctx: any, opts: any, multi: boolean)
 	-- The option list lives in a ScrollingFrame capped at MENU_MAX_H: it used to be
 	-- a plain auto-sized frame under a UISizeConstraint, which silently clipped
 	-- every option past the sixth with no way to reach them.
-	local menu = Create("CanvasGroup", {
+	-- A Frame, not a CanvasGroup: a CanvasGroup would rasterize every option
+	-- label into a buffer and blur it. Context:OpenPopover fades it in with
+	-- util/Fade.lua instead, and ClipsDescendants does the clipping the group's
+	-- canvas used to do for free.
+	local menu = Create("Frame", {
 		Name = "DropdownMenu",
 		Visible = false,
 		AutomaticSize = Enum.AutomaticSize.Y,
@@ -222,7 +226,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			(tick :: any).Parent = tickHolder
 
 			-- Offset-sized + truncated: an option longer than the menu used to grow
-			-- past its edge and get clipped by the CanvasGroup instead of eliding.
+			-- past its edge and get clipped by the menu instead of eliding.
 			local label = Create("TextLabel", {
 				Name = "Label",
 				BackgroundTransparency = 1,

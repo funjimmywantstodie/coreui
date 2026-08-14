@@ -9,13 +9,17 @@
 -- not after it, so the window pops in behind the dim and the two cross-fade
 -- instead of the screen blinking empty between them.
 --
--- Nothing here is on a UIListLayout on purpose: a layout owns its children's
--- Position, which would suppress the slide-up each element enters with. The
--- stack is a fixed-size frame with the four pieces placed by hand.
+-- Two structural rules, both about keeping the type sharp:
+--   * No CanvasGroup anywhere — it would rasterize the wordmark into a buffer
+--     and blur it (see util/Fade.lua). Every fade here runs through Fade.
+--   * Nothing is on a UIListLayout — a layout owns its children's Position,
+--     which would suppress the slide-up each element enters with. The stack is a
+--     fixed-size frame with the four pieces placed by hand.
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
+local Fade = require(script.Parent.Parent.util.Fade)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
 
@@ -32,10 +36,11 @@ local STACK_W = 280
 local BAR_W = 168
 
 -- Layout, top-down inside the stack (offsets, like every other metric here).
+-- Both stack dimensions are kept EVEN on purpose — see centerStack below.
 local Y_LOGO = 0
 local Y_TITLE = Y_LOGO + LOGO + 20
 local Y_SUB = Y_TITLE + 26
-local Y_BAR = Y_SUB + 16 + 22
+local Y_BAR = Y_SUB + 16 + 23
 local STACK_H = Y_BAR + 3
 
 -- Same trick as the titlebar: Roblox has no letter-spacing, so a wordmark is
@@ -68,9 +73,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 	local fillTime = math.max(MIN_FILL, duration - BAR_DELAY - OUT_TIME)
 
-	-- A CanvasGroup so the exit is ONE tween: backdrop, mark and text all fade
-	-- together as a single unit (fading each child separately drifts apart).
-	local root = Create("CanvasGroup", {
+	local root = Create("Frame", {
 		Name = "Splash",
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = colors.chrome,
@@ -79,6 +82,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 		ZIndex = 1000, -- above the window frame and its overlay
 		Parent = parent,
 	})
+	-- The exit is one Fade over the whole tree, so backdrop, mark and text leave
+	-- together the way a CanvasGroup would have done it — minus the blur.
+	local rootFade = Fade.new(root)
 
 	local stack = Create("Frame", {
 		Name = "Stack",
@@ -92,18 +98,34 @@ return function(ctx: any, parent: Instance, opts: any): any
 	})
 	local stackScale = stack:FindFirstChildOfClass("UIScale") :: UIScale
 
+	-- Whole-pixel placement. A scale-centered stack lands on a half pixel on any
+	-- odd viewport dimension, and a wordmark rasterized half a pixel off the
+	-- display grid is exactly the kind of soft that looks like a bad font. Both
+	-- stack dimensions are even, so a rounded centre gives a whole-pixel
+	-- top-left. (Window.lua snaps itself the same way.)
+	local function centerStack()
+		local vp = root.AbsoluteSize
+		if vp.X <= 0 then
+			return
+		end
+		stack.Position = UDim2.fromOffset(math.round(vp.X / 2), math.round(vp.Y / 2))
+	end
+	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(centerStack)
+	task.defer(centerStack)
+
 	-- Each element parks 8px low + invisible and is released a beat after the one
-	-- above it. Built here, *played* by :Play so nothing moves until asked.
+	-- above it: the slide is one Position tween, `fadeIn` brings the element up
+	-- however it needs to. Built here, *played* by :Play so nothing moves until
+	-- asked.
 	local reveals: { () -> () } = {}
-	local function reveal(inst: GuiObject, y: number, order: number, goals: { [string]: any })
+	local function reveal(inst: GuiObject, y: number, order: number, fadeIn: () -> ())
 		inst.AnchorPoint = Vector2.new(0.5, 0)
 		inst.Position = UDim2.new(0.5, 0, 0, y + 8)
-		local target = table.clone(goals)
-		target.Position = UDim2.new(0.5, 0, 0, y)
 		table.insert(reveals, function()
 			task.delay(order * IN_STAGGER, function()
 				if inst.Parent then
-					Tween.play(inst, Tween.Slide, target)
+					Tween.play(inst, Tween.Slide, { Position = UDim2.new(0.5, 0, 0, y) })
+					fadeIn()
 				end
 			end)
 		end)
@@ -113,18 +135,29 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- Same contract as the titlebar logo: the accent square + initial is the
 	-- backdrop, the art is drawn over it and NEVER hidden by the load check
 	-- (see util/Asset.lua) — worst case you get the square, never a hole.
-	local holder = Create("CanvasGroup", {
+	local holder = Create("Frame", {
 		Name = "Logo",
 		Size = UDim2.fromOffset(LOGO, LOGO),
-		BackgroundColor3 = ctx.Accent,
-		GroupTransparency = 1,
-		ClipsDescendants = true,
+		BackgroundTransparency = 1,
+		ClipsDescendants = true, -- crops the margin the zoom pushes past the edge
 		Parent = stack,
 	}, {
 		Create.corner(opts.LogoRadius or (Theme.Brand.radius * 2)),
 		Create("UIScale", { Scale = 0.86 }),
 	})
 	local holderScale = holder:FindFirstChildOfClass("UIScale") :: UIScale
+	-- The fallback pair is its own layer rather than the holder's own background,
+	-- so the load check can hide it with `Visible` alone. Writing a transparency
+	-- there would collide with the fade driving the same property.
+	local square = Create("Frame", {
+		Name = "Square",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = ctx.Accent,
+		BorderSizePixel = 0,
+		Parent = holder,
+	}, {
+		Create.corner(opts.LogoRadius or (Theme.Brand.radius * 2)),
+	})
 	local initial = Create("TextLabel", {
 		Name = "Initial",
 		BackgroundTransparency = 1,
@@ -152,12 +185,14 @@ return function(ctx: any, parent: Instance, opts: any): any
 		}) :: ImageLabel
 		Asset.load(mark, opts.Logo, function(loaded)
 			-- Only the fallback reacts — the art is left alone either way.
+			square.Visible = not loaded
 			initial.Visible = not loaded
-			holder.BackgroundTransparency = loaded and 1 or 0
 		end)
 	end
-	reveal(holder, Y_LOGO, 0, { GroupTransparency = 0 })
-	table.insert(reveals, function()
+	local holderFade = Fade.new(holder)
+	holderFade:Set(1)
+	reveal(holder, Y_LOGO, 0, function()
+		holderFade:To(Tween.Slide, 0)
 		-- The mark gets the extra pop the text doesn't: it's the thing you're
 		-- meant to look at.
 		Tween.play(holderScale, Tween.Pop, { Scale = 1 })
@@ -175,7 +210,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 		FontFace = Theme.Font.Bold,
 		Parent = stack,
 	})
-	reveal(titleLabel, Y_TITLE, 1, { TextTransparency = 0 })
+	reveal(titleLabel, Y_TITLE, 1, function()
+		Tween.play(titleLabel, Tween.Slide, { TextTransparency = 0 })
+	end)
 
 	local subtitle = Create("TextLabel", {
 		Name = "Subtitle",
@@ -188,14 +225,15 @@ return function(ctx: any, parent: Instance, opts: any): any
 		FontFace = Theme.Font.Regular,
 		Parent = stack,
 	})
-	reveal(subtitle, Y_SUB, 2, { TextTransparency = 0 })
+	reveal(subtitle, Y_SUB, 2, function()
+		Tween.play(subtitle, Tween.Slide, { TextTransparency = 0 })
+	end)
 
 	-- ── progress bar ─────────────────────────────────────────────────────────
 	local track = Create("Frame", {
 		Name = "Track",
 		Size = UDim2.fromOffset(BAR_W, 3),
 		BackgroundColor3 = colors.toggle_off,
-		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Parent = stack,
 	}, {
@@ -210,7 +248,11 @@ return function(ctx: any, parent: Instance, opts: any): any
 	}, {
 		Create.corner(2),
 	})
-	reveal(track, Y_BAR, 3, { BackgroundTransparency = 0 })
+	local trackFade = Fade.new(track) -- track + fill, so the bar enters as one
+	trackFade:Set(1)
+	reveal(track, Y_BAR, 3, function()
+		trackFade:To(Tween.Slide, 0)
+	end)
 
 	-- ── play ─────────────────────────────────────────────────────────────────
 	local splash = {}
@@ -261,7 +303,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				onDone()
 			end
 			Tween.play(stackScale, Tween.MenuOut, { Scale = 1.05 })
-			Tween.play(root, Tween.MenuOut, { GroupTransparency = 1 }).Completed:Wait()
+			rootFade:To(Tween.MenuOut, 1).Completed:Wait()
 			root:Destroy()
 		end)
 	end

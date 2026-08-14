@@ -13,6 +13,7 @@ local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
 local Context = require(script.Parent.Parent.util.Context)
 local Bind = require(script.Parent.Parent.util.Bind)
+local Fade = require(script.Parent.Parent.util.Fade)
 local Config = require(script.Parent.Parent.util.Config)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
@@ -66,10 +67,15 @@ return function(opts: any)
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	})
 
-	-- CanvasGroup (not Frame) so minimize/close can fade the *entire* window as a
-	-- single unit via GroupTransparency — a plain Frame can only fade its own
-	-- background, which is why scaling-then-hiding looked like a snap.
-	local main = Create("CanvasGroup", {
+	-- A plain Frame, deliberately. This was a CanvasGroup, because one
+	-- GroupTransparency tween fades the whole window for mount / minimize /
+	-- close. The cost was invisible in Studio and glaring in game: a CanvasGroup
+	-- rasterizes everything inside it into an offscreen buffer, so every label in
+	-- the UI was a resampled bitmap instead of SDF text — soft at any size, and
+	-- worse the bigger the window got (fullscreen was the worst case). The fade
+	-- now runs through util/Fade.lua, which drives the real transparency
+	-- properties of the subtree instead. Never put text under a CanvasGroup.
+	local main = Create("Frame", {
 		Name = "Window",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
@@ -83,6 +89,9 @@ return function(opts: any)
 		Create("UIScale", {}),
 	})
 	local mainScale = main:FindFirstChildOfClass("UIScale") :: UIScale
+	-- Fades the whole window subtree (see the note above): mount, minimize,
+	-- restore and close all go through this.
+	local mainFade = Fade.new(main)
 
 	-- ── drop shadow ─────────────────────────────────────────────────────────
 	-- The reference window floats: `box-shadow: 0 30px 80px -20px rgba(0,0,0,.8)`.
@@ -184,9 +193,22 @@ return function(opts: any)
 		Size = UDim2.fromOffset(M.logo, M.logo),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, M.sidebar / 2, 0.5, 0),
-		BackgroundColor3 = colors.accent,
+		BackgroundTransparency = 1,
 		ClipsDescendants = true,
 		Parent = titlebar,
+	}, {
+		Create.corner(opts.LogoRadius or Theme.Brand.radius),
+	})
+	-- The accent square is its own layer under the art rather than the holder's
+	-- background, so the async load result can hide it with `Visible` alone.
+	-- Writing a transparency from a load callback would fight util/Fade.lua if
+	-- the asset happened to arrive mid mount/minimize fade.
+	local logoSquare = Create("Frame", {
+		Name = "Square",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = colors.accent,
+		BorderSizePixel = 0,
+		Parent = logo,
 	}, {
 		Create.corner(opts.LogoRadius or Theme.Brand.radius),
 	})
@@ -230,11 +252,11 @@ return function(opts: any)
 		-- whatever the load check believes.
 		logoImage.Visible = true
 		logoFallback.Visible = true
-		logo.BackgroundTransparency = 0
+		logoSquare.Visible = true
 		Asset.load(logoImage, source, function(loaded)
 			-- Only the fallback reacts; the image is left alone.
 			logoFallback.Visible = not loaded
-			logo.BackgroundTransparency = loaded and 1 or 0
+			logoSquare.Visible = not loaded
 			if not loaded and source ~= nil then
 				Log.warn("CreateWindow", ("Logo %s hasn't loaded — the fallback mark is showing. "
 					.. "Check the id is an image/decal, that it passed moderation, and that "
@@ -298,11 +320,12 @@ return function(opts: any)
 		}),
 	})
 
-	-- search field — hidden until the search button is clicked. A CanvasGroup so
-	-- its width can slide open while every child fades in together; ClipsDescendants
-	-- keeps the icon/box from spilling out while it's narrower than its content.
+	-- search field — hidden until the search button is clicked. Its width slides
+	-- open while the contents fade in together (util/Fade.lua, not a CanvasGroup:
+	-- that would blur the text you're typing); ClipsDescendants keeps the
+	-- icon/box from spilling out while it's narrower than its content.
 	local SEARCH_W = 180
-	local searchField = Create("CanvasGroup", {
+	local searchField = Create("Frame", {
 		Name = "Search",
 		Visible = false,
 		Size = UDim2.fromOffset(SEARCH_W, 30),
@@ -338,6 +361,7 @@ return function(opts: any)
 		LayoutOrder = 2,
 		Parent = searchField,
 	})
+	local searchFade = Fade.new(searchField)
 
 	local winButtons = Create("Frame", {
 		Name = "WinButtons",
@@ -554,7 +578,7 @@ return function(opts: any)
 	-- the logo's accent square is only visible behind the fallback initial, but
 	-- it still needs to track SetAccent for that case
 	ctx:RegisterAccent(function(accent)
-		logo.BackgroundColor3 = accent
+		logoSquare.BackgroundColor3 = accent
 	end)
 
 	-- ── titlebar dragging ────────────────────────────────────────────────────
@@ -587,14 +611,44 @@ return function(opts: any)
 		)
 	end
 
+	-- Whole-pixel snapping — the other half of the "why is the text soft" answer
+	-- (util/Fade.lua has the first half). The window is centered with a *scale*
+	-- position and AnchorPoint (0.5, 0.5), so its top-left lands on a half pixel
+	-- whenever the viewport or the window has an odd dimension — and then every
+	-- glyph in the UI is rasterized half a pixel off the display grid, which
+	-- reads as a soft, faintly smeared version of the same text. Rounding the
+	-- top-left costs nothing and puts the whole tree back on integer coordinates.
+	local function snapToPixels(pos: UDim2): UDim2
+		local vp = screenGui.AbsoluteSize
+		local size = main.AbsoluteSize
+		if vp.X <= 0 or size.X <= 0 then
+			return pos
+		end
+		local left = pos.X.Scale * vp.X + pos.X.Offset - size.X / 2
+		local top = pos.Y.Scale * vp.Y + pos.Y.Offset - size.Y / 2
+		return UDim2.new(
+			pos.X.Scale, pos.X.Offset + (math.round(left) - left),
+			pos.Y.Scale, pos.Y.Offset + (math.round(top) - top)
+		)
+	end
+	-- Re-snap whenever the geometry moves under us: viewport resize, the fit
+	-- clamp, maximize. (Setting Position can't change AbsoluteSize, so this
+	-- can't feed itself.)
+	local function resnap()
+		main.Position = snapToPixels(main.Position)
+	end
+	main:GetPropertyChangedSignal("AbsoluteSize"):Connect(resnap)
+	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(resnap)
+	task.defer(resnap)
+
 	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
-			main.Position = clampToViewport(UDim2.new(
+			main.Position = snapToPixels(clampToViewport(UDim2.new(
 				startPos.X.Scale, startPos.X.Offset + delta.X,
 				startPos.Y.Scale, startPos.Y.Offset + delta.Y
-			))
+			)))
 		end
 	end))
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
@@ -718,20 +772,15 @@ return function(opts: any)
 			-- slide + fade open from a zero-width sliver, then focus the box
 			searchField.Visible = true
 			searchField.Size = UDim2.fromOffset(0, 30)
-			searchField.GroupTransparency = 1
-			Tween.play(searchField, Tween.Slide, {
-				Size = UDim2.fromOffset(SEARCH_W, 30),
-				GroupTransparency = 0,
-			})
+			searchFade:Set(1)
+			Tween.play(searchField, Tween.Slide, { Size = UDim2.fromOffset(SEARCH_W, 30) })
+			searchFade:To(Tween.Slide, 0)
 			searchBox:CaptureFocus()
 		else
 			searchBox.Text = "" -- fires the Text signal → clears the filter
 			-- slide + fade closed, then hide once it's fully collapsed
-			local t = Tween.play(searchField, Tween.Slide, {
-				Size = UDim2.fromOffset(0, 30),
-				GroupTransparency = 1,
-			})
-			t.Completed:Once(function()
+			Tween.play(searchField, Tween.Slide, { Size = UDim2.fromOffset(0, 30) })
+			searchFade:To(Tween.Slide, 1, function()
 				if not searchOpen then
 					searchField.Visible = false
 				end
@@ -791,8 +840,7 @@ return function(opts: any)
 			-- fade has fully played (no abrupt cut — it's already invisible).
 			Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
 			Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
-			local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
-			t.Completed:Once(function()
+			mainFade:To(Tween.MenuOut, 1, function()
 				if minimized then
 					main.Visible = false
 				end
@@ -802,9 +850,9 @@ return function(opts: any)
 			-- restore from the shrunk/faded state: pop the scale, ease the fade in
 			main.Visible = true
 			mainScale.Scale = 0.9
-			main.GroupTransparency = 1
+			mainFade:Set(1)
 			Tween.play(mainScale, Tween.Pop, { Scale = 1 })
-			Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
+			mainFade:To(Tween.Normal, 0)
 			Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
 			restoreHint.Visible = false
 		end
@@ -1057,8 +1105,7 @@ return function(opts: any)
 		end
 		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
 		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
-		local t = Tween.play(main, Tween.MenuOut, { GroupTransparency = 1 })
-		t.Completed:Once(function()
+		mainFade:To(Tween.MenuOut, 1, function()
 			screenGui:Destroy()
 		end)
 	end
@@ -1210,17 +1257,23 @@ return function(opts: any)
 	end
 
 	-- mount — pop the window in from a touch smaller and faded so it eases in
-	-- rather than just appearing
+	-- rather than just appearing.
+	--
+	-- It's hidden with `Visible` (not a fade) until then, because the fade has to
+	-- snapshot the window's resting transparencies and the caller hasn't built
+	-- its tabs yet — this runs on a deferred pass, by which point the whole tree
+	-- exists and the snapshot covers it.
 	mainScale.Scale = 0.92
-	main.GroupTransparency = 1
+	main.Visible = false
 	syncShadow()
 	local function mountWindow()
 		if destroyed then
 			return -- unloaded while the splash was still playing
 		end
 		main.Visible = true
+		mainFade:Set(1)
 		Tween.play(mainScale, Tween.Pop, { Scale = 1 })
-		Tween.play(main, Tween.Normal, { GroupTransparency = 0 })
+		mainFade:To(Tween.Normal, 0)
 		Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
 	end
 

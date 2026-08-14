@@ -9,6 +9,7 @@
 
 local Create = require(script.Parent.Create)
 local Tween = require(script.Parent.Tween)
+local Fade = require(script.Parent.Fade)
 local Log = require(script.Parent.Log)
 local Bind = require(script.Parent.Bind)
 
@@ -25,7 +26,13 @@ export type Context = typeof(setmetatable(
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
-		_popover: { menu: Instance, catcher: Instance, conns: { RBXScriptConnection }, onClose: (() -> ())? }?,
+		_popover: {
+			menu: Instance,
+			catcher: Instance,
+			conns: { RBXScriptConnection },
+			onClose: (() -> ())?,
+			fade: any,
+		}?,
 		_capturing: number,
 	},
 	Context
@@ -274,6 +281,10 @@ function Context:ClosePopover()
 		conn:Disconnect()
 	end
 	p.catcher:Destroy()
+	-- Land the open-fade back on its resting values before hiding. Closing
+	-- mid-fade and immediately reopening would otherwise snapshot the half-faded
+	-- tree as the new baseline and leave the menu permanently washed out.
+	p.fade:Set(0)
 	p.menu.Visible = false
 	if p.onClose then
 		p.onClose()
@@ -326,12 +337,14 @@ function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() ->
 	place()
 	menu.Visible = true
 
-	-- Fade the menu in. CanvasGroup renders its descendants to one buffer, so a
-	-- single GroupTransparency tween brings the whole popover up together.
-	if menu:IsA("CanvasGroup") then
-		menu.GroupTransparency = 1
-		Tween.play(menu, Tween.Pop, { GroupTransparency = 0 })
-	end
+	-- Fade the menu in as a unit. This used to be a CanvasGroup + one
+	-- GroupTransparency tween, which rasterized every option label into a buffer
+	-- and blurred it — util/Fade.lua does the same job on the real properties.
+	-- Snapshotting here (not at build time) is deliberate: menus rebuild their
+	-- rows, so each open re-reads the tree it's actually about to show.
+	local fade = Fade.new(menu)
+	fade:Set(1)
+	fade:To(Tween.Pop, 0)
 
 	-- Re-place when the anchor moves, when the menu's auto-size settles, or when
 	-- the window resizes.
@@ -340,7 +353,7 @@ function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() ->
 		menu:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
 		self.overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
 	}
-	self._popover = { menu = menu, catcher = catcher, conns = conns, onClose = onClose }
+	self._popover = { menu = menu, catcher = catcher, conns = conns, onClose = onClose, fade = fade }
 	catcher.Activated:Connect(function()
 		self:ClosePopover()
 	end)

@@ -5,6 +5,7 @@
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
+local Fade = require(script.Parent.Parent.util.Fade)
 local Icons = require(script.Parent.Parent.Icons)
 
 -- Semantic notification kinds. Each colors the accent bar + adds a matching
@@ -31,8 +32,10 @@ return function(ctx: any, container: Frame, opts: any)
 	end
 	local barColor = kind and kind.color or ctx.Accent
 
-	-- CanvasGroup → fade every descendant at once; renders to its own buffer
-	-- so the inner card's horizontal slide is clipped (no layout reflow).
+	-- The toast is a clipping shell: the card slides horizontally inside it and
+	-- is cut at the edge (no layout reflow), and the whole thing fades as a unit
+	-- through util/Fade.lua. It was a CanvasGroup, which did both for free but
+	-- rasterized the title and body text into a buffer and blurred them.
 	local order = (container:GetAttribute("count") or 0) + 1
 	container:SetAttribute("count", order)
 
@@ -40,9 +43,9 @@ return function(ctx: any, container: Frame, opts: any)
 	-- burst of notifications used to run off the top of the window and sit there
 	-- clipped. Retire the oldest instead.
 	local MAX_TOASTS = 4
-	local live: { CanvasGroup } = {}
+	local live: { GuiObject } = {}
 	for _, child in container:GetChildren() do
-		if child:IsA("CanvasGroup") then
+		if child:IsA("GuiObject") and child.Name == "Toast" then
 			table.insert(live, child)
 		end
 	end
@@ -55,12 +58,12 @@ return function(ctx: any, container: Frame, opts: any)
 		end
 	end
 
-	local toast = Create("CanvasGroup", {
+	local toast = Create("Frame", {
 		Name = "Toast",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(240, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		GroupTransparency = 1,
+		ClipsDescendants = true, -- the card slides in from off its right edge
 		LayoutOrder = order,
 		Parent = container,
 	})
@@ -160,15 +163,16 @@ return function(ctx: any, container: Frame, opts: any)
 		Parent = content,
 	})
 
-	-- in
-	Tween.play(toast, Tween.Toast, { GroupTransparency = 0 })
+	-- in — the fade is built last, so its snapshot covers the finished toast.
+	local fade = Fade.new(toast)
+	fade:Set(1)
+	fade:To(Tween.Toast, 0)
 	Tween.play(card, Tween.Toast, { Position = UDim2.fromOffset(0, 0) })
 
 	-- hold → out → destroy
 	task.delay(opts.Duration or 3.2, function()
 		Tween.play(card, Tween.ToastOut, { Position = UDim2.fromOffset(20, 0) })
-		local out = Tween.play(toast, Tween.ToastOut, { GroupTransparency = 1 })
-		out.Completed:Once(function()
+		fade:To(Tween.ToastOut, 1, function()
 			if unsubscribeAccent then
 				unsubscribeAccent()
 			end

@@ -70,6 +70,7 @@ coreui/
     Tween.lua         shared TweenInfo presets + Tween.play
     Context.lua       per-window object threaded into EVERY component
     Collapse.lua      height-animate a frame open/closed
+    Fade.lua          fade a whole subtree — the CanvasGroup replacement
     Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
   components/         one file per control
 ```
@@ -140,9 +141,9 @@ with it.
 entrance stagger and the exit fade are subtracted and the progress bar fills for
 whatever is left, so a longer duration is a slower bar, not a longer wait on a
 full one. `Steps` is a list of status strings cycled through the subtitle across
-that fill. The composition (mark / wordmark / status / bar) is placed by hand,
-**not** on a UIListLayout — a layout owns its children's Position, which would
-suppress the slide-up each element enters with.
+that fill. The composition (mark / wordmark / status / bar) is placed by hand —
+a UIListLayout owns its children's Position and would suppress the slide-up each
+element enters with.
 
 Two integration points in `Window.lua`: the mount tweens moved into
 `mountWindow()`, and with a splash the window is built but `main.Visible =
@@ -222,9 +223,11 @@ subscription registry, and the single-popover manager.
 - `ctx:OpenPopover(menu, anchor, onClose?)` / `:ClosePopover()` / `:IsOpen(menu)`
   — dropdowns & colorpickers mount their menu into the high-ZIndex `overlay` so
   it escapes the scrolling content's clipping. Auto-clamps to window bounds and
-  flips above the anchor when no room below. A `CanvasGroup` menu fades in via
-  one `GroupTransparency` tween. Window's tab `select()` closes any open popover
-  (the overlay outlives the page, so it would otherwise hang over the new tab).
+  flips above the anchor when no room below. The menu fades in via `util/Fade.lua`
+  (snapshotted per open, since menus rebuild their rows) and `ClosePopover`
+  `:Set(0)`s it back to rest before hiding. Window's tab `select()` closes any
+  open popover (the overlay outlives the page, so it would otherwise hang over
+  the new tab).
 - `ctx:BeginCapture()` / `:EndCapture()` / `:IsCapturing()` — a control listening
   for a raw keypress (Keybind) claims capture; Window's toggle-key listener sits
   on UserInputService and ignores input while capture is held, so binding a key
@@ -265,6 +268,54 @@ full URL and shipping new art is just committing the file there.
    because the engine only fetches what it renders).
 2. Detection is **advisory** — never clear or hide the image because of it. Move
    a *placeholder* instead. Hiding the image was what made the logo invisible.
+
+**Fade** (`util/Fade.lua`) — **and the CanvasGroup rule that comes with it.**
+
+> **Never put text under a `CanvasGroup`.** A CanvasGroup rasterizes its whole
+> subtree into an offscreen buffer and draws that buffer, so text stops being
+> SDF-rendered at display resolution and becomes a resampled bitmap. The result
+> is soft, smeared type that nothing on the user's end fixes — graphics quality
+> doesn't help, resizing doesn't help, and it gets *worse* as the group grows
+> (maximizing / fullscreen was the worst case). This is the second half of the
+> blurry-text story; `FontFace` vs `Font` is the first.
+
+CanvasGroup was the obvious way to fade a panel (one `GroupTransparency` tween)
+and it was used for the window, popovers, toasts, the search field and the
+splash — which meant essentially every glyph in the UI came through a buffer.
+`Fade` replaces it: snapshot every transparency property in the subtree once,
+then drive them all from one tweened `NumberValue`. Same easing, same "moves as
+one unit" look, real text.
+
+```lua
+local fade = Fade.new(panel)
+fade:Set(1)                       -- instantly invisible
+fade:To(Tween.Normal, 0)          -- fade in
+fade:To(Tween.MenuOut, 1, done)   -- fade out, then `done`
+```
+
+Alpha 0 = "as built" (each instance back at *its own* resting transparency,
+which isn't necessarily 0), 1 = invisible. Three things to respect:
+- **Snapshot at rest.** The base values are read on the first `Set`/`To` after
+  the subtree is fully visible, and released again whenever it lands back on
+  alpha 0. Never take a fresh snapshot mid-fade — it would bake the faded
+  values in as the new baseline (this is why `ClosePopover` calls `:Set(0)`).
+- **Snapshot late.** The window's mount fade runs on a deferred pass so the
+  caller's tabs already exist; a toast builds its fade last.
+- **Don't write a transparency a fade is driving.** Anything async that reveals
+  or hides art (an `Asset.load` callback) must toggle `Visible` instead — which
+  is why the window logo's accent square and the splash's are their own layer
+  rather than the holder's own background.
+
+Hidden subtrees (an inactive tab page) are pruned from the snapshot, so a window
+fade only touches what's actually on screen.
+
+**Whole-pixel snapping** is the third sharpness rule, in `Window.lua`
+(`snapToPixels`) and `Splash.lua` (`centerStack`): the window is centered with a
+*scale* position + `AnchorPoint(0.5, 0.5)`, so any odd viewport or window
+dimension lands its top-left on a half pixel and rasterizes every glyph half a
+pixel off the display grid. Both round the top-left back onto integers on drag
+and on every resize. (The splash keeps both stack dimensions even for the same
+reason.)
 
 **Collapse** (`util/Collapse.lua`): `Collapse.wrap(content, startCollapsed)` →
 `(holder, set)`. `content` must be `(1,0)` wide with `AutomaticSize.Y`. Holder
@@ -426,6 +477,8 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
 - **Fonts: set `FontFace` (NOT `Font`).** `Font` uses bitmap atlases → soft/
   pixelated scaling; `FontFace` uses the SDF renderer → crisp at any size. Use
   `Theme.Font.{Bold,Medium,Regular,Mono}`.
+- **No `CanvasGroup`, ever** — it rasterizes text into a buffer and blurs the
+  whole subtree. Fade with `util/Fade.lua` instead; see the Fade section above.
 - Metrics in `Theme.Metrics` are offset px (map 1:1 to Roblox offsets).
 - Recent layout work moved frame sizing toward **scale** dimensions for layout
   stability (see git log).
