@@ -267,12 +267,17 @@ end
 
 local LOAD_TIMEOUT = 8
 
-local function whenLoaded(image: ImageLabel, timeout: number?): boolean
+-- `alive` lets a superseded load give up mid-wait instead of holding the label
+-- hostage for the rest of its timeout (see `generation` below).
+local function whenLoaded(image: ImageLabel, timeout: number?, alive: (() -> boolean)?): boolean
 	if image.IsLoaded then
 		return true
 	end
 	local deadline = os.clock() + (timeout or LOAD_TIMEOUT)
 	while not image.IsLoaded and os.clock() < deadline do
+		if alive and not alive() then
+			return false
+		end
 		task.wait(0.15)
 	end
 	return image.IsLoaded
@@ -281,20 +286,35 @@ end
 -- Put `content` on the image and wait for it. Also tries the decal→image id
 -- shuffle: a Decal asset and the Image it wraps live at adjacent ids, and the
 -- decals that don't render directly need the underlying image (decalId - 1).
-local function tryContent(image: ImageLabel, content: string, timeout: number): boolean
+local function tryContent(image: ImageLabel, content: string, timeout: number, alive: (() -> boolean)?): boolean
+	if alive and not alive() then
+		return false
+	end
 	image.Image = content
-	if whenLoaded(image, timeout) then
+	if whenLoaded(image, timeout, alive) then
 		return true
 	end
 	local id = tonumber(content:match("rbxassetid://(%d+)$"))
 	if id and id > 1 then
+		if alive and not alive() then
+			return false
+		end
 		image.Image = "rbxassetid://" .. tostring(id - 1)
-		if whenLoaded(image, timeout) then
+		if whenLoaded(image, timeout, alive) then
 			return true
 		end
 	end
 	return false
 end
+
+-- Which load is the live one for a given ImageLabel. A walk can sit in
+-- `whenLoaded` for 8s per candidate (plus a download), so two calls on the same
+-- label overlap freely — and the loser used to keep writing: it painted its own
+-- content over the winner's and then called `onDone(false)`, putting the
+-- placeholder back on top of art that had already arrived. That's `Window:SetLogo`
+-- during the default logo's chain, or `Image:Set` twice in a row. Weak keys so a
+-- destroyed label doesn't pin an entry here.
+local generation: { [ImageLabel]: number } = setmetatable({}, { __mode = "k" }) :: any
 
 -- Point `image` at `source`; `onDone(loaded)` reports whether it rendered.
 -- `source` may be a single value or a fallback chain (see Asset.resolve) — each
@@ -304,6 +324,11 @@ end
 -- late — so keep it idempotent (toggling a placeholder is the ideal shape).
 function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 	local chain: { any } = (type(source) == "table") and source or { source }
+	local token = (generation[image] or 0) + 1
+	generation[image] = token
+	local function current(): boolean
+		return generation[image] == token
+	end
 
 	task.spawn(function()
 		local firstContent = ""
@@ -311,6 +336,9 @@ function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 			-- Resolving can download (an https candidate is fetched to disk on
 			-- first use), which is why the whole walk lives on this thread.
 			local content = Asset.resolve(candidate)
+			if not current() then
+				return -- a newer load owns this label now
+			end
 			if content ~= "" then
 				if firstContent == "" then
 					firstContent = content
@@ -318,7 +346,7 @@ function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 				-- Don't spend the full budget on early candidates — there's
 				-- another source waiting behind them.
 				local budget = (i < #chain) and 3 or LOAD_TIMEOUT
-				if tryContent(image, content, budget) then
+				if tryContent(image, content, budget, current) then
 					if onDone then
 						onDone(true)
 					end
@@ -327,6 +355,9 @@ function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 			end
 		end
 
+		if not current() then
+			return
+		end
 		-- Nothing loaded. Leave the best candidate assigned rather than blanking
 		-- it, so a slow asset can still paint itself in later.
 		image.Image = firstContent
@@ -334,7 +365,7 @@ function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 			onDone(false)
 			if firstContent ~= "" then
 				image:GetPropertyChangedSignal("IsLoaded"):Once(function()
-					if image.IsLoaded then
+					if image.IsLoaded and current() then
 						onDone(true)
 					end
 				end)

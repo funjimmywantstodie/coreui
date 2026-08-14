@@ -13,6 +13,7 @@ local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Tween = require(script.Parent.Parent.util.Tween)
 local Icons = require(script.Parent.Parent.Icons)
+local Log = require(script.Parent.Parent.util.Log)
 local Field = require(script.Parent.Field)
 
 export type ActionDef = { Name: string, Text: string?, Icon: string? }
@@ -42,6 +43,7 @@ end
 
 return function(ctx: any, opts: any): (Frame, any, boolean)
 	local colors = Theme.Colors
+	local where = Log.where("DataGrid", opts.Name)
 	local f = Field.new(ctx, opts, true)
 
 	local columns: { ColumnDef } = opts.Columns or {}
@@ -118,17 +120,45 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		actionHolders: { [string]: Frame },
 	}
 
-	local function buildActionButton(action: ActionDef): TextButton
+	-- Paint a button's face. Separate from the build because renderActions reuses
+	-- a button by Name across renders, so an action that swaps its Icon ("lock" →
+	-- "unlock") or its Text has to actually repaint instead of keeping whatever
+	-- it was first built with. The icon name is stashed as an attribute so the
+	-- common case — same action re-sent every tick — costs one comparison rather
+	-- than a rebuilt instance.
+	local function paintActionButton(btn: TextButton, action: ActionDef)
 		-- Icon takes priority when both are given — a fixed-size icon button,
 		-- Text unused. Text alone renders as an auto-width label pill.
 		local iconOnly = action.Icon ~= nil
+		btn.Size = iconOnly and UDim2.fromOffset(22, 22) or UDim2.new(0, 0, 0, 22)
+		btn.AutomaticSize = iconOnly and Enum.AutomaticSize.None or Enum.AutomaticSize.X
+		btn.Text = iconOnly and "" or (action.Text or action.Name)
+
+		if btn:GetAttribute("icon") == action.Icon then
+			return
+		end
+		btn:SetAttribute("icon", action.Icon)
+		local old = btn:FindFirstChild("Icon")
+		if old then
+			-- Rebuilt rather than Icons.apply'd: apply no-ops on an unknown name and
+			-- can't cross between the ImageLabel and the glyph-TextLabel fallback.
+			old:Destroy()
+		end
+		if action.Icon then
+			local icon = Icons.new(action.Icon, 14, colors.text_dim)
+			icon.AnchorPoint = Vector2.new(0.5, 0.5)
+			icon.Position = UDim2.fromScale(0.5, 0.5)
+			icon.Parent = btn
+		end
+	end
+
+	local function buildActionButton(action: ActionDef): TextButton
 		local btn = Create("TextButton", {
 			Name = action.Name,
 			AutoButtonColor = false,
 			BackgroundColor3 = colors.control,
-			Size = iconOnly and UDim2.fromOffset(22, 22) or UDim2.new(0, 0, 0, 22),
-			AutomaticSize = iconOnly and Enum.AutomaticSize.None or Enum.AutomaticSize.X,
-			Text = (not action.Icon) and (action.Text or action.Name) or "",
+			Size = UDim2.fromOffset(22, 22),
+			Text = "",
 			TextColor3 = colors.text,
 			TextSize = 12,
 			FontFace = Theme.Font.Medium,
@@ -136,13 +166,6 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 			Create.corner(6),
 			Create.padding(0, 8),
 		}) :: TextButton
-
-		if action.Icon then
-			local icon = Icons.new(action.Icon, 14, colors.text_dim)
-			icon.AnchorPoint = Vector2.new(0.5, 0.5)
-			icon.Position = UDim2.fromScale(0.5, 0.5)
-			icon.Parent = btn
-		end
 
 		btn.MouseEnter:Connect(function()
 			Tween.play(btn, Tween.Fast, { BackgroundColor3 = colors.control_hi })
@@ -153,8 +176,8 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		return btn
 	end
 
-	-- Reuses buttons keyed by action Name across renders; drops ones no longer
-	-- present. Actions rarely churn (a couple per row), so no diff-guard needed.
+	-- Reuses buttons keyed by action Name across renders (repainting each for the
+	-- action it now carries) and drops ones no longer present.
 	local function renderActions(entry: RowEntry, key: string, actions: { ActionDef })
 		local holder = entry.actionHolders[key]
 		local seen: { [string]: boolean } = {}
@@ -166,12 +189,14 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 			else
 				btn = buildActionButton(action)
 				btn.Parent = holder
+				local name = action.Name
 				btn.Activated:Connect(function()
 					if entry.id ~= nil then
-						rowAction:Fire(entry.id, action.Name)
+						rowAction:Fire(entry.id, name)
 					end
 				end)
 			end
+			paintActionButton(btn, action)
 			btn.LayoutOrder = i
 			seen[action.Name] = true
 		end
@@ -246,13 +271,21 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 					Create.padding(0, 6),
 				}) :: TextBox
 				local stroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
+				-- The row this edit belongs to is captured when it starts, not read
+				-- at blur: the frame is pooled, so an edit left open while :SetRows
+				-- recycles it would otherwise commit the typed text against whichever
+				-- id inherited the frame.
+				local editingId: any = nil
 				box.Focused:Connect(function()
+					editingId = entry.id
 					Tween.play(stroke, Tween.Fast, { Color = ctx.Accent })
 				end)
 				box.FocusLost:Connect(function()
 					Tween.play(stroke, Tween.Fast, { Color = colors.border })
-					if entry.id ~= nil then
-						rowEdited:Fire(entry.id, col.Key, box.Text)
+					local id = editingId
+					editingId = nil
+					if id ~= nil and id == entry.id then
+						rowEdited:Fire(id, col.Key, box.Text)
 					end
 				end)
 				entry.cells[col.Key] = box
@@ -315,11 +348,29 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 	end
 
 	local function releaseRow(entry: RowEntry)
+		-- Cleared first, so the FocusLost below sees a row that no longer has an id
+		-- and drops the half-finished edit instead of committing it.
 		entry.id = nil
 		entry.data = {}
 		-- Drop the change-detection cache with the row: a pooled frame reused for a
 		-- different id must repaint every cell, not diff against the old row's data.
+		-- Blanking the cells is the other half of that — clearing the cache alone
+		-- left the previous row's text and buttons on screen for any column the
+		-- next row omits, because applyRowData compares `nil ~= nil` and skips.
 		table.clear(entry.lastValues)
+		for _, cell in entry.cells do
+			if cell:IsA("TextBox") and cell:IsFocused() then
+				cell:ReleaseFocus(false)
+			end
+			cell.Text = ""
+		end
+		for _, holder in entry.actionHolders do
+			for _, child in holder:GetChildren() do
+				if child:IsA("GuiObject") then
+					child:Destroy()
+				end
+			end
+		end
 		entry.frame.Parent = nil
 		table.insert(pool, entry)
 	end
@@ -333,8 +384,15 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		local order: { any } = {}
 		for i, data in rows do
 			local id = data.id
-			newIds[id] = data
-			order[i] = id
+			if id == nil then
+				-- One malformed row used to take the whole call down with "table index
+				-- is nil" — for a grid refilled several times a second, that's the
+				-- entire view gone over one bad entry.
+				Log.warn(where, ("row #%d has no `id` — skipped."):format(i))
+			else
+				newIds[id] = data
+				table.insert(order, id)
+			end
 		end
 
 		for id, entry in rowsById do

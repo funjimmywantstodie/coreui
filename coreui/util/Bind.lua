@@ -211,12 +211,17 @@ end
 -- cleared with Backspace, a config whose key name didn't parse). The engine also
 -- reports KeyCode.Unknown for keys it has no mapping for, and without this every
 -- unbound binding in the window would fire on one of them at once.
-local function keyOf(input: InputObject): any?
+-- Exported as `Bind.of` because the router isn't the only listener that has to
+-- turn an InputObject into a key: Window's toggle-key listener compares against
+-- one too, and comparing `input.KeyCode` alone silently ignored every mouse
+-- binding (a mouse press reports KeyCode.Unknown).
+function Bind.of(input: InputObject): any?
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		return input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode or nil
 	end
 	return MOUSE_NAME[input.UserInputType] and input.UserInputType or nil
 end
+local keyOf = Bind.of
 
 function Bind:_dispatch(input: InputObject, gameProcessed: boolean, began: boolean)
 	local key = keyOf(input)
@@ -297,6 +302,16 @@ function Binding:_info(): any
 	return { Key = self.key, Mode = self.mode, KeyName = Bind.name(self.key) }
 end
 
+-- The binding's idea of the current value. `getState` (a Toggle handing over its
+-- own value) wins when it's there — written out rather than `getState() or state`
+-- because that idiom falls through to `state` on a legitimate `false`.
+function Binding:_value(): boolean
+	if self.getState then
+		return self.getState() == true
+	end
+	return self.state
+end
+
 -- Push a new activation state out: paint first (synchronous, so the UI never
 -- lags a frame behind the key), then the user callback on its own thread so a
 -- slow or erroring callback can't stall input dispatch.
@@ -347,14 +362,17 @@ function Binding:_press()
 		end
 		self:_pulse()
 	else -- Toggle
-		local current = self.getState and self.getState() or self.state
-		self:_set(not current)
+		self:_set(not self:_value())
 	end
 end
 
 function Binding:_release()
 	self._downKey = nil
-	if self.mode == "Hold" and self.enabled and self.state then
+	-- Deliberately NOT gated on `enabled`: a Hold bind that was disabled while its
+	-- key was down still has to come back up, or it sticks on with `_press` now
+	-- gated too — nothing left that could ever turn it off. Same reasoning as the
+	-- gameProcessed exemption in the header.
+	if self.mode == "Hold" and self.state then
 		self:_set(false)
 	end
 end
@@ -397,7 +415,23 @@ function Binding:SetMode(mode: string, silent: boolean?)
 	self.manager:_changed()
 	if self.mode == "Always" then
 		self:_set(true)
-	elseif previous == "Hold" and self.state then
+	elseif (self.mode == "Hold" or self.mode == "Press" or self.mode == "None") and not silent then
+		-- ENTERING a mode that can't hold a value on its own. Hold's value exists
+		-- only while the key is down, Press carries no value at all, and None never
+		-- activates — so anything the previous mode left ON is now on with nothing
+		-- holding it there and no key that can turn it off (worse for None, which
+		-- also drops out of the HUD while the feature is still running). Drop it the
+		-- moment the mode changes rather than making the user tap the key once just
+		-- to clear it. `_downKey` was cleared just above, so there's no hold in
+		-- progress to fight.
+		--
+		-- `silent` (only ever set by the config-restore path in BindChip:SetFlag) opts
+		-- out: a saved Hold bind that was on is a value the caller chose to persist,
+		-- and the load pass isn't a user flipping the mode.
+		if self:_value() then
+			self:_set(false)
+		end
+	elseif previous == "Hold" and self:_value() then
 		-- Leaving Hold with the key down would strand the feature on.
 		self:_set(false)
 	end

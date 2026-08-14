@@ -187,7 +187,14 @@ return function(ctx: any, opts: any)
 	-- Force a re-parse now; returns ok, value|errString.
 	function handle:Validate(): (boolean, any)
 		validate(false)
-		return valid, valid and lastValue or status.Text
+		-- Explicit branch, not `valid and lastValue or status.Text`: with no Parse
+		-- (or a parser whose value is falsy) lastValue is nil and the idiom falls
+		-- through to the status label, reporting the empty string as an error
+		-- message on a control that is perfectly valid.
+		if valid then
+			return true, lastValue
+		end
+		return false, status.Text
 	end
 
 	return f.field, handle, true

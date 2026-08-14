@@ -41,7 +41,24 @@ return function(ctx: any, opts: any)
 		step = 1
 	end
 	local suffix = opts.Suffix or ""
-	local value = clamp(opts.Default or min, min, max)
+
+	local function snap(v: number): number
+		-- guard a zero step so a bad config can't divide-by-zero. (Explicit if,
+		-- not `and/or` — the snapped value can legitimately be 0, which the idiom
+		-- would mistake for false and fall through to v.)
+		-- Steps are counted from min, not from zero: quantizing in absolute value
+		-- space means a range like Min=1, Max=10, Step=2 lands on 2/4/6/8/10 and
+		-- can never produce 1, so the slider couldn't report its own minimum.
+		if step > 0 then
+			return min + math.round((v - min) / step) * step
+		end
+		return v
+	end
+
+	-- The default is snapped as well as clamped, or the control opens showing a
+	-- value it can't otherwise produce (and hands that value to :Get()/the config
+	-- snapshot) until the first drag quietly moves it onto the grid.
+	local value = clamp(snap(opts.Default or min), min, max)
 
 	local f = Field.new(ctx, opts, true)
 
@@ -111,16 +128,6 @@ return function(ctx: any, opts: any)
 		Create("UIScale", {}),
 	})
 	local knobScale = knob:FindFirstChildOfClass("UIScale") :: UIScale
-
-	local function snap(v: number): number
-		-- guard a zero step so a bad config can't divide-by-zero. (Explicit if,
-		-- not `and/or` — the snapped value can legitimately be 0, which the idiom
-		-- would mistake for false and fall through to v.)
-		if step > 0 then
-			return math.round(v / step) * step
-		end
-		return v
-	end
 
 	local function render()
 		-- guard min==max (degenerate range) so the ratio never produces NaN

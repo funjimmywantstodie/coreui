@@ -100,7 +100,17 @@ return function(ctx: any, opts: any)
 		return box.Text
 	end
 	function handle:Set(value: string)
-		box.Text = value
+		-- Filter here and write under the same guard the live filter uses, then
+		-- fire by hand: leaving the callback to the Text signal means setting the
+		-- value the box already holds fires nothing, so a LoadConfig that restores
+		-- an Input to its current text never re-applies it downstream. The guard
+		-- is what keeps a genuine change from firing twice.
+		guard = true
+		box.Text = clean and clean(value) or value
+		guard = false
+		if opts.Callback then
+			task.spawn(opts.Callback, box.Text)
+		end
 	end
 
 	return f.field, handle, true

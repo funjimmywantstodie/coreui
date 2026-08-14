@@ -165,7 +165,10 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 	local where = Log.where("MediaPlayer", opts.Name)
 	Log.field(where, "Callback", opts.Callback, "function")
 	Log.field(where, "Queue", opts.Queue, "table")
-	Log.field(where, "Cover", opts.Cover, "string")
+	-- Cover is handed to Asset.resolve, which takes a bare decal id, an
+	-- rbxassetid/url string, a file path or a fallback-chain array — so the only
+	-- thing worth rejecting is something Asset can't read at all.
+	Log.field(where, "Cover", opts.Cover, { "string", "number", "table" })
 
 	local showVolume = opts.ShowVolume ~= false
 	local showShuffle = opts.ShowShuffle ~= false
@@ -287,12 +290,16 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 	coverIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 	coverIcon.Position = UDim2.fromScale(0.5, 0.5)
 	;(coverIcon :: any).Parent = cover
+	-- Stays visible with an empty Image when there's no art: the engine only
+	-- fetches what it renders, so a hidden ImageLabel would never load and
+	-- Asset.load's "did it arrive?" answer would always be no. The icon behind
+	-- it is what toggles.
 	local coverImage = Create("ImageLabel", {
 		Name = "Art",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
+		Image = "",
 		ScaleType = Enum.ScaleType.Crop,
-		Visible = false,
 		Parent = cover,
 	}) :: ImageLabel
 
@@ -456,21 +463,34 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		end
 	end
 
+	-- Bumped on every renderMeta so a cover that resolves late can tell whether
+	-- the track it was fetched for is still the one on screen.
+	local coverGen = 0
+
 	renderMeta = function()
 		titleLabel.Text = (current.Title ~= "" and current.Title) or "No Track"
 		artistLabel.Text = current.Artist or ""
 		artistLabel.Visible = current.Artist ~= nil and current.Artist ~= ""
-		if current.Cover then
-			-- Through Asset so a track's Cover can be a bare id / url / file path,
-			-- not just an rbxassetid string.
-			local art = Asset.resolve(current.Cover)
-			coverImage.Image = art
-			coverImage.Visible = art ~= ""
-			coverIcon.Visible = art == ""
-		else
-			coverImage.Visible = false
-			coverIcon.Visible = true
+
+		coverGen += 1
+		local gen = coverGen
+		local art = current.Cover -- captured: `current` is replaced wholesale per track
+		coverIcon.Visible = true
+		if art == nil then
+			coverImage.Image = ""
+			return
 		end
+		-- Through Asset so a track's Cover can be a bare id / url / file path, and
+		-- off-thread because resolving an https cover downloads + caches it —
+		-- inline, that stalled the menu build and every Next click.
+		task.spawn(function()
+			Asset.load(coverImage, art, function(loaded)
+				if gen ~= coverGen then
+					return -- the track moved on while this was in flight
+				end
+				coverIcon.Visible = not loaded
+			end)
+		end)
 	end
 
 	renderProgress = function()
@@ -580,9 +600,17 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 			c:Disconnect()
 		end
 		table.clear(soundConns)
-		if ownsSound and activeSound then
-			activeSound:Stop()
-			activeSound:Destroy()
+		local prev = activeSound
+		if prev then
+			if ownsSound then
+				prev:Stop()
+				prev:Destroy()
+			else
+				-- A caller's Sound is theirs to destroy, but we still have to let go
+				-- of it *quiet*: leaving it playing strands audio with nothing left
+				-- driving it (no transport, no timeline, no volume).
+				prev:Pause()
+			end
 		end
 		activeSound = nil
 		ownsSound = false
@@ -999,10 +1027,16 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 			c:Disconnect()
 		end
 		table.clear(soundConns)
-		if ownsSound and activeSound then
-			activeSound:Stop()
-			activeSound:Destroy()
+		local snd = activeSound
+		if snd then
+			if ownsSound then
+				snd:Stop()
+				snd:Destroy()
+			else
+				snd:Pause() -- same rule as attachTrackAudio: don't destroy it, don't leave it playing
+			end
 		end
+		activeSound = nil
 	end)
 
 	-- ── initial load ─────────────────────────────────────────────────────────

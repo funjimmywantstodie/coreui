@@ -4,6 +4,7 @@
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Icons = require(script.Parent.Parent.Icons)
+local Asset = require(script.Parent.Parent.util.Asset)
 
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
@@ -38,22 +39,34 @@ return function(ctx: any, opts: any)
 		Create.stroke(colors.border),
 	})
 
-	local placeholder: GuiObject? = nil -- Icons.new may resolve to a glyph TextLabel
+	local picture = Create("ImageLabel", {
+		Name = "Image",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Image = "",
+		ScaleType = Enum.ScaleType.Crop,
+		Parent = avatar,
+	}) :: ImageLabel
+
+	-- The glyph is always built and only toggled, never swapped for the picture:
+	-- `Avatar` goes through Asset.resolve (bare id / url / file path / fallback
+	-- chain), so there's a window with a source but nothing drawn yet, and a
+	-- source that never loads should leave the icon up rather than an empty tile.
+	-- The picture itself is never hidden — an ImageLabel the engine isn't
+	-- rendering never loads in the first place.
+	local placeholder: GuiObject = Icons.new("avatar", 34, colors.accent) -- may be a glyph TextLabel
+	placeholder.AnchorPoint = Vector2.new(0.5, 0.5)
+	placeholder.Position = UDim2.fromScale(0.5, 0.5);
+	(placeholder :: any).Parent = avatar
+
 	if opts.Avatar then
-		Create("ImageLabel", {
-			Name = "Image",
-			BackgroundTransparency = 1,
-			Size = UDim2.fromScale(1, 1),
-			Image = opts.Avatar,
-			ScaleType = Enum.ScaleType.Crop,
-			Parent = avatar,
-		})
-	else
-		local icon = Icons.new("avatar", 34, colors.accent)
-		icon.AnchorPoint = Vector2.new(0.5, 0.5)
-		icon.Position = UDim2.fromScale(0.5, 0.5);
-		(icon :: any).Parent = avatar
-		placeholder = icon
+		-- Off-thread: resolving an https avatar downloads + caches it on first
+		-- use, which must not stall the window build.
+		task.spawn(function()
+			Asset.load(picture, opts.Avatar, function(loaded)
+				placeholder.Visible = not loaded
+			end)
+		end)
 	end
 
 	-- info ─────────────────────────────────────────────────────────────────
@@ -138,9 +151,7 @@ return function(ctx: any, opts: any)
 
 	ctx:RegisterAccent(function(accent)
 		avatar.BackgroundColor3 = ctx.AccentSoft
-		if placeholder then
-			Icons.tint(placeholder, accent)
-		end
+		Icons.tint(placeholder, accent)
 		if badge then
 			badge.BackgroundColor3 = ctx.AccentSoft
 			badge.TextColor3 = accent

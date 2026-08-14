@@ -337,18 +337,30 @@ local function build(ctx: any, opts: any, multi: boolean)
 			end
 			return false
 		end
+		local changed = false
 		if multi then
 			for key in selected do
 				if not present(key) then
 					selected[key] = nil
+					changed = true
 				end
 			end
 		elseif single ~= nil and not present(single) then
 			single = nil
+			changed = true
 		end
 		relabel()
 		if ctx:IsOpen(menu) then
 			rebuild()
+		end
+		-- A prune is a real change of value, so it has to reach the consumer: the
+		-- settings tab refreshes its saved-config list through here, and dropping
+		-- the config that autoload points at silently left autoload.txt naming a
+		-- file that no longer exists. Fired last, and only when something was
+		-- actually dropped — a plain refresh stays a no-op, and a callback that
+		-- calls SetOptions again finds nothing left to prune, so it can't recurse.
+		if changed and opts.Callback then
+			task.spawn(opts.Callback, multi and fireMulti() or single)
 		end
 	end
 

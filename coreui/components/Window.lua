@@ -848,7 +848,7 @@ return function(opts: any)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Text = ("Press %s to show it again."):format(toggleKey.Name),
+		Text = ("Press %s to show it again."):format(Bind.name(toggleKey)),
 		TextColor3 = colors.text_muted,
 		TextSize = 12,
 		FontFace = Theme.Font.Regular,
@@ -884,6 +884,12 @@ return function(opts: any)
 			-- restore from the shrunk/faded state: pop the scale, ease the fade in
 			main.Visible = true
 			mainScale.Scale = 0.9
+			-- Rest first so the hide's snapshot is released: anything built while the
+			-- window was minimized isn't in it, and would pop in fully opaque against
+			-- a subtree that's still fading. Set(0) puts the old instances back at
+			-- their own resting transparencies and drops the cache, so the Set(1)
+			-- below re-reads the tree as it is now.
+			mainFade:Set(0)
 			mainFade:Set(1)
 			Tween.play(mainScale, Tween.Pop, { Scale = 1 })
 			mainFade:To(Tween.Normal, 0)
@@ -900,16 +906,25 @@ return function(opts: any)
 		if gameProcessed or ctx:IsCapturing() then
 			return -- typing in a textbox, or a Keybind is listening for this press
 		end
-		if toggleKey ~= Enum.KeyCode.Unknown and input.KeyCode == toggleKey then
+		-- Compare against `Bind.of`, not `input.KeyCode`: a mouse press reports
+		-- KeyCode.Unknown, so a toggle key bound to MB2/MB3 (which the Settings
+		-- tab's chip happily captures) matched nothing and left the window with no
+		-- way to be shown again — silently, since the chip still read "MB2".
+		local pressed = Bind.of(input)
+		if pressed ~= nil and toggleKey ~= Enum.KeyCode.Unknown and pressed == toggleKey then
 			-- Defensive: if anything disabled the ScreenGui, flipping the minimize
 			-- state would just toggle an invisible window and the UI would look
 			-- permanently gone. Re-enable it instead. (Close no longer takes this
 			-- path — it destroys the ScreenGui outright.)
 			if not screenGui.Enabled then
+				-- Run the real restore rather than hand-setting the flags: if the window
+				-- was minimized when the ScreenGui went dark, mainFade is parked at
+				-- alpha 1 and mainScale at 0.9, so flipping Visible alone hands back a
+				-- window that is present and completely invisible — and leaves
+				-- `minimized` reading false, which cost two more presses to sort out.
 				screenGui.Enabled = true
-				minimized = false
-				main.Visible = true
-				restoreHint.Visible = false
+				minimized = true
+				setMinimized(false)
 				return
 			end
 			setMinimized(not minimized)
@@ -1022,7 +1037,12 @@ return function(opts: any)
 		-- index).
 		tab._onVisible = function(visible: boolean)
 			if visible then
-				if activeIndex == index then
+				-- Claim the selection when it's ours OR when nothing visible holds it —
+				-- hiding the last visible tab leaves activeIndex pointing at a hidden
+				-- one, and without this second case revealing a *different* tab would
+				-- leave the window blank.
+				local active = tabs[activeIndex]
+				if activeIndex == index or not (active and active:IsVisible()) then
 					select(index)
 				end
 				return
@@ -1047,6 +1067,15 @@ return function(opts: any)
 		-- later (a game-specific tab that only appears in the games it supports).
 		if tabOpts and tabOpts.Visible == false then
 			tab:SetVisible(false)
+		end
+		-- ...which is also why the selection is re-checked here rather than only on
+		-- `index == 1`: a first tab built hidden ran select(1) above and then hid
+		-- itself, and tab 2 never claimed the empty slot — the window opened blank,
+		-- with a sidebar showing no active tab. Any tab that arrives while nothing
+		-- visible is selected takes the slot.
+		local active = tabs[activeIndex]
+		if tab:IsVisible() and not (active and active:IsVisible()) then
+			select(index)
 		end
 		return tab
 	end
@@ -1094,7 +1123,7 @@ return function(opts: any)
 		end
 		toggleKey = key or Enum.KeyCode.Unknown
 		restoreHintText.Text = toggleKey ~= Enum.KeyCode.Unknown
-			and ("Press %s to show it again."):format(toggleKey.Name)
+			and ("Press %s to show it again."):format(Bind.name(toggleKey))
 			or "Re-bind a toggle key to show it again."
 	end
 
@@ -1111,12 +1140,38 @@ return function(opts: any)
 	-- Built on demand and only once: `CreateWindow{ Hud = true }`, the Settings
 	-- tab's switch and a loaded config all land here.
 	function window:CreateHud(hudOpts: any?): any
-		if hud then
-			return hud
-		end
 		if hudOpts ~= nil and type(hudOpts) ~= "table" then
 			Log.fail("CreateHud", ("options must be a table like { Title = ... }, got %s")
 				:format(typeof(hudOpts)))
+		end
+		if hud then
+			-- Already built — which is the common case, since `CreateWindow{ Hud = true }`
+			-- builds one before the caller has run a line of their own code, and
+			-- SetHudVisible routes through here too. Returning early swallowed the
+			-- options entirely; apply the ones the handle can move at runtime and say
+			-- so for the rest, rather than silently ignoring the whole table.
+			if type(hudOpts) == "table" then
+				local o: any = hudOpts
+				if type(o.Title) == "string" then
+					hud:SetTitle(o.Title)
+				end
+				if tonumber(o.X) and tonumber(o.Y) then
+					hud:SetPosition(tonumber(o.X) :: number, tonumber(o.Y) :: number)
+				end
+				if o.Collapsed ~= nil then
+					hud:SetCollapsed(o.Collapsed == true)
+				end
+				if o.Visible ~= nil then
+					hud:SetVisible(o.Visible ~= false)
+				end
+				for _, key in { "MaxRows", "Stats", "Fps", "Ping" } do
+					if o[key] ~= nil then
+						Log.warn("CreateHud", ("%s is only read when the HUD is first built — the existing HUD keeps its own.")
+							:format(key))
+					end
+				end
+			end
+			return hud
 		end
 		-- CreateWindow{ Hud = {...} } is the baseline; a later CreateHud{...} (or the
 		-- Settings switch, which passes nothing) overrides field by field.
@@ -1437,6 +1492,10 @@ return function(opts: any)
 						end
 						if window:LoadConfig(n) then
 							window:Notify({ Title = "Config", Text = ('Loaded "%s".'):format(n) })
+						else
+							-- Saying nothing on failure made a missing or corrupt file look
+							-- like a dead button.
+							window:Notify({ Title = "Config", Text = ('Couldn\'t load "%s".'):format(n) })
 						end
 					end,
 				},
@@ -1449,9 +1508,13 @@ return function(opts: any)
 						if not n then
 							return
 						end
-						window:DeleteConfig(n)
+						local deleted = window:DeleteConfig(n)
 						refresh()
-						window:Notify({ Title = "Config", Text = ('Deleted "%s".'):format(n) })
+						window:Notify({
+							Title = "Config",
+							Text = deleted and ('Deleted "%s".'):format(n)
+								or ('Couldn\'t delete "%s".'):format(n),
+						})
 					end,
 				},
 				{ Label = "Refresh", Callback = refresh },

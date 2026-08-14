@@ -23,7 +23,10 @@ end
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local f = Field.new(ctx, opts)
-	local value: Color3 = opts.Default or colors.accent
+	-- ctx.Accent, not the static theme accent: a window built with a custom accent
+	-- would otherwise hand an un-defaulted picker theme green as its swatch and as
+	-- its :Get()/flag value.
+	local value: Color3 = opts.Default or ctx.Accent
 
 	local swatch = Create("TextButton", {
 		Name = "Colorpicker",

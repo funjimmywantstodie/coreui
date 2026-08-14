@@ -206,6 +206,30 @@ return function(ctx: any, opts: any): (Frame, any)
 	end)
 
 	-- ── rebind ───────────────────────────────────────────────────────────────
+	-- The arming listener lives on UserInputService, so it outlives the chip's
+	-- instances: a window torn down while a chip sat armed (a loader re-run,
+	-- Uranium:Unload from a script) left it connected against a dead tree, holding
+	-- the capture claim with nothing left that could release it. Kept at chip scope
+	-- so `Destroying` and handle:Destroy can both cancel it.
+	local armConn: RBXScriptConnection? = nil
+	local function disarm(repaint: boolean?)
+		if armConn then
+			armConn:Disconnect()
+			armConn = nil
+		end
+		if not listening then
+			return
+		end
+		listening = false
+		ctx:EndCapture()
+		if repaint then
+			paint()
+		end
+	end
+	chip.Destroying:Connect(function()
+		disarm(false)
+	end)
+
 	keyBtn.Activated:Connect(function()
 		if listening then
 			return -- already armed; a left click on the chip is a no-op, not a bind
@@ -217,15 +241,11 @@ return function(ctx: any, opts: any): (Frame, any)
 		ctx:BeginCapture()
 		paint()
 
-		local conn: RBXScriptConnection
 		local function finish()
-			conn:Disconnect()
-			listening = false
-			ctx:EndCapture()
-			paint()
+			disarm(true)
 		end
 
-		conn = UserInputService.InputBegan:Connect(function(input)
+		armConn = UserInputService.InputBegan:Connect(function(input)
 			local kind = input.UserInputType
 			if kind == Enum.UserInputType.Keyboard then
 				finish()
@@ -351,6 +371,7 @@ return function(ctx: any, opts: any): (Frame, any)
 		paint()
 	end
 	function handle:Destroy()
+		disarm(false)
 		binding:Destroy()
 	end
 

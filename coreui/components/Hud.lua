@@ -103,22 +103,25 @@ return function(ctx: any, parent: Instance, opts: any): any
 		-- Round the top corners with the panel, then square off the bottom —
 		-- same trick as the window titlebar (util note in Window.lua).
 		Create.corner(10),
-		Create("Frame", {
-			Name = "SquareFill",
-			AnchorPoint = Vector2.new(0, 1),
-			Position = UDim2.fromScale(0, 1),
-			Size = UDim2.new(1, 0, 0, 10),
-			BackgroundColor3 = colors.chrome,
-			BorderSizePixel = 0,
-		}),
-		Create("Frame", {
-			Name = "Border",
-			AnchorPoint = Vector2.new(0, 1),
-			Position = UDim2.fromScale(0, 1),
-			Size = UDim2.new(1, 0, 0, 1),
-			BackgroundColor3 = colors.border_soft,
-			BorderSizePixel = 0,
-		}),
+	})
+
+	local squareFill = Create("Frame", {
+		Name = "SquareFill",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 0, 10),
+		BackgroundColor3 = colors.chrome,
+		BorderSizePixel = 0,
+		Parent = header,
+	})
+	local headerBorder = Create("Frame", {
+		Name = "Border",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 0, 1),
+		BackgroundColor3 = colors.border_soft,
+		BorderSizePixel = 0,
+		Parent = header,
 	})
 
 	local rail = Create("Frame", {
@@ -249,6 +252,34 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local holder, setCollapsedHeight = Collapse.wrap(body, opts.Collapsed == true)
 	holder.LayoutOrder = 2
 	holder.Parent = panel
+
+	-- Collapsed, the header IS the whole panel, so its bottom corners have to
+	-- round with it. ClipsDescendants clips to a RECTANGLE, not to the UICorner
+	-- shape (see the same note in Window.lua), so the square chrome fill would
+	-- otherwise poke past the panel's rounded bottom corners as two little nubs
+	-- with the divider hairline drawn straight across them. Hiding both hands the
+	-- corners back to the header's own UICorner, which matches the panel's radius.
+	-- The hide waits out the collapse tween (the header's bottom isn't the panel's
+	-- bottom until then); the show has to be immediate, before the body slides in
+	-- behind it.
+	local squareToken = 0
+	local function setHeaderSquared(square: boolean, after: number?)
+		squareToken += 1
+		local token = squareToken
+		local function apply()
+			if destroyed or token ~= squareToken then
+				return
+			end
+			squareFill.Visible = square
+			headerBorder.Visible = square
+		end
+		if after and after > 0 then
+			task.delay(after, apply)
+		else
+			apply()
+		end
+	end
+	setHeaderSquared(opts.Collapsed ~= true)
 
 	-- ── stat pills ───────────────────────────────────────────────────────────
 	-- `key` is the trailing unit label AND the identity, so SetStat("FPS", …)
@@ -553,6 +584,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 				panelScale.Scale = 1
 				refresh()
 			else
+				-- Back to rest FIRST, which releases the snapshot the hide left held.
+				-- Rows registered while the panel was hidden aren't in that snapshot, so
+				-- without this they sit fully opaque while everything around them fades
+				-- in. Set(0) restores the old rows to their own resting transparencies
+				-- and drops the cache; the Set(1) below then re-reads a tree that
+				-- includes the new rows.
+				fade:Set(0)
 				fade:Set(1)
 				panelScale.Scale = 0.94
 				Tween.play(panelScale, Tween.Pop, { Scale = 1 })
@@ -592,6 +630,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		end
 		collapsed = value
 		setCollapsedHeight(collapsed, animate ~= false)
+		setHeaderSquared(not collapsed, (collapsed and animate ~= false) and Tween.Slide.Time or 0)
 		-- `animate = false` (a config load) has to snap the caret too, or the panel
 		-- restores collapsed while its arrow spins into place a beat later.
 		if animate == false then

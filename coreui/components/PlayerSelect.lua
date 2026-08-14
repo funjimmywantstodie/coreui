@@ -476,16 +476,19 @@ local function build(ctx: any, opts: any, multi: boolean)
 
 	-- The box label resolves UserIds to live players, so it has to be redrawn when
 	-- someone selected leaves (or rejoins) — otherwise it keeps naming a player
-	-- who isn't in the server any more. Self-disconnects once the control is gone,
-	-- since these signals outlive the ScreenGui.
+	-- who isn't in the server any more. These signals outlive the ScreenGui, so
+	-- they're torn down off the box's own Destroying.
 	do
 		local rosterConns: { RBXScriptConnection } = {}
+		local function stopRoster()
+			for _, conn in rosterConns do
+				conn:Disconnect()
+			end
+			table.clear(rosterConns)
+		end
 		local function onRoster(p: Player)
 			if not box:IsDescendantOf(game) then
-				for _, conn in rosterConns do
-					conn:Disconnect()
-				end
-				table.clear(rosterConns)
+				stopRoster()
 				return
 			end
 			if isSelected(p.UserId) then
@@ -494,6 +497,10 @@ local function build(ctx: any, opts: any, multi: boolean)
 		end
 		table.insert(rosterConns, Players.PlayerRemoving:Connect(onRoster))
 		table.insert(rosterConns, Players.PlayerAdded:Connect(onRoster))
+		-- Destroying is the deterministic half: the descendant check above only
+		-- runs on the *next* join or leave, so in a quiet server these two would
+		-- survive Window:Destroy indefinitely, pinning the whole control closure.
+		box.Destroying:Connect(stopRoster)
 	end
 
 	relabel()

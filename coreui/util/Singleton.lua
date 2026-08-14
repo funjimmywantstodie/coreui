@@ -77,7 +77,11 @@ end
 -- Clear the key, but only if it still points at OUR record — a window torn down
 -- late (after a newer run already claimed the slot) must not evict the new one.
 function Singleton.release(record: any)
-	if record ~= nil and Singleton.get() ~= record then
+	-- A nil record is a window that never claimed the slot (AllowMultiple), not a
+	-- wildcard: letting it fall through to setKey(nil) had a secondary window's
+	-- close wipe the *primary* window's record, after which IsLoaded read false and
+	-- a loader re-run couldn't find the live window to unload it.
+	if record == nil or Singleton.get() ~= record then
 		return
 	end
 	setKey(nil)

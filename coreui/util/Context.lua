@@ -132,7 +132,11 @@ function Context:SetAccent(color: Color3)
 	self.AccentHover = hover(color)
 	self.AccentFill = fill(color)
 	self.AccentSoft = soft(self.Theme, color)
-	for _, fn in self._consumers do
+	-- Walk a snapshot: RegisterAccent's unsubscriber does a table.remove, and a
+	-- consumer that drops (or adds) one mid-broadcast would shift the array out
+	-- from under the loop and skip the next control's re-theme. Same reason
+	-- util/Bind.lua clones before notifying its observers.
+	for _, fn in table.clone(self._consumers) do
 		fn(self.Accent, self.AccentHover)
 	end
 end
@@ -158,8 +162,13 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 		decode = function(v) return tostring(v) end,
 	},
 	dropdown = {
-		encode = function(v) return v end, -- string | { string } — both JSON-safe
-		decode = function(v) return v end,
+		-- string | { string } — both JSON-safe. "Nothing selected" is `nil`, and a
+		-- nil assignment leaves the key out of the table entirely, so the flag never
+		-- reached the file: saving with no selection and loading it back left
+		-- whatever had been picked since. `false` is the stand-in that survives the
+		-- JSON round trip; decode hands nil back.
+		encode = function(v) if v == nil then return false end return v end,
+		decode = function(v) if v == false then return nil end return v end,
 	},
 	keybind = {
 		encode = function(v) return (typeof(v) == "EnumItem" and v.Name) or "Unknown" end,
@@ -199,12 +208,21 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			if type(v) ~= "table" then
 				return { visible = false }
 			end
-			return {
+			local record: any = {
 				visible = v.Visible == true,
 				collapsed = v.Collapsed == true,
-				x = math.floor(tonumber(v.X) or 0),
-				y = math.floor(tonumber(v.Y) or 0),
 			}
+			-- Coordinates only when there actually are some. A window whose HUD was
+			-- never built reports `{ Visible = false }` and nothing else, and
+			-- `floor(nil or 0)` wrote that down as a real position of (0, 0) — loading
+			-- the config in a session where the HUD *is* up teleported it into the
+			-- corner instead of leaving it where the user put it.
+			local x, y = tonumber(v.X), tonumber(v.Y)
+			if x and y then
+				record.x = math.floor(x)
+				record.y = math.floor(y)
+			end
+			return record
 		end,
 		decode = function(v)
 			if type(v) ~= "table" then
@@ -238,9 +256,10 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			elseif typeof(v) == "Instance" and v:IsA("Player") then
 				return v.UserId
 			end
-			return nil
+			return false -- nobody picked — see the dropdown codec for why not nil
 		end,
-		decode = function(v) return v end, -- number | { number } — handle:Set resolves ids live
+		-- number | { number } — handle:Set resolves ids live
+		decode = function(v) if v == false then return nil end return v end,
 	},
 }
 
