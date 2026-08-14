@@ -429,21 +429,41 @@ return function(opts: any)
 		}),
 	})
 
-	-- Nav buttons live in their own frame so the sidebar's UIListLayout never
+	-- Nav buttons live in their own frames so the sidebar's UIListLayout never
 	-- tries to lay out the full-height Border hairline (which would otherwise
 	-- consume the whole column and push the nav buttons off-screen).
-	local nav = Create("Frame", {
-		Name = "Nav",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Parent = sidebar,
-	}, {
-		Create.padding(16, 0),
-		Create.listLayout({
-			HorizontalAlignment = Enum.HorizontalAlignment.Center,
-			Padding = UDim.new(0, 10),
-		}),
-	})
+	--
+	-- Two clusters, not one: `CreateTab{ Pin = "bottom" }` lands in the bottom one,
+	-- which grows *up* from the bottom edge. That's what lets a menu separate a
+	-- class of tab from the rest — settings, or a "universal" section — instead of
+	-- one undifferentiated stack. Both are AutomaticSize.Y, so each takes only the
+	-- height its own buttons need; a plain Frame doesn't sink input either, so
+	-- even if a long rail made the two meet in the middle neither can swallow the
+	-- other's clicks.
+	local function newNavCluster(bottom: boolean): Frame
+		return Create("Frame", {
+			Name = bottom and "NavBottom" or "NavTop",
+			AnchorPoint = bottom and Vector2.new(0, 1) or Vector2.new(0, 0),
+			Position = bottom and UDim2.fromScale(0, 1) or UDim2.fromScale(0, 0),
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Parent = sidebar,
+		}, {
+			bottom and Create.padding(0, 0, 16, 0) or Create.padding(16, 0, 0, 0),
+			Create.listLayout({
+				HorizontalAlignment = Enum.HorizontalAlignment.Center,
+				VerticalAlignment = bottom and Enum.VerticalAlignment.Bottom
+					or Enum.VerticalAlignment.Top,
+				Padding = UDim.new(0, 10),
+			}),
+		})
+	end
+	local navTop = newNavCluster(false)
+	local navBottom = newNavCluster(true)
+	local function navFor(pin: string?): Frame
+		return pin == "bottom" and navBottom or navTop
+	end
 
 	local content = Create("ScrollingFrame", {
 		Name = "Content",
@@ -833,9 +853,17 @@ return function(opts: any)
 	})
 
 	local minimized = false
+	-- Nav flyouts don't get a MouseLeave when the window vanishes from under the
+	-- cursor, so hiding/unloading drops them explicitly (see Tab:_hideFlyout).
+	local function hideFlyouts()
+		for _, tab in tabs do
+			tab:_hideFlyout()
+		end
+	end
 	local function setMinimized(value: boolean)
 		minimized = value
 		if value then
+			hideFlyouts()
 			-- shrink + fade the whole window away together, then hide it once the
 			-- fade has fully played (no abrupt cut — it's already invisible).
 			Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
@@ -920,8 +948,20 @@ return function(opts: any)
 		end
 		Log.field("CreateTab", "Name", tabOpts and tabOpts.Name, "string")
 		Log.field("CreateTab", "Icon", tabOpts and tabOpts.Icon, "string")
-		local tab = Tab(ctx, tabOpts or {})
-		tab.button.Parent = nav
+		Log.field("CreateTab", "Desc", tabOpts and tabOpts.Desc, "string")
+		Log.field("CreateTab", "Badge", tabOpts and tabOpts.Badge, "string")
+		Log.field("CreateTab", "Pin", tabOpts and tabOpts.Pin, "string")
+		Log.field("CreateTab", "Style", tabOpts and tabOpts.Style, "string")
+		Log.field("CreateTab", "Color", tabOpts and tabOpts.Color, "Color3")
+		Log.field("CreateTab", "Dot", tabOpts and tabOpts.Dot, { "boolean", "Color3" })
+		Log.field("CreateTab", "Rail", tabOpts and tabOpts.Rail, "boolean")
+		Log.field("CreateTab", "Separator", tabOpts and tabOpts.Separator, "boolean")
+		Log.field("CreateTab", "Order", tabOpts and tabOpts.Order, "number")
+		Log.field("CreateTab", "Callback", tabOpts and tabOpts.Callback, "function")
+		Log.field("CreateTab", "Visible", tabOpts and tabOpts.Visible, "boolean")
+		-- `any`: the handle grows a Select method below, and the hooks the tab
+		-- exposes for us are deliberately untyped.
+		local tab: any = Tab(ctx, tabOpts or {})
 		tab.page.Parent = content
 
 		-- Inset the page explicitly and size it to the scroll area's *visible*
@@ -940,13 +980,67 @@ return function(opts: any)
 		task.defer(fitPage)
 
 		local index = #tabs + 1
-		tab.button.LayoutOrder = index
+		-- ×10 so a tab's separator hairline can be ordered just above its button
+		-- (order*10 - 1) without colliding with the tab before it. `Order` overrides
+		-- creation order, for a menu that builds its tabs in a different sequence
+		-- from the one it wants them shown in.
+		local order = tab.order or index
+		tab.button.LayoutOrder = order * 10
+		if tab.separator then
+			tab.separator.LayoutOrder = order * 10 - 1
+		end
+
+		-- Mount into the cluster its Pin asked for; `tab:SetPin` re-runs this,
+		-- since the nav frames live here and the tab can't reach them itself.
+		local function mountNav(pin: string)
+			local cluster = navFor(pin)
+			tab.button.Parent = cluster
+			if tab.separator then
+				tab.separator.Parent = cluster
+			end
+		end
+		mountNav(tab.pin)
+		tab._onPin = mountNav
+
 		table.insert(tabs, tab)
 		tab.button.Activated:Connect(function()
 			select(index)
 		end)
+		function tab:Select()
+			select(index)
+		end
+
+		-- Hiding the tab that's currently open would otherwise leave its page on
+		-- screen with nothing in the sidebar selected, so fall through to the next
+		-- visible tab (and re-open this one if it comes back while it's the active
+		-- index).
+		tab._onVisible = function(visible: boolean)
+			if visible then
+				if activeIndex == index then
+					select(index)
+				end
+				return
+			end
+			if activeIndex ~= index then
+				return
+			end
+			for i, other in tabs do
+				if i ~= index and other:IsVisible() then
+					select(i)
+					return
+				end
+			end
+			tab:_setActive(false) -- nothing left to show
+		end
+
 		if index == 1 then
 			select(1)
+		end
+		-- Routed through SetVisible rather than hiding the button here, so a tab
+		-- built hidden takes the same "select something else" path as one hidden
+		-- later (a game-specific tab that only appears in the games it supports).
+		if tabOpts and tabOpts.Visible == false then
+			tab:SetVisible(false)
 		end
 		return tab
 	end
@@ -1093,6 +1187,7 @@ return function(opts: any)
 		table.clear(connections)
 		binds:Destroy() -- drops every registered binding with the listeners
 		ctx:ClosePopover()
+		hideFlyouts()
 		Singleton.release(record)
 		if splash then
 			splash:Destroy() -- torn down mid-boot: don't leave the splash on screen
@@ -1117,9 +1212,22 @@ return function(opts: any)
 	function window:CreateSettingsTab(settingsOpts: any?)
 		settingsOpts = settingsOpts or {}
 		print(("[Uranium] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
+		-- Every CreateTab option is forwarded, so the settings tab can be pinned
+		-- away from the feature tabs (`CreateSettingsTab{ Pin = "bottom" }`) or
+		-- given its own colour like any other. Defaults are unchanged: top of the
+		-- rail, window accent.
 		local tab = window:CreateTab({
 			Name = settingsOpts.Name or "Settings",
 			Icon = settingsOpts.Icon or "gear",
+			Desc = settingsOpts.Desc,
+			Badge = settingsOpts.Badge,
+			Pin = settingsOpts.Pin,
+			Style = settingsOpts.Style,
+			Color = settingsOpts.Color,
+			Dot = settingsOpts.Dot,
+			Rail = settingsOpts.Rail,
+			Separator = settingsOpts.Separator,
+			Order = settingsOpts.Order,
 		})
 
 		-- Interface ──────────────────────────────────────────────────────────────

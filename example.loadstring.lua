@@ -23,8 +23,16 @@ local Window = Uranium:CreateWindow({
 
 --------------------------------------------------------------------------------
 -- TAB 1 · Home
+--
+-- The sidebar is icon-only, so `Name`/`Desc`/`Badge` are what the hover flyout
+-- shows — that's the tab's label. Everything else about a tab is optional and
+-- listed under "Tab" in DOCS.md: Pin, Color, Style, Dot, Rail, Separator.
 --------------------------------------------------------------------------------
-local Home = Window:CreateTab({ Name = "Home", Icon = "home" })
+local Home = Window:CreateTab({
+	Name = "Home",
+	Icon = "home",
+	Desc = "Profile and session info.",
+})
 
 local Profile = Home:CreateGroup({ Title = "Profile", Column = 1 }) -- 1 = left
 Profile:Player({
@@ -56,7 +64,11 @@ Session:Button({
 --------------------------------------------------------------------------------
 -- TAB 2 · Components
 --------------------------------------------------------------------------------
-local Components = Window:CreateTab({ Name = "Components", Icon = "layers" })
+local Components = Window:CreateTab({
+	Name = "Components",
+	Icon = "layers",
+	Desc = "Every control in the library.",
+})
 
 -- left column ----------------------------------------------------------------
 local Inputs = Components:CreateGroup({ Title = "Inputs", Column = 1 })
@@ -231,10 +243,81 @@ Appearance:Paragraph({ Title = "Paragraph", Body = "Title plus body text for not
 -- left out of this demo for now so the tour stays focused on the core controls.
 
 --------------------------------------------------------------------------------
--- TAB 3 · Settings (built in — accent, toggle key, config save/load)
--- Create it LAST so its auto-load pass sees every flagged control above.
+-- TAB 3 + 4 · two CLASSES of tab, told apart at a glance
+--
+-- This is what the tab options are for. A script hub usually has two kinds of
+-- tab and the sidebar gives you no way to tell them apart: mods that work in any
+-- game, and mods that only mean something in the game you happen to be in. So:
+--
+--   * they get their own `Color` (blue = universal, amber = this game only),
+--     which paints the active tile, the rail, the dot and the flyout badge;
+--   * a `Dot` marks them even when they're not selected — no hover needed;
+--   * `Separator` cuts the rail above them, so they read as their own cluster;
+--   * `Badge`/`Desc` spell it out in the flyout;
+--   * the game tab is `Style = "solid"` — a filled tile, the loudest of the
+--     three active styles, because it's the one tab that isn't always there.
 --------------------------------------------------------------------------------
-Window:CreateSettingsTab()
+local Universal = Window:CreateTab({
+	Name      = "Player Mods",
+	Icon      = "person",
+	Desc      = "Universal — works in any game.",
+	Badge     = "Global",
+	Color     = Color3.fromHex("4AA8E0"),
+	Dot       = true,
+	Separator = true, -- start a new cluster in the rail
+})
+local Movement = Universal:CreateGroup({ Title = "Movement", Column = 1 })
+Movement:Slider({ Name = "WalkSpeed", Min = 16, Max = 200, Default = 16, Flag = "walkspeed" })
+Movement:Slider({ Name = "JumpPower", Min = 50, Max = 300, Default = 50, Flag = "jumppower" })
+Movement:Toggle({
+	Name = "Infinite Jump", Desc = "Bound to J — right-click the chip for the mode.",
+	Keybind = Enum.KeyCode.J, KeybindMode = "Toggle", Flag = "infjump",
+})
+local Safety = Universal:CreateGroup({ Title = "Safety", Column = 2 })
+Safety:Toggle({ Name = "No Fall Damage", Flag = "nofall" })
+Safety:Toggle({ Name = "Anti AFK", Default = true, Flag = "antiafk" })
+
+-- The game tab, hidden until we know the game is supported. `Visible = false` at
+-- build time takes the same path as tab:SetVisible(false) later, so nothing
+-- selects a tab that isn't in the sidebar.
+local ThisGame = Window:CreateTab({
+	Name    = "This Game",
+	Icon    = "bug",
+	Desc    = "Only for the place you're in.",
+	Badge   = "Game",
+	Color   = Color3.fromHex("FFC53D"),
+	Style   = "solid",
+	Visible = false,
+	Callback = function(tab)
+		-- Fires every time the tab is opened — the hook for re-scanning whatever
+		-- the game side of a hub needs to find fresh.
+		print("[demo] game tab opened:", tab:GetColor())
+	end,
+})
+local Detected = ThisGame:CreateGroup({ Title = "Detected", Column = 1 })
+Detected:Label({ Key = "PlaceId", Value = tostring(game.PlaceId) })
+Detected:Paragraph({
+	Title = "Supported",
+	Body  = "A real hub swaps this tab's name, icon and contents per game, then "
+	     .. "shows it with tab:SetVisible(true). Everything here is settable at "
+	     .. "runtime: SetName / SetIcon / SetColor / SetStyle / SetDot / SetPin.",
+})
+-- Pretend we just recognized the game.
+ThisGame:SetName("Metro Destruction Wars")
+ThisGame:SetVisible(true)
+
+--------------------------------------------------------------------------------
+-- TAB 5 · Settings (built in — accent, toggle key, config save/load)
+-- Create it LAST so its auto-load pass sees every flagged control above.
+--
+-- Pinned to the BOTTOM of the rail: it isn't a feature tab, and the bottom
+-- cluster is where a chrome tab belongs. CreateSettingsTab forwards every
+-- CreateTab option, so it takes Pin / Color / Style / Dot like any other tab.
+--------------------------------------------------------------------------------
+Window:CreateSettingsTab({
+	Pin  = "bottom",
+	Desc = "Accent, keybind, configs.",
+})
 
 -- A keybind with no control attached, for logic the menu doesn't expose. Same
 -- modes, same router (so it pauses while a keybind chip is capturing a key).
@@ -243,4 +326,4 @@ Window:Bind(Enum.KeyCode.F, function()
 	Window:Notify({ Title = "Bind", Text = "F pressed." })
 end, "Press")
 
-print("[Uranium] demo built — Home / Components / Settings tabs ready")
+print("[Uranium] demo built — Home / Components / Player / This Game / Settings tabs ready")

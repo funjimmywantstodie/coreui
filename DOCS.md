@@ -188,14 +188,62 @@ anything unrecognized) for the original accent-colored toast with no icon.
 
 ```lua
 local Tab = Window:CreateTab({
-    Name = "Home",   -- sidebar label / tooltip (default "Tab")
-    Icon = "home",   -- Lucide icon short-name  (default "gear")
+    Name  = "Home",   -- flyout label            (default "Tab")
+    Icon  = "home",   -- Lucide icon short-name  (default "gear")
+    Desc  = nil,      -- second flyout line
+    Badge = nil,      -- small chip in the flyout, in the tab's colour
 })
 ```
+
+The sidebar is icon-only, so the **hover flyout is the tab's label**: hovering
+the button shows `Name`, then `Desc`, then a `Badge` chip. It's placed beside the
+button, flips inside the window when there's no room, and wraps at 200px.
+
+### Making one tab read differently from another
+
+A hub usually has two classes of tab — mods that work anywhere, and mods for the
+game you're in — and by default they look like the same stack of grey glyphs.
+These options exist to separate them:
+
+```lua
+local Universal = Window:CreateTab({
+    Name      = "Player Mods",
+    Icon      = "person",
+    Desc      = "Universal — works in any game.",
+    Badge     = "Global",
+    Color     = Color3.fromHex("4AA8E0"),  -- this tab's own accent
+    Dot       = true,                      -- always-on marker in that colour
+    Separator = true,                      -- hairline above it in the rail
+    Pin       = "top",                     -- "top" (default) | "bottom"
+})
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `Pin` | `"top"` | Which end of the sidebar it sits at. The bottom cluster grows upward from the bottom edge — where a settings / chrome tab belongs. |
+| `Color` | window accent | A per-tab accent for the active tile, the rail, the dot and the flyout badge. It's ramped exactly like the window accent (mark / fill / tint). A tab with its own `Color` ignores `SetAccent`; without one it re-themes live. |
+| `Style` | `"tile"` | How the active state draws. `"tile"` = tinted tile + coloured icon (the tuned default). `"solid"` = filled tile with the icon knocked out — loud, for the one tab that's a different *kind* of thing. `"plain"` = no tile, icon + rail only. |
+| `Dot` | `nil` | `true` for a small marker in the tab's colour, or a `Color3` of its own. Visible while the tab is **not** selected — it's how you tell tabs apart without hovering or clicking. |
+| `Rail` | `true` | `false` drops the 3×18px accent rail in the sidebar gutter. |
+| `Separator` | `false` | A hairline above the button, breaking the rail into clusters. |
+| `Order` | creation order | Sort position within its cluster. |
+| `Visible` | `true` | `false` builds the tab but keeps it out of the sidebar — for a game-specific tab you only reveal once you know the game. |
+| `Callback` | `nil` | `f(tab)` on every select. Use it to refresh whatever the tab shows. |
 
 | Method | Description |
 | --- | --- |
 | `Tab:CreateGroup(opts)` | Add a card. Returns a **Group** control surface. |
+| `Tab:Select()` | Open this tab. |
+| `Tab:IsActive()` | Is it the open one? |
+| `Tab:SetVisible(bool)` / `Tab:IsVisible()` | Show/hide the nav button. Hiding the open tab falls through to the next visible one. |
+| `Tab:SetName(text)` · `SetDesc(text)` · `SetBadge(text)` | The flyout's three lines. |
+| `Tab:SetIcon(name)` | Swap the icon (any Lucide short-name). |
+| `Tab:SetColor(color3\|nil)` / `Tab:GetColor()` | Set/clear the per-tab accent. `nil` goes back to following the window accent. |
+| `Tab:SetStyle(style)` · `SetDot(v)` · `SetRail(bool)` · `SetPin(pin)` | The rest of the above, at runtime. |
+
+Everything is settable after the fact, so a hub can react to what it finds —
+rename and reveal the game tab once it recognizes the place, dot the tab that has
+features running, colour a tab red when its game isn't supported.
 
 ---
 
@@ -553,6 +601,7 @@ Window:DeleteConfig("loadout")
 Window:CreateSettingsTab({
     Name = "Settings",  -- tab label (default "Settings")
     Icon = "gear",      -- tab icon  (default "gear")
+    Pin  = "bottom",    -- every CreateTab option is forwarded (see Tab)
 })
 ```
 

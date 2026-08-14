@@ -117,6 +117,16 @@ function Context:RegisterAccent(fn: (Color3, Color3) -> ()): () -> ()
 	end
 end
 
+-- The three derived weights for an ARBITRARY colour, in the same order the live
+-- ones sit on ctx: hover / large-fill / tinted-tile. For anything that paints a
+-- colour the window accent doesn't own — a per-tab accent (components/Tab.lua) —
+-- so it ramps exactly like SetAccent ramps the global one instead of growing a
+-- second, hand-rolled set of shades. Keep reading ctx.AccentFill / ctx.AccentSoft
+-- for the live accent; this is only for the exceptions.
+function Context:Shades(color: Color3): (Color3, Color3, Color3)
+	return hover(color), fill(color), soft(self.Theme, color)
+end
+
 function Context:SetAccent(color: Color3)
 	self.Accent = color
 	self.AccentHover = hover(color)

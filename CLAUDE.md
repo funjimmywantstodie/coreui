@@ -94,7 +94,8 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
-- `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right)
+- `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right) — plus the
+  tab-identity options and setters under **Tabs & the sidebar** below
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
   :Label :Divider :List :Player :Image :Custom :DataGrid :MediaPlayer`
@@ -132,6 +133,47 @@ ScreenGuis named `Theme.Brand.name`, which covers a broken/cleared record or a
 pre-guard build still on screen. `AllowMultiple = true` opts a window out of both
 halves. `Singleton.release` no-ops unless the stored record is still ours, so a
 late teardown can't evict a newer window.
+
+## Tabs & the sidebar
+
+`CreateTab` is `{ Name, Icon }` plus a set of options whose entire job is telling
+one *class* of tab from another — the case the icon rail is bad at, where "mods
+that work in any game" and "mods for the game you're in" look like the same stack
+of grey glyphs:
+
+`Pin` (`"top"`/`"bottom"`) · `Color` (per-tab accent) · `Style`
+(`tile`/`solid`/`plain`) · `Rail` · `Dot` · `Separator` · `Desc` · `Badge` ·
+`Order` · `Visible` · `Callback`. Every one has a runtime setter on the handle
+(`SetPin/SetColor/SetStyle/SetRail/SetDot/SetIcon/SetName/SetDesc/SetBadge/
+SetVisible`, plus `Select`, `IsActive`, `IsVisible`, `GetColor`), because a hub
+learns what game it's in *after* it builds its UI.
+
+Four things worth knowing before touching this:
+
+- **The sidebar has two clusters, not one.** `Window.lua`'s `newNavCluster`
+  builds `NavTop` (grows down from the top) and `NavBottom` (grows up from the
+  bottom edge); both are `AutomaticSize.Y`, and a plain Frame doesn't sink input,
+  so they can't steal each other's clicks even if a long rail made them meet.
+  `Pin` picks one, and `tab:SetPin` reparents — which is why the pin hook lives
+  in Window (`tab._onPin`, installed at mount) rather than in the tab.
+- **Nav buttons are ordered `order * 10`**, leaving `order*10 - 1` for the
+  `Separator` hairline, which is a sibling in the same cluster.
+- **A per-tab `Color` is ramped through `ctx:Shades(color)`** — the same
+  hover/fill/soft derivation `SetAccent` applies to the global accent, exported
+  from `util/Context.lua` for exactly this. Never hand-roll a second ramp. A tab
+  with its own colour deliberately ignores `SetAccent`; one without re-themes live.
+- **The hover flyout is the tab's label.** The nav is icon-only, so `Name` had no
+  representation on screen at all before it existed (the reference mock carried it
+  as `data-tip`; DOCS.md had always claimed it was a tooltip). It's built lazily
+  on first hover, mounts into `ctx.overlay` (not the sidebar — that's inside
+  `body` and would draw under the content), fades via `util/Fade.lua`, and
+  `Window`'s `hideFlyouts()` drops them on minimize/unload because a button that
+  vanishes under the cursor never fires `MouseLeave` and a leftover flyout would
+  land in the window fade's snapshot.
+
+Hiding the *open* tab (`SetVisible(false)`) falls through to the next visible one
+— Window owns that, via the `tab._onVisible` hook, so `Visible = false` at build
+time takes the same path as hiding one later.
 
 ## Boot splash
 
