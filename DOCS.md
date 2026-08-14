@@ -1214,12 +1214,19 @@ notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
 **Unload** button.
 
+Picking a config in **Saved Configs** also fills the **Config Name** box with it,
+so the obvious gesture — pick `main`, press *Save* — overwrites the config you
+picked instead of writing a second one under whatever the box still held. It only
+fills a box that's empty or still holds the name *it* put there, so text you typed
+is never clobbered, and clearing the selection doesn't clear the box.
+
 The second return is every handle the panel built, also on `tab.Controls`:
 
 | Key | What |
 | --- | --- |
 | `Accent` `ToggleKey` `Notifications` `Hud` | The Interface controls. |
 | `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
+| `OnSelect(fn)` → `unsub` | `fn(name)` whenever the selection changes. |
 | `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |
 | `Interface` `Configuration` `Danger` | The groups, to add your own controls to. |
 | `Unload` | The unload button. |
@@ -1231,6 +1238,27 @@ c.Refresh()                    -- pick up a config you wrote yourself
 print(c.List:Get())            -- what's selected
 c.Configuration:Button({ Label = "Import into this game", Callback = ... })
 ```
+
+**`OnSelect`** is the hook for a list whose entries aren't the file names on disk.
+If you show `"main - Some Game"` in the dropdown, that's what lands in the name
+box; hear about the pick and put the real name there instead:
+
+```lua
+local unsub = c.OnSelect(function(name)
+    if name == nil then return end          -- selection was dropped
+    c.Name:Set(realFileNameFor(name))       -- your name wins over the prefill
+end)
+```
+
+- `name` is the option that was picked, or `nil` when the selection is dropped
+  (deleting the selected config, or a `SetOptions` that pruned it).
+- It fires for a **programmatic `List:Set` too**, not just a user pick — so the
+  post-save re-select and the auto-load pass both reach you. It's deduped against
+  the last name announced, so a `Set` landing on what's already picked is silent.
+- Writing `c.Name` from inside the handler is expected: what you write becomes the
+  value the prefill treats as its own, so the *next* pick still refills.
+- A handler that throws is `pcall`'d and warned about.
+- No initial call — nothing is selected when `CreateSettingsTab` returns.
 
 If you wrap the window's config methods to add your own rules, return
 `false, "handled"` from the wrapper when you've already told the user why —

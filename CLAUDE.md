@@ -355,6 +355,17 @@ each `(window, tab, opts?)`) composed by `Settings.build`. Three rules there:
   box, the saved-config dropdown, the auto-load switch, the button callbacks and
   the groups. They used to be closure locals, so a host couldn't refresh the list
   after its own write or read what was selected.
+- **Picking a config prefills the name box**, so pick-then-Save overwrites what
+  was picked rather than writing a second file. `filled` (the name *we* last put
+  there) is the guard: the box is only written when it's empty, still holds
+  `filled`, or already equals the incoming name — typed text is never clobbered,
+  and a cleared selection clears nothing. `controls.OnSelect(fn) -> unsub` is the
+  same event for hosts whose list isn't file names (Uranium shows other games'
+  configs as `"main - Some Game"` and substitutes the real name from here), which
+  is why a watcher that writes the box has what it wrote adopted as the new
+  `filled` — otherwise its correction reads as user typing and the next pick
+  refuses to refill. Fires on programmatic `list:Set` too (post-save re-select,
+  auto-load), deduped against the last name announced.
 - `Sections = { Config = false }` drops a section; the Configuration group tests
   the **public** `window.ConfigSupported` (so a host can set it false to stand the
   group down), and `Notify = false` — or a wrapper returning `false, "handled"` —
