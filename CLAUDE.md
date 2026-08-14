@@ -293,12 +293,21 @@ is a wall of `— · toggle` rows burying the few the user actually bound. A bin
 that is currently *on* is exempt — `Always` ignores its key by design, and a
 live feature that isn't listed makes the HUD wrong about what's running.
 
-Five things to respect:
+Six things to respect:
 
 - **It's a SIBLING of `main` in the ScreenGui, not a child.** Minimize and the
   toggle key hide `main`; the HUD has to survive both or it's pointless. It still
   dies with the ScreenGui, and `Window:Destroy` calls `hud:Destroy()` because its
   drag/Heartbeat listeners outlive instances like the window's own do.
+- **It's two cards in a transparent `root`, not one panel.** `root` owns the
+  position, the drag, the `Fade` and the entrance `UIScale`; under it sit the
+  bind `panel` and — as its own bordered bar — the FPS/ping readout. The readout
+  was a row *inside* the list behind a hairline, which both read as a strange
+  first bind and vanished with the collapse; outside the collapsing body it
+  survives it, which is the state you most want numbers in. `handle.Frame` is
+  `root` (`handle.Panel` is the bind card), the Heartbeat sampler is gated on
+  `visible` only, and the bar hides itself when it holds no pills so the
+  layout's `GAP` goes with it.
 - **Rows are pooled and repainted in place.** The registry notifies on every
   press — a Hold key down/up must not build instances.
 - **One accent element per row.** The live dot is it; an active row lifts to

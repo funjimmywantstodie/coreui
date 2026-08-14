@@ -19,6 +19,9 @@
 --    with the menu closed is the entire point — but it still lives in the
 --    window's ScreenGui, so it dies with it and needs no teardown of its own
 --    beyond its input connections.
+--  * The FPS / ping readout is its OWN card under the panel, not a row inside
+--    it — it isn't a bind and it doesn't come from the registry. Being outside
+--    the collapsing body is the point: fold the binds away and the numbers stay.
 --  * Rows are POOLED and repainted in place. The registry notifies on every
 --    press, so a Hold key down/up must not churn instances.
 --  * One accent element per row (the live dot). An active row lifts to `card`
@@ -41,6 +44,8 @@ local Log = require(script.Parent.Parent.util.Log)
 local WIDTH = 248
 local HEADER_H = 30
 local ROW_H = 22
+local STATS_H = 26 -- the readout bar, which is its own card under the panel
+local GAP = 6      -- ...and the air between the two
 local PAD_X = 12
 local NAME_X = 26
 local KEY_W = 110 -- right column: "RShift · always" in 11px mono, with room to spare
@@ -74,27 +79,42 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local connections: { RBXScriptConnection } = {}
 	local destroyed = false
 
-	-- ── panel ────────────────────────────────────────────────────────────────
-	-- A miniature of the window: chrome header over a bg body, one border, same
-	-- radius. It reads as part of the same UI without being a second window.
-	local panel = Create("Frame", {
+	-- ── root ─────────────────────────────────────────────────────────────────
+	-- Two cards stacked in one draggable unit: the bind panel, and the FPS/ping
+	-- readout as its own bar beneath it. `root` is transparent — it exists to own
+	-- the position, the drag, the fade and the entrance scale for both at once.
+	local root = Create("Frame", {
 		Name = "Hud",
 		Position = UDim2.fromOffset(tonumber(opts.X) or 16, tonumber(opts.Y) or 140),
 		Size = UDim2.fromOffset(WIDTH, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = colors.bg,
-		ClipsDescendants = true,
+		BackgroundTransparency = 1,
 		Visible = false, -- revealed below, so the fade snapshots a finished panel
 		ZIndex = 10,
 		Parent = parent,
 	}, {
+		Create.listLayout({ Padding = UDim.new(0, GAP) }),
+		Create("UIScale", {}),
+	})
+	local panelScale = root:FindFirstChildOfClass("UIScale") :: UIScale
+	local fade = Fade.new(root)
+
+	-- ── panel ────────────────────────────────────────────────────────────────
+	-- A miniature of the window: chrome header over a bg body, one border, same
+	-- radius. It reads as part of the same UI without being a second window.
+	local panel = Create("Frame", {
+		Name = "Panel",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = colors.bg,
+		ClipsDescendants = true,
+		LayoutOrder = 1,
+		Parent = root,
+	}, {
 		Create.corner(10),
 		Create.stroke(colors.border),
 		Create.listLayout(),
-		Create("UIScale", {}),
 	})
-	local panelScale = panel:FindFirstChildOfClass("UIScale") :: UIScale
-	local fade = Fade.new(panel)
 
 	local header = Create("Frame", {
 		Name = "Header",
@@ -191,37 +211,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 		Create.listLayout(),
 	})
 
-	local statsRow = Create("Frame", {
-		Name = "Stats",
-		Visible = false,
-		Size = UDim2.new(1, 0, 0, 24),
-		BackgroundTransparency = 1,
-		LayoutOrder = 1,
-		Parent = body,
-	}, {
-		Create.padding(0, PAD_X),
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 14),
-		}),
-	})
-	local statsBorder = Create("Frame", {
-		Name = "StatsBorder",
-		Visible = false,
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = colors.border_soft,
-		BorderSizePixel = 0,
-		LayoutOrder = 2,
-		Parent = body,
-	})
-
 	local list = Create("Frame", {
 		Name = "Binds",
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
-		LayoutOrder = 3,
+		LayoutOrder = 1,
 		Parent = body,
 	}, {
 		Create.padding(5, 0),
@@ -284,16 +279,41 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 	setHeaderSquared(opts.Collapsed ~= true)
 
-	-- ── stat pills ───────────────────────────────────────────────────────────
+	-- ── stat bar ─────────────────────────────────────────────────────────────
+	-- FPS / ping is NOT a row inside the bind list: it isn't a bind, it doesn't
+	-- come from the registry, and stuffing it above the rows behind a hairline
+	-- made it read as a strange first entry. It's its own card below the panel —
+	-- a sibling of it, not a child — which also means COLLAPSING the panel leaves
+	-- the readout up. That's the state you want it in most: binds folded away,
+	-- frames and ping still on screen.
+	local statsBar = Create("Frame", {
+		Name = "Stats",
+		Visible = false,
+		Size = UDim2.new(1, 0, 0, STATS_H),
+		BackgroundColor3 = colors.chrome,
+		LayoutOrder = 2,
+		Parent = root,
+	}, {
+		Create.corner(8),
+		Create.stroke(colors.border),
+		Create.padding(0, PAD_X),
+		Create.listLayout({
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 14),
+		}),
+	})
+
 	-- `key` is the trailing unit label AND the identity, so SetStat("FPS", …)
 	-- updates the same pill every tick and a caller's SetStat("Coins", "1.2k")
 	-- just appends another one.
 	local statLabels: { [string]: TextLabel } = {}
 	local statOrder = 0
+	-- An empty bar is no bar at all: `Stats = false`, or both readouts off and
+	-- nothing added by hand, and it disappears — the root's list layout skips
+	-- invisible children, so the gap under the panel goes with it.
 	local function syncStatsRow()
-		local any = next(statLabels) ~= nil
-		statsRow.Visible = showStats and any
-		statsBorder.Visible = statsRow.Visible
+		statsBar.Visible = showStats and next(statLabels) ~= nil
 	end
 	local function setStat(key: string, value: string?)
 		local label = statLabels[key]
@@ -319,7 +339,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				FontFace = Theme.Font.Mono,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				LayoutOrder = statOrder,
-				Parent = statsRow,
+				Parent = statsBar,
 			}) :: TextLabel
 			statLabels[key] = label
 			syncStatsRow()
@@ -467,7 +487,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local pos = Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
 	local function place(p: Vector2)
 		local vp = (parent :: any).AbsoluteSize
-		local size = panel.AbsoluteSize
+		local size = root.AbsoluteSize
 		if vp and vp.X > 0 and size.X > 0 then
 			p = Vector2.new(
 				math.clamp(p.X, MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)),
@@ -475,7 +495,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			)
 		end
 		pos = Vector2.new(math.round(p.X), math.round(p.Y))
-		panel.Position = UDim2.fromOffset(pos.X, pos.Y)
+		root.Position = UDim2.fromOffset(pos.X, pos.Y)
 	end
 	place(pos)
 	-- A viewport (or a collapse) that shrinks under the panel would otherwise
@@ -483,17 +503,18 @@ return function(ctx: any, parent: Instance, opts: any): any
 	table.insert(connections, (parent :: any):GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		place(pos)
 	end))
-	panel:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		place(pos)
 	end)
 
-	-- The whole panel is the drag handle (its rows are plain labels, so input
-	-- reaches the panel through them) — only the caret button is a click target.
+	-- Both cards drag as one unit — the handle is `root`, so the stat bar and the
+	-- gap between them are grabbable too (the rows and pills are plain labels, so
+	-- input reaches it through them). Only the caret button is a click target.
 	local dragging = false
 	local dragStart = Vector2.zero
 	local dragOrigin = pos
 	local dragMoved = false
-	panel.InputBegan:Connect(function(input)
+	root.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
@@ -521,7 +542,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			dragging = false
 			-- Clear the drag flag here rather than only in the caret's handler. The
 			-- caret is a TextButton and sinks input, so a click on it never reaches
-			-- panel.InputBegan to reset the flag — after any drag of the panel, the
+			-- root.InputBegan to reset the flag — after any drag of the panel, the
 			-- NEXT caret click would be swallowed as "that was a drag". Deferred
 			-- because Activated fires on this same release and has to still see it.
 			task.defer(function()
@@ -533,7 +554,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- ── FPS / ping ───────────────────────────────────────────────────────────
 	-- One connection, sampled twice a second: a per-frame label write would cost
 	-- more than the whole rest of the HUD, and a jittering number is unreadable
-	-- anyway. Skipped entirely while the panel is hidden or collapsed.
+	-- anyway. Skipped entirely while hidden — but NOT while collapsed: the bar is
+	-- its own card outside the collapsing body and stays on screen, so it has to
+	-- keep counting.
 	local visible = opts.Visible ~= false
 	local collapsed = opts.Collapsed == true
 	if showFps or showPing then
@@ -546,7 +569,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			end
 			local fps = math.floor(frames / elapsed + 0.5)
 			frames, elapsed = 0, 0
-			if not visible or collapsed then
+			if not visible then
 				return
 			end
 			if showFps then
@@ -565,7 +588,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 
 	-- ── handle ───────────────────────────────────────────────────────────────
 	local handle: any = {}
-	handle.Frame = panel
+	handle.Frame = root  -- the whole unit: panel + stat bar
+	handle.Panel = panel
 	handle.OnVisible = nil :: ((boolean) -> ())? -- Window syncs its settings toggle through this
 
 	function handle:IsVisible(): boolean
@@ -581,7 +605,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		value = value ~= false
 		visible = value
 		if value then
-			panel.Visible = true
+			root.Visible = true
 			-- Repaint once the fade lands: rows that changed state while the panel
 			-- was hidden were driven by the fade's snapshot, not by their own paint,
 			-- so their fill is stale until the snapshot is released at alpha 0.
@@ -604,12 +628,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 			end
 			place(pos)
 		elseif animate == false then
-			panel.Visible = false
+			root.Visible = false
 		else
 			Tween.play(panelScale, Tween.MenuOut, { Scale = 0.94 })
 			fade:To(Tween.MenuOut, 1, function()
 				if not visible then
-					panel.Visible = false
+					root.Visible = false
 				end
 			end)
 		end
@@ -702,7 +726,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		table.clear(connections)
 		unsubscribeBinds()
 		unsubscribeAccent()
-		panel:Destroy()
+		root:Destroy()
 	end
 
 	-- The caret is inside the drag surface, so a drag that happens to start on it
@@ -722,12 +746,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- Reveal on a deferred pass: the fade has to snapshot a finished panel, and
 	-- the caller's controls (and therefore its binds) are usually still being
 	-- built at this point.
-	-- `not panel.Visible` so a caller that already showed it on this frame
+	-- `not root.Visible` so a caller that already showed it on this frame
 	-- (Window:SetHudVisible, which builds and shows in one go) doesn't get the
 	-- entrance played twice.
 	if visible then
 		task.defer(function()
-			if not destroyed and visible and not panel.Visible then
+			if not destroyed and visible and not root.Visible then
 				handle:SetVisible(true)
 			end
 		end)

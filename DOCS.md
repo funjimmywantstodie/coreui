@@ -193,16 +193,21 @@ menu — every bind you've named, its key and mode, lit while it's live, plus FP
 and ping.
 
 ```
-┌───────────────────────────────┐
-│ ▍ Active Binds              ⌃ │   drag anywhere · caret collapses it
-├───────────────────────────────┤
-│  142 FPS     38 MS            │
-├───────────────────────────────┤
-│ ● Auto Parry        F · toggle │   ← lit: running right now
-│ ○ Aim Assist        E · hold   │
-│ ● ESP               X · always │
-└───────────────────────────────┘
+┌────────────────────────────────┐
+│ ▍ Active Binds               ⌃ │   drag anywhere · caret collapses it
+├────────────────────────────────┤
+│ ● Auto Parry         F · toggle│   ← lit: running right now
+│ ○ Aim Assist         E · hold  │
+│ ● ESP                X · always│
+└────────────────────────────────┘
+┌────────────────────────────────┐
+│ 142 FPS   38 MS                │   ← its own bar: stays up when collapsed
+└────────────────────────────────┘
 ```
+
+The readout is a **separate card**, not a row in the list — it isn't a bind, and
+keeping it outside the panel means collapsing the binds away (the caret) leaves
+your frames and ping on screen. Both cards drag as one.
 
 It's **off by default**. Turn it on with `Hud = true` at build time, from the
 Settings tab's *Keybind HUD* switch, or in code:
@@ -216,7 +221,7 @@ Uranium:CreateWindow({ Hud = {            -- or tune it
     MaxRows  = 10,              -- rows before "+N more" (default 10)
     Visible  = true,            -- start shown           (default true)
     Collapsed = false,          -- start collapsed to the header (default false)
-    Stats    = true,            -- the FPS / ping row    (default true)
+    Stats    = true,            -- the FPS / ping bar    (default true)
     Fps      = true,            -- FPS readout           (default true)
     Ping     = true,            -- ping readout          (default true)
 } })
