@@ -41,6 +41,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 	Log.field("CreateWindow", "Splash", opts.Splash, { "boolean", "table" })
 	Log.field("CreateWindow", "Hud", opts.Hud, { "boolean", "table" })
+	Log.field("CreateWindow", "Keybinds", opts.Keybinds, "boolean")
 	Log.field("CreateWindow", "OnFlag", opts.OnFlag, "function")
 
 	-- where configs are saved on disk + which key shows/hides the window
@@ -590,6 +591,10 @@ return function(opts: any)
 	})
 
 	local ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
+	-- `Keybinds = false` takes the bind chip off every control that would
+	-- otherwise grow one by default (Toggle). A control that asks for a keybind
+	-- explicitly still gets it — this is the default, not a ban.
+	ctx.Keybinds = opts.Keybinds ~= false
 
 	-- `CreateWindow{ OnFlag = function(name, kind) end }` — installed before a
 	-- single control exists, so a loader sees every flag the menu ever registers,

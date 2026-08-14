@@ -1,11 +1,21 @@
 --!strict
 -- components/Toggle.lua — 42×23 pill, 17px knob, +19px travel.
 --
--- Optionally carries a keybind chip in the same row (`Keybind` /
--- `KeybindMode`), so "hold B for walkspeed" is one option on the control rather
--- than a second control wired up by hand. The chip owns a binding in
--- util/Bind.lua; the toggle's value stays the single source of truth, which is
--- why Toggle mode asks for it via `GetState` instead of tracking its own.
+-- Every toggle carries a keybind chip in the same row, so "hold B for
+-- walkspeed" is one option on the control rather than a second control wired up
+-- by hand. The chip owns a binding in util/Bind.lua; the toggle's value stays
+-- the single source of truth, which is why Toggle mode asks for it via
+-- `GetState` instead of tracking its own.
+--
+-- The chip is built even when the call site says nothing about keys — empty,
+-- in Toggle mode — because "is this bindable?" isn't a decision the menu author
+-- should have to make on the user's behalf. It used to be opt-in, which meant
+-- hubs hardcoded a default key just to get the chip on screen, and every one of
+-- those landed in the bind HUD as a bind nobody asked for. An *unbound* chip
+-- costs the HUD nothing (util/Bind.lua's `IsListed` keeps keyless binds out),
+-- so the default is free. `Keybind` / `KeybindMode` / `KeybindModes` still
+-- preset it exactly as before; `Keybind = false` opts one control out, and
+-- `CreateWindow{ Keybinds = false }` opts the whole window out.
 
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
@@ -21,7 +31,9 @@ return function(ctx: any, opts: any)
 	opts = opts or {}
 	local colors = Theme.Colors
 	local where = Log.where("Toggle", opts.Name)
-	Log.field(where, "Keybind", opts.Keybind, "EnumItem")
+	-- `false` is the opt-out ("this toggle isn't bindable"), so it's a legal value
+	-- here alongside a key.
+	Log.field(where, "Keybind", opts.Keybind, { "EnumItem", "boolean" })
 	Log.field(where, "KeybindMode", opts.KeybindMode, "string")
 	Log.field(where, "KeybindModes", opts.KeybindModes, "table")
 	Log.field(where, "KeybindFlag", opts.KeybindFlag, "string")
@@ -92,10 +104,24 @@ return function(ctx: any, opts: any)
 		handle:Set(not state)
 	end)
 
-	-- ── optional keybind ─────────────────────────────────────────────────────
-	if opts.Keybind ~= nil or opts.KeybindMode ~= nil then
+	-- ── keybind ──────────────────────────────────────────────────────────────
+	-- On unless someone said otherwise. A keybind option on the control is that
+	-- someone either way: `Keybind = false` opts this one out, and any explicit
+	-- key / mode / mode-list turns it back on over a window-wide
+	-- `CreateWindow{ Keybinds = false }`.
+	local bindable
+	if opts.Keybind == false then
+		bindable = false
+	elseif opts.Keybind ~= nil or opts.KeybindMode ~= nil or opts.KeybindModes ~= nil then
+		bindable = true
+	else
+		bindable = ctx.Keybinds ~= false
+	end
+
+	if bindable then
 		local chip, chipHandle = BindChip(ctx, {
-			Key = opts.Keybind,
+			-- `true` (force the chip on) isn't a key — only a real one presets it.
+			Key = typeof(opts.Keybind) == "EnumItem" and opts.Keybind or nil,
 			Mode = opts.KeybindMode or "Toggle",
 			Modes = opts.KeybindModes,
 			Default = state,
@@ -117,9 +143,18 @@ return function(ctx: any, opts: any)
 		bind = chipHandle
 		handle.Bind = chipHandle
 		-- The key + mode persist separately from the toggle's own value, so a saved
-		-- config restores "hold B" as well as "on".
-		if opts.KeybindFlag then
-			ctx:RegisterFlag(opts.KeybindFlag, chipHandle, "bind")
+		-- config restores "hold B" as well as "on". A chip whose key doesn't
+		-- survive a config load is worse than no chip, and nothing now asks the
+		-- call site for one — so with no `KeybindFlag` given, derive it from the
+		-- toggle's own `Flag`. `<flag>_key` is the convention consumers were
+		-- already spelling out by hand, so a derived name matches what's in the
+		-- configs they've already saved. An explicit `KeybindFlag` still wins.
+		local keyFlag = opts.KeybindFlag
+		if keyFlag == nil and type(opts.Flag) == "string" and opts.Flag ~= "" then
+			keyFlag = opts.Flag .. "_key"
+		end
+		if keyFlag then
+			ctx:RegisterFlag(keyFlag, chipHandle, "bind")
 		end
 	end
 

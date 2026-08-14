@@ -23,6 +23,7 @@ export type Context = typeof(setmetatable(
 		AccentHover: Color3,
 		AccentFill: Color3,
 		AccentSoft: Color3,
+		Keybinds: boolean,
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
@@ -72,6 +73,11 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		AccentHover = hover(accent),
 		AccentFill = fill(accent),
 		AccentSoft = soft(theme, accent),
+		-- Are controls bindable unless they say otherwise? Window flips this from
+		-- `CreateWindow{ Keybinds = false }`; a control built without a Window (a
+		-- test harness) gets the default. Read it as `ctx.Keybinds ~= false` so a
+		-- context predating the field still means "yes".
+		Keybinds = true,
 		overlay = overlay,
 		Flags = {},
 		_consumers = {},

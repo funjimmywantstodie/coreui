@@ -467,9 +467,17 @@ end
 --     (the Settings tab's Toggle-UI bind), which never activates;
 --   * it needs a KEY. A HUD listing every bindable feature in the menu is a wall
 --     of "— · toggle" rows for things the user never bound, which buries the
---     handful they did. The exception is a bind that's currently ON: an "Always"
---     bind ignores its key by definition and may well have none, and a feature
---     that is running has to be visible or the panel is lying about what's live.
+--     handful they did. The one exception is an "Always" bind, which ignores its
+--     key by definition and may well have none — a feature pinned on has to be
+--     visible or the panel is lying about what's live.
+--
+-- That exception is scoped to "Always" on purpose. It used to be "on right now"
+-- in any mode, which was right while a chip meant somebody had deliberately made
+-- the feature bindable — but components/Toggle.lua now gives *every* toggle one,
+-- and "listed because its value is true" would turn the panel into a list of
+-- every feature you have enabled. A live Hold or a keyed Toggle still lists via
+-- the key clause; only a keyless one drops out, and a keyless bind is one the
+-- user can't have turned on from the keyboard anyway.
 -- `Hud = true/false` at registration overrides all three.
 function Binding:IsListed(): boolean
 	if self.hud ~= nil then
@@ -478,7 +486,8 @@ function Binding:IsListed(): boolean
 	if self.label == nil or self.mode == "None" then
 		return false
 	end
-	return self:_value() or Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown
+	return (self.mode == "Always" and self:_value())
+		or (Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown)
 end
 
 -- Sync the binding's idea of the value without firing the callback — used when

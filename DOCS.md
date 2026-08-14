@@ -115,12 +115,17 @@ local Window = Uranium:CreateWindow({
     LogoZoom     = 1,                        -- crop a margin baked into the art (default 1)
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
     Hud          = true,                     -- floating bind HUD (default off; see below)
+    Keybinds     = true,                     -- toggles carry a bind chip (default true)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
 })
 ```
 
 `ConfigFolder` may be a nested path (`"uranium/games/12345"`) — every folder on
 it is created — and `Window:SetConfigFolder(path)` re-scopes it later.
+
+`Keybinds = false` takes the bind chip off every toggle window-wide (see
+[Toggle](#toggle)). It's the default, not a ban: a control that asks for a
+keybind explicitly still gets one.
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
@@ -252,7 +257,7 @@ has a name to be listed under:
 
 | Where the bind comes from | What the HUD calls it |
 | --- | --- |
-| `Group:Toggle{ Name = "Aim", Keybind = ..., KeybindMode = "Hold" }` | the toggle's `Name` |
+| `Group:Toggle{ Name = "Aim" }`, once the user binds a key to its chip | the toggle's `Name` |
 | `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
 | `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
 
@@ -260,9 +265,12 @@ Three things stay out, so the panel is a short list of what you actually use
 rather than an inventory of the whole menu:
 
 - **anything with no key on it** — an unbound feature is a `— · toggle` row that
-  tells you nothing, and a hub full of them buries the binds you set. The one
-  exception is a bind that's **on right now** (an `Always` bind ignores its key
-  by design, and a running feature has to be visible or the HUD is lying);
+  tells you nothing, and since [every toggle carries a chip](#toggle) a hub full
+  of them would bury the binds you set. The one exception is an **`Always`**
+  bind that's on: it ignores its key by design and may well have none, and a
+  feature pinned on has to be visible or the HUD is lying. (Being *on* is not
+  itself enough — otherwise the panel becomes a list of every feature you have
+  enabled.);
 - a bind with **no name** (nothing to call it);
 - a **key picker** — a `Keybind` with no `Mode`, which holds a key but never
   activates.
@@ -416,6 +424,26 @@ local h = Group:Toggle({
 h:Get()        -- → boolean
 h:Set(false)
 ```
+
+**Every toggle is bindable.** It carries a [bind chip](#keybind-on-a-toggle) in
+its row with nothing bound and the mode set to `Toggle`, so the user picks a key
+whenever they want one — the call site doesn't have to decide up front. An
+unbound chip stays out of the [bind HUD](#bind-hud), so this costs nothing on
+screen but the pill itself.
+
+```lua
+Group:Toggle({ Name = "Fly" })                  -- chip: `None │ toggle`
+Group:Toggle({ Name = "Fly", Keybind = false }) -- no chip on this one
+Uranium:CreateWindow({ Keybinds = false })      -- no chip on any toggle
+```
+
+Presetting a key with `Keybind = Enum.KeyCode.B` is still supported and still
+means what it did — but it also puts the feature in the bind HUD from first
+launch, as a bind the user never chose. Leave it unset unless the key is genuinely
+part of the feature.
+
+With a `Flag` set and no explicit `KeybindFlag`, the key + mode persist under
+`<flag>_key` (see [Keybind on a Toggle](#keybind-on-a-toggle)).
 
 ### Button / ButtonRow
 
@@ -600,23 +628,35 @@ restores "hold LAlt", not just the key.
 
 #### Keybind on a Toggle
 
-Any `Toggle` can carry the same chip inline instead of being wired to a separate
-Keybind control. The toggle's value stays the source of truth, so a click and a
-keypress can't disagree:
+Every `Toggle` carries the same chip inline instead of being wired to a separate
+Keybind control — by default with no key and `Toggle` mode. The toggle's value
+stays the source of truth, so a click and a keypress can't disagree:
 
 ```lua
 Group:Toggle({
     Name = "Fly", Flag = "fly",
-    Keybind      = Enum.KeyCode.B,
-    KeybindMode  = "Hold",           -- Toggle | Hold | Always
+    Keybind      = Enum.KeyCode.B,   -- preset a key (or `false` — no chip at all)
+    KeybindMode  = "Hold",           -- Toggle | Hold | Always  (default Toggle)
     KeybindModes = { "Toggle", "Hold", "Always" },
     KeybindFlag  = "fly_key",        -- persists the key + mode separately
     Callback = function(on) print(on) end,
 })
 ```
 
+| Option | Effect |
+| --- | --- |
+| *(nothing)* | an empty chip in `Toggle` mode — the default |
+| `Keybind = <key>` | presets the key (and puts it in the HUD from launch) |
+| `Keybind = false` | no chip on this control |
+| `CreateWindow{ Keybinds = false }` | no chip on any toggle; an explicit `Keybind` / `KeybindMode` / `KeybindModes` overrides it back on |
+
+**The key persists with the toggle.** With a `Flag` and no `KeybindFlag`, the
+chip registers itself under `<flag>_key` — `Flag = "fly"` → `fly_key` — which is
+the convention hubs were already writing by hand, so derived names match the
+configs people have already saved. An explicit `KeybindFlag` still wins.
+
 `handle.Bind` exposes the chip's handle (`:Get()` / `:Set(key)` / `:GetMode()` /
-`:SetMode(m)`).
+`:SetMode(m)`), or is `nil` on a toggle that opted out.
 
 ### Dropdown (single select)
 

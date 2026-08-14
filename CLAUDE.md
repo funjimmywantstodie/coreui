@@ -89,7 +89,7 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,OnFlag?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,OnFlag?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?,Sections?,Notify?}` → `tab, controls` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)`/`:GetAccent()` · `:SetLogo(source, zoom?)` ·
   `:SetToggleKey(KeyCode)`/`:GetToggleKey()` ·
@@ -115,9 +115,10 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
     a full server is reachable. `:Get()` resolves live Player instances (single) or
     a live `{Player}` (multi) by UserId, so someone leaving just drops out. Flag
     codec `playerselect` persists UserId(s), not instances.
-  - `Keybind` takes an optional `Mode` (`Toggle`/`Hold`/`Press`/`Always`/`None`)
-    and `Toggle` an optional `Keybind`/`KeybindMode`/`KeybindFlag` — see
-    **Keybinds & modes** below.
+  - `Keybind` takes an optional `Mode` (`Toggle`/`Hold`/`Press`/`Always`/`None`);
+    `Toggle` is bindable **by default** (empty chip, `Toggle` mode) and takes
+    `Keybind`/`KeybindMode`/`KeybindModes`/`KeybindFlag` to preset it or
+    `Keybind = false` to drop it — see **Keybinds & modes** below.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
@@ -324,10 +325,20 @@ single plain segment exactly like before. Two consumers:
   Toggle-UI bind are untouched. Any other `Mode` makes `Callback(active, info)`
   the *activation* callback (`info = { Key, Mode, KeyName }`); `OnChanged(key,
   mode)` fires on rebind/mode-cycle in every mode.
-- **`Toggle{ Keybind = Enum.KeyCode.B, KeybindMode = "Hold", KeybindFlag = "…" }`**
-  — the sugar path, a compact chip in the toggle's own row. The toggle's value
-  stays the source of truth (the binding asks for it via `GetState`), so a manual
-  click and a keypress can't disagree. `handle.Bind` exposes the chip handle.
+- **`Toggle`** — the sugar path, a compact chip in the toggle's own row. The
+  toggle's value stays the source of truth (the binding asks for it via
+  `GetState`), so a manual click and a keypress can't disagree. `handle.Bind`
+  exposes the chip handle. **The chip is built unconditionally** — empty, in
+  `Toggle` mode — because "is this bindable?" is not the menu author's call to
+  make: opt-in meant hubs hardcoded a key just to get the chip, and every one of
+  those became a HUD row for a bind nobody asked for. `Keybind`/`KeybindMode`/
+  `KeybindModes` still preset it; `Keybind = false` opts one control out and
+  `CreateWindow{ Keybinds = false }` (→ `ctx.Keybinds`, read as `~= false`) opts
+  the window out, with an explicit per-control keybind option overriding back on.
+  With a `Flag` and no `KeybindFlag`, the chip registers under **`<flag>_key`** —
+  a default chip whose key doesn't survive a config load is worse than no chip,
+  and that name is the convention consumers were already writing by hand, so
+  derived names match configs already on disk. Explicit `KeybindFlag` wins.
 
 Flags: the `bind` codec persists `{ key, mode }`, not a bare key. That needed a
 general hook — a control whose *persisted* value isn't its primary value exposes
@@ -354,9 +365,13 @@ directly; `Binding:IsListed()` is the one place the inclusion rule lives — nee
 a label, a `Mode ~= "None"` (a pure key picker never activates), **and a key**,
 with `Hud = true/false` on the control as the override. The key requirement is
 what keeps the panel short: a HUD that lists every bindable feature in the menu
-is a wall of `— · toggle` rows burying the few the user actually bound. A bind
-that is currently *on* is exempt — `Always` ignores its key by design, and a
-live feature that isn't listed makes the HUD wrong about what's running.
+is a wall of `— · toggle` rows burying the few the user actually bound — and it
+is what makes every-toggle-is-bindable free. An **`Always`** bind that's on is
+exempt, since it ignores its key by design and a pinned-on feature that isn't
+listed makes the HUD wrong about what's running. That exemption is scoped to
+`Always` deliberately: as "on in any mode" it was fine while a chip meant someone
+had chosen to make the feature bindable, but with a chip on every toggle it would
+turn the panel into a list of every feature you have enabled.
 
 Six things to respect:
 

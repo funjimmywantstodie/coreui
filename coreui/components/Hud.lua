@@ -418,8 +418,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		local keyName = Bind.name(entry:GetKey())
 		if keyName == "None" then
 			-- Unbound rows are filtered out by Binding:IsListed, so this is either an
-			-- "Always" bind (on with no key by design), something that's live right now
-			-- with nothing bound to turn it off, or a `Hud = true` override.
+			-- "Always" bind that's on (no key by design) or a `Hud = true` override.
 			keyName = "—"
 		end
 		row.name.Text = entry:GetLabel() or "Bind"
