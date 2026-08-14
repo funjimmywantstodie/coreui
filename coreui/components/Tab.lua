@@ -676,11 +676,17 @@ return function(ctx: any, opts: any)
 		end
 	end
 
+	-- The tab's identity for the window's persisted group-collapse map, fixed at
+	-- creation: `SetName` renames the flyout, and letting that re-key every group
+	-- underneath it would quietly orphan them in configs already on disk.
+	local scope: string = opts.Id or label or "Tab"
+
 	function tab:CreateGroup(groupOpts: any)
 		if groupOpts ~= nil and type(groupOpts) ~= "table" then
 			Log.fail("CreateGroup", ("options must be a table like { Title = ..., Column = 1 }, got %s")
 				:format(typeof(groupOpts)))
 		end
+		Log.field("CreateGroup", "Id", groupOpts and groupOpts.Id, "string")
 		-- Column is 1 (left) or 2 (right). A stray value (e.g. Column = 3, or a
 		-- string) would silently land the group in the left column — warn and
 		-- fall back so the author knows their column choice was ignored.
@@ -690,7 +696,7 @@ return function(ctx: any, opts: any)
 				("Column must be 1 (left) or 2 (right), got %s — using column 1."):format(tostring(column)))
 		end
 		local target = (column == 2) and col2 or col1
-		return Group(ctx, target, groupOpts or {})
+		return Group(ctx, target, groupOpts or {}, scope)
 	end
 
 	paint(false)

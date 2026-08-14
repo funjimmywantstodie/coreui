@@ -159,10 +159,19 @@ return function(ctx: any, opts: any)
 			Tween.play(stroke, Tween.Fast, { Color = colors.border })
 		end
 	end)
+	-- `handle:Set` writes `box.Text` and lets this signal do the work, so the two
+	-- are indistinguishable from in here — the guard is only about *attribution*
+	-- (Context:OnFlagChanged), and the callback fires exactly as it always did
+	-- either way.
+	local writing = false
 	box:GetPropertyChangedSignal("Text"):Connect(function()
 		syncGutter()
 		if opts.Callback then
-			task.spawn(opts.Callback, box.Text)
+			if writing then
+				task.spawn(opts.Callback, box.Text)
+			else
+				ctx:User(task.spawn, opts.Callback, box.Text)
+			end
 		end
 	end)
 
@@ -176,7 +185,9 @@ return function(ctx: any, opts: any)
 		return box.Text
 	end
 	function handle:Set(value: any)
+		writing = true
 		box.Text = tostring(value)
+		writing = false
 		syncGutter()
 		validate(false)
 	end

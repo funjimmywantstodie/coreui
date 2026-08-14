@@ -26,8 +26,14 @@ export type Context = typeof(setmetatable(
 		Keybinds: boolean,
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
+		Groups: { { key: string, handle: any } },
+		_groupKeys: { [string]: boolean },
 		_consumers: { (Color3, Color3) -> () },
 		_flagWatchers: { (string, string) -> () },
+		_valueWatchers: { (string, any, string, string) -> () },
+		_lastEncoded: { [string]: any },
+		_source: string,
+		_windowState: { () -> () },
 		_popover: {
 			menu: Instance,
 			catcher: Instance,
@@ -80,8 +86,20 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		Keybinds = true,
 		overlay = overlay,
 		Flags = {},
+		-- Every collapsible group in the window, in build order, each under a
+		-- stable key — see RegisterGroup. Window snapshots this for the
+		-- `uranium_window` flag; nothing else reads it.
+		Groups = {},
+		_groupKeys = {},
 		_consumers = {},
 		_flagWatchers = {},
+		_valueWatchers = {},
+		_lastEncoded = {},
+		-- Where the change currently being applied came from. "code" is the
+		-- resting state (a programmatic :Set); the two interesting cases push
+		-- their own over it — see WithSource.
+		_source = "code",
+		_windowState = {},
 		_popover = nil,
 		_capturing = 0,
 	}, Context)
@@ -244,6 +262,71 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			}
 		end,
 	},
+	-- The window's own UI state — where it sits, whether it's maximized, which tab
+	-- is open and which groups are folded. Like `hud` it isn't a control and has no
+	-- single value, so it goes through the same GetFlag/SetFlag pair;
+	-- components/Window.lua registers it itself unless
+	-- `CreateWindow{ PersistWindow = false }`.
+	--
+	-- Every field is optional on the way back in: a config written by a build with
+	-- different tabs (or on a machine with a different viewport) has to restore the
+	-- parts that still make sense and drop the rest, which is Window's job in
+	-- `applyWindowState` — the codec only gets it there and back.
+	window = {
+		encode = function(v)
+			if type(v) ~= "table" then
+				return {}
+			end
+			local record: any = { maximized = v.Maximized == true }
+			-- Paired, and only when both are real numbers: half a coordinate is not
+			-- a position, and `floor(nil or 0)` would write the corner of the screen
+			-- down as if the user had put the window there (the bug the `hud` codec
+			-- above already had once).
+			local x, y = tonumber(v.X), tonumber(v.Y)
+			if x and y then
+				record.x = math.floor(x)
+				record.y = math.floor(y)
+			end
+			local w, h = tonumber(v.Width), tonumber(v.Height)
+			if w and h then
+				record.w = math.floor(w)
+				record.h = math.floor(h)
+			end
+			local tab = tonumber(v.Tab)
+			if tab then
+				record.tab = math.floor(tab)
+			end
+			if type(v.Groups) == "table" then
+				local groups: any = {}
+				local any = false
+				for key, collapsed in v.Groups :: any do
+					groups[key] = collapsed == true
+					any = true
+				end
+				-- Omitted rather than written empty: HttpService encodes an empty
+				-- table as `[]`, which reads as a corrupt record rather than "no
+				-- groups" when a human opens the file.
+				if any then
+					record.groups = groups
+				end
+			end
+			return record
+		end,
+		decode = function(v)
+			if type(v) ~= "table" then
+				return {}
+			end
+			return {
+				X = tonumber(v.x),
+				Y = tonumber(v.y),
+				Width = tonumber(v.w),
+				Height = tonumber(v.h),
+				Maximized = v.maximized == true,
+				Tab = tonumber(v.tab),
+				Groups = type(v.groups) == "table" and v.groups or nil,
+			}
+		end,
+	},
 	colorpicker = {
 		encode = function(v) return typeof(v) == "Color3" and v:ToHex() or tostring(v) end,
 		decode = function(v)
@@ -270,6 +353,224 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 		decode = function(v) if v == false then return nil end return v end,
 	},
 }
+
+-- Read a flag's *persisted* value and encode it, exactly as GetConfig would.
+-- Shared so a single flag's notification and a whole-config snapshot can never
+-- disagree about what a control's value is; `where` names the caller in the
+-- warnings, since a failure means something different in each ("save skipped it"
+-- vs "the change notification was dropped").
+local function encodeFlag(name: string, entry: { handle: any, kind: string }, where: string): (boolean, any)
+	local codec = Codec[entry.kind]
+	if not codec then
+		return false, nil
+	end
+	local okRead, value = pcall(function()
+		if entry.handle.GetFlag then
+			return entry.handle:GetFlag()
+		end
+		return entry.handle:Get()
+	end)
+	if not okRead then
+		-- Silence here is what makes "save did nothing" impossible to debug: the
+		-- flag just goes missing from the file. Name it and carry on with the rest.
+		Log.warn(where, ('flag "%s" (%s) failed to read — skipped: %s')
+			:format(name, entry.kind, tostring(value)))
+		return false, nil
+	end
+	local okEncode, encoded = pcall(codec.encode, value)
+	if not okEncode then
+		Log.warn(where, ('flag "%s" (%s) failed to encode — skipped: %s')
+			:format(name, entry.kind, tostring(encoded)))
+		return false, nil
+	end
+	return true, encoded
+end
+
+-- Value equality over encoded (JSON-safe) values, which is what "did this flag
+-- actually change?" means. Tables here are small and acyclic by construction —
+-- a bind is `{ key, mode }`, the window record is a handful of numbers plus a
+-- map of booleans — so a plain recursive walk is both correct and cheap.
+local function sameValue(a: any, b: any): boolean
+	if a == b then
+		return true
+	end
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return false
+	end
+	for key, value in a do
+		if not sameValue(value, b[key]) then
+			return false
+		end
+	end
+	for key in b do
+		if a[key] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+-- The dedupe baseline has to be OURS. Codecs build fresh tables today, but a
+-- codec (or a host's `GetFlag`) that ever handed back the live table it reads
+-- from would mutate the baseline along with the value, and every subsequent
+-- change would compare equal and go unreported — a silent, near-undebuggable
+-- failure of the whole feature. A copy costs nothing at this size.
+local function freeze(value: any): any
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, v in value do
+		out[key] = freeze(v)
+	end
+	return out
+end
+
+-- ── Flag change notifications ───────────────────────────────────────────────
+-- `OnFlag` above answers "which flags exist"; this answers "which one just
+-- moved", which is what a host that persists continuously needs. Without it the
+-- only way to notice a change is to poll `GetConfig()` and diff, so everything
+-- since the last poll is lost whenever the client dies without a clean unload.
+--
+-- `fn(name, value, kind, source)`:
+--   name    the flag
+--   value   the ENCODED value — byte-for-byte what `GetConfig()` would put in
+--           the file for it, so a host can patch its snapshot in place instead
+--           of re-reading every flag to find the one that moved
+--   kind    the codec kind, as `GetFlags()` reports it
+--   source  "user" (a control the user operated) · "code" (a programmatic
+--           `:Set`) · "config" (inside ApplyConfig / LoadConfig)
+--
+-- `source` is the load-bearing one: a config landing 40 flags must not look like
+-- 40 edits worth writing back, and the alternative — the host guessing with a
+-- re-entrancy flag around its own ApplyConfig call — can't see an autoload the
+-- library ran itself.
+--
+-- Fires SYNCHRONOUSLY, like OnFlag. Note that most controls hand their callback
+-- to `task.spawn`, so a watcher usually runs on that spawned thread rather than
+-- on the one that caused the change — fine to yield in, never a reason to
+-- assume you're still inside the click handler.
+function Context:OnFlagChanged(fn: (string, any, string, string) -> ()): () -> ()
+	table.insert(self._valueWatchers, fn)
+	return function()
+		local list = self._valueWatchers
+		for i = #list, 1, -1 do
+			if list[i] == fn then
+				table.remove(list, i)
+				break
+			end
+		end
+	end
+end
+
+-- Run `fn` with changes attributed to `source`. The tag is dynamically scoped
+-- rather than passed down because the notification is raised several frames of
+-- call stack below the thing that knows the answer — a click handler calls
+-- `handle:Set`, which spawns the control's callback, which is where the notify
+-- lands. `task.spawn` resumes immediately, so that spawned thread is still
+-- inside this scope.
+--
+-- pcall'd so a throwing handler can't strand the tag and mislabel every change
+-- after it; the error is re-raised untouched.
+function Context:WithSource(source: string, fn: (...any) -> ...any, ...): ...any
+	local previous = self._source
+	self._source = source
+	local results = table.pack(pcall(fn, ...))
+	self._source = previous
+	if not results[1] then
+		error(results[2], 0)
+	end
+	return table.unpack(results, 2, results.n)
+end
+
+-- Sugar for the common one: a control's own input handler. Every place a
+-- control turns a click / drag / keystroke into a value change wraps it, so
+-- "the user did this" is a fact rather than an inference.
+function Context:User(fn: (...any) -> ...any, ...): ...any
+	return self:WithSource("user", fn, ...)
+end
+
+-- Announce that `name`'s value may have moved. Cheap to over-call: it re-reads
+-- and re-encodes the flag and stays silent unless the result actually differs
+-- from the last value it reported, which is what keeps a `:Set` that lands on
+-- the value already held — a config restoring what's already on screen, a
+-- toggle re-asserted every frame — from looking like an edit.
+--
+-- `source` overrides the ambient tag for this one notification; almost nothing
+-- needs it, since WithSource already covers the paths that know better.
+function Context:NotifyFlag(name: string, source: string?)
+	local entry = self.Flags[name]
+	if not entry then
+		return
+	end
+	-- Nobody listening: skip the read + encode entirely. The baseline going stale
+	-- is harmless — it holds the last value we *reported*, so the first
+	-- notification after a watcher appears compares against that and fires iff
+	-- something really did change in between, which is the honest answer.
+	if #self._valueWatchers == 0 then
+		return
+	end
+	local ok, encoded = encodeFlag(name, entry, "OnFlagChanged")
+	if not ok then
+		return
+	end
+	if sameValue(self._lastEncoded[name], encoded) then
+		return
+	end
+	self._lastEncoded[name] = freeze(encoded)
+	local from = source or self._source
+	for _, fn in table.clone(self._valueWatchers) do
+		local okWatcher, err = pcall(fn, name, encoded, entry.kind, from)
+		if not okWatcher then
+			-- Same rule as OnFlag: a host's bookkeeping blowing up must not take the
+			-- control that moved down with it.
+			Log.warn("OnFlagChanged", ('watcher errored for flag "%s" (%s): %s')
+				:format(name, entry.kind, tostring(err)))
+		end
+	end
+end
+
+-- ── Group registry ──────────────────────────────────────────────────────────
+-- Collapsible groups register themselves so the window can persist which ones
+-- are folded. The key is `"<tab>::<group>"` — the tab's name at creation and the
+-- group's `Id` (or its Title), which is the most stable identity available
+-- without making every caller invent one. Same key twice gets a `#n` suffix, so
+-- two identically-titled groups in one tab still round-trip as long as the menu
+-- builds in the same order.
+function Context:RegisterGroup(scope: string, id: string, handle: any): string
+	local base = ("%s::%s"):format(scope, id)
+	local key = base
+	local n = 1
+	while self._groupKeys[key] do
+		n += 1
+		key = ("%s#%d"):format(base, n)
+	end
+	self._groupKeys[key] = true
+	table.insert(self.Groups, { key = key, handle = handle })
+	return key
+end
+
+-- Window subscribes; groups and tabs raise it. The window's own geometry is
+-- Window's business, but "a group was folded" and "a tab was selected" happen
+-- in components that have no idea the flag exists.
+function Context:OnWindowState(fn: () -> ()): () -> ()
+	table.insert(self._windowState, fn)
+	return function()
+		local list = self._windowState
+		for i = #list, 1, -1 do
+			if list[i] == fn then
+				table.remove(list, i)
+				break
+			end
+		end
+	end
+end
+
+function Context:WindowStateChanged()
+	for _, fn in table.clone(self._windowState) do
+		fn()
+	end
+end
 
 -- Watch flag registration. `fn(name, kind)` fires SYNCHRONOUSLY from inside
 -- RegisterFlag, which is the whole point: a loader that wants to know which
@@ -322,7 +623,23 @@ function Context:RegisterFlag(name: string?, handle: any, kind: string?)
 		Log.warn("Flag", ('"%s" is registered twice — both controls share one config '
 			.. "slot, so only the last will save/load. Give each a unique Flag."):format(name))
 	end
-	self.Flags[name] = { handle = handle, kind = kind }
+	local entry = { handle = handle, kind = kind }
+	self.Flags[name] = entry
+	-- Seed the change-notification baseline with the value the control was BUILT
+	-- with, so a control taking its `Default` is never reported as a change (see
+	-- OnFlagChanged). A handle that can't be read at all is a malformed handle and
+	-- encodeFlag says so; the flag still registers, and saving it will fail the
+	-- same way later.
+	-- Explicit branch, not `ok and freeze(...) or nil`: a legitimately falsy
+	-- baseline (the `dropdown` and `playerselect` codecs both encode "nothing
+	-- selected" as `false`) would fall through to nil, and the first real
+	-- notification would then report a change that never happened.
+	local ok, encoded = encodeFlag(name, entry, "OnFlagChanged")
+	if ok then
+		self._lastEncoded[name] = freeze(encoded)
+	else
+		self._lastEncoded[name] = nil
+	end
 	-- Clone before notifying: a watcher is allowed to unsubscribe itself (or add
 	-- another) from inside the callback, and mutating the array mid-walk would
 	-- skip the next one. Same reason SetAccent and util/Bind.lua clone.
@@ -345,26 +662,9 @@ end
 function Context:GetConfig(): { [string]: any }
 	local data = {}
 	for name, entry in self.Flags do
-		local codec = Codec[entry.kind]
-		local ok, value = pcall(function()
-			if entry.handle.GetFlag then
-				return entry.handle:GetFlag()
-			end
-			return entry.handle:Get()
-		end)
-		if not ok then
-			-- Silence here is what makes "save did nothing" impossible to debug: the
-			-- flag just goes missing from the file. Name it and carry on with the rest.
-			Log.warn("SaveConfig", ('flag "%s" (%s) failed to read — skipped: %s')
-				:format(name, entry.kind, tostring(value)))
-		elseif codec then
-			local okEncode, encoded = pcall(codec.encode, value)
-			if okEncode then
-				data[name] = encoded
-			else
-				Log.warn("SaveConfig", ('flag "%s" (%s) failed to encode — skipped: %s')
-					:format(name, entry.kind, tostring(encoded)))
-			end
+		local ok, encoded = encodeFlag(name, entry, "SaveConfig")
+		if ok then
+			data[name] = encoded
 		end
 	end
 	return data
@@ -400,15 +700,26 @@ function Context:LoadConfig(data: { [string]: any }): (number, number)
 					:format(name, entry.kind, tostring(value)))
 				skipped += 1
 			else
+				-- Tagged for the whole apply, so a host persisting on change can tell
+				-- 40 flags landing from a config apart from 40 edits worth writing
+				-- back (see OnFlagChanged). The control's own callback fires from
+				-- inside here, which is where most of the notifications come from.
 				local okSet, err = pcall(function()
-					if entry.handle.SetFlag then
-						entry.handle:SetFlag(value)
-					else
-						entry.handle:Set(value)
-					end
+					self:WithSource("config", function()
+						if entry.handle.SetFlag then
+							entry.handle:SetFlag(value)
+						else
+							entry.handle:Set(value)
+						end
+					end)
 				end)
 				if okSet then
 					applied += 1
+					-- Backstop for handles with no callback of their own — the HUD, the
+					-- window record, a host's own registered state. Deduped against
+					-- whatever the control already reported, so the common case is a
+					-- comparison and nothing else.
+					self:NotifyFlag(name, "config")
 				else
 					Log.warn("LoadConfig", ('flag "%s" (%s) failed to apply — skipped: %s')
 						:format(name, entry.kind, tostring(err)))

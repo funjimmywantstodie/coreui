@@ -82,10 +82,58 @@ function Controls.new(ctx: any, frame: Frame)
 			Log.field(where, "Name", opts.Name, "string")
 		end
 
-		local inst, handle, bordered = builder(ctx, opts)
+		-- Change notification (Context:OnFlagChanged) hangs off the control's own
+		-- callbacks rather than off each component's internals: every stateful
+		-- control already fires `Callback` on every value change — a click, a drag,
+		-- a `:Set`, a config landing — and updates its state before it does, so one
+		-- wrapper here covers every kind instead of a hook per component.
+		--
+		-- `OnChanged` is wrapped for the same reason: a Keybind in an activation
+		-- mode spends `Callback` on activation, and re-keying it (which is what
+		-- moves the flag) only reaches `OnChanged`.
+		--
+		-- The wrappers go on a COPY. `opts` is the caller's table and a loader that
+		-- reuses one across two controls must not find our closure baked into it —
+		-- same rule components/Settings.lua follows for its section options.
+		local flag = opts and opts.Flag
+		local watched = flag ~= nil and kind ~= nil
+		local handle: any = nil
+		if watched then
+			local copy = table.clone(opts)
+			local onCallback, onChanged = opts.Callback, opts.OnChanged
+			local function notify()
+				-- `handle` is nil only if a control fires a callback from inside its
+				-- own constructor, before we've been handed it — nothing does today,
+				-- and a value that early is the default anyway.
+				if handle then
+					ctx:NotifyFlag(flag)
+				end
+			end
+			-- Notified BEFORE the caller's own callback: a callback that yields
+			-- (or errors) shouldn't delay or swallow the notification, and the
+			-- ambient source tag is still the one the change came in under.
+			copy.Callback = function(...)
+				notify()
+				if onCallback then
+					return onCallback(...)
+				end
+				return nil
+			end
+			copy.OnChanged = function(...)
+				notify()
+				if onChanged then
+					return onChanged(...)
+				end
+				return nil
+			end
+			opts = copy
+		end
+
+		local inst, built, bordered = builder(ctx, opts)
+		handle = built
 		place(inst, bordered)
-		if opts and opts.Flag and kind then
-			ctx:RegisterFlag(opts.Flag, handle, kind)
+		if watched then
+			ctx:RegisterFlag(flag, handle, kind)
 		end
 		return handle
 	end

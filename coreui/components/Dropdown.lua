@@ -250,13 +250,16 @@ local function build(ctx: any, opts: any, multi: boolean)
 			optBtn.MouseLeave:Connect(function()
 				Tween.play(optBtn, Tween.Fast, { BackgroundTransparency = 1 })
 			end)
+			-- Picking an option is user-driven, so it's tagged for
+			-- Context:OnFlagChanged (a `:Set` and a config load take the same paths
+			-- below but keep the ambient tag they came in under).
 			optBtn.Activated:Connect(function()
 				if multi then
 					selected[opt] = not selected[opt] or nil
 					paintRow(opt)
 					relabel()
 					if opts.Callback then
-						task.spawn(opts.Callback, fireMulti())
+						ctx:User(task.spawn, opts.Callback, fireMulti())
 					end
 				else
 					local previous = single
@@ -268,7 +271,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 					relabel()
 					ctx:ClosePopover()
 					if opts.Callback then
-						task.spawn(opts.Callback, single)
+						ctx:User(task.spawn, opts.Callback, single)
 					end
 				end
 			end)

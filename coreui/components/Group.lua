@@ -9,7 +9,10 @@ local Icons = require(script.Parent.Parent.Icons)
 local Collapse = require(script.Parent.Parent.util.Collapse)
 local Controls = require(script.Parent.Controls)
 
-return function(ctx: any, column: Frame, opts: any)
+-- `scope` is the tab's identity, threaded down from components/Tab.lua: a group
+-- is only unique *within* a tab, and the pair is what the window's persisted
+-- collapse map is keyed on (see Context:RegisterGroup).
+return function(ctx: any, column: Frame, opts: any, scope: string?)
 	local colors = Theme.Colors
 	local collapsed = opts.Collapsed == true
 
@@ -77,11 +80,46 @@ return function(ctx: any, column: Frame, opts: any)
 	holder.LayoutOrder = 2
 	holder.Parent = group
 
+	-- `any` for the same reason components/Window.lua types its tab handle that
+	-- way: the control surface grows the two collapse methods below, and under
+	-- --!strict the inferred table type wouldn't take them.
+	local handle: any = Controls.new(ctx, card)
+
+	-- Whether a group is folded is state the user set, and it had no
+	-- representation anywhere: not readable, not settable, not in any config. The
+	-- window persists it (`uranium_window`), and a host that wants to drive it —
+	-- fold everything but the group its feature lives in — needs the same pair.
+	function handle:IsCollapsed(): boolean
+		return collapsed
+	end
+
+	-- `animate = false` snaps, which is what a restore wants: the window shouldn't
+	-- play a fold animation for state the user set in a previous session.
+	function handle:SetCollapsed(value: boolean, animate: boolean?)
+		value = value == true
+		if value == collapsed then
+			return
+		end
+		collapsed = value
+		if animate == false then
+			chevron.Rotation = collapsed and 180 or 0
+		else
+			Tween.play(chevron, Tween.Spin, { Rotation = collapsed and 180 or 0 })
+		end
+		setCollapsed(collapsed, animate ~= false)
+		ctx:WindowStateChanged()
+	end
+
 	head.Activated:Connect(function()
-		collapsed = not collapsed
-		Tween.play(chevron, Tween.Spin, { Rotation = collapsed and 180 or 0 })
-		setCollapsed(collapsed, true)
+		ctx:User(function()
+			handle:SetCollapsed(not collapsed)
+		end)
 	end)
 
-	return Controls.new(ctx, card)
+	-- Registered even when the window isn't persisting anything: the registry is
+	-- what assigns the stable key, and a group that only becomes interesting once
+	-- a host asks for the snapshot would otherwise have no name to appear under.
+	ctx:RegisterGroup(scope or "Tab", opts.Id or opts.Title or "Group", handle)
+
+	return handle
 end

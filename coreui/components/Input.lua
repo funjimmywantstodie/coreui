@@ -91,7 +91,10 @@ return function(ctx: any, opts: any)
 			end
 		end
 		if opts.Callback then
-			task.spawn(opts.Callback, box.Text)
+			-- The guard above means this signal only reaches here when the user typed
+			-- (handle:Set writes under it and fires the callback itself), so it's an
+			-- honest "user" for Context:OnFlagChanged.
+			ctx:User(task.spawn, opts.Callback, box.Text)
 		end
 	end)
 

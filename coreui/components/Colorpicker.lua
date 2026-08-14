@@ -113,8 +113,10 @@ return function(ctx: any, opts: any)
 		chip.MouseLeave:Connect(function()
 			Tween.play(chipScale, Tween.Fast, { Scale = 1 })
 		end)
+		-- User-driven, so it's tagged for Context:OnFlagChanged — `handle:Set` and a
+		-- config load reach `apply` too, and keep whatever tag they came in under.
 		chip.Activated:Connect(function()
-			apply(chip.BackgroundColor3)
+			ctx:User(apply, chip.BackgroundColor3)
 			ctx:ClosePopover()
 		end)
 	end

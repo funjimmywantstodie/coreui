@@ -89,21 +89,26 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,OnFlag?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,OnFlag?,OnFlagChanged?,PersistWindow?,WindowFlag?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?,Sections?,Notify?}` → `tab, controls` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)`/`:GetAccent()` · `:SetLogo(source, zoom?)` ·
   `:SetToggleKey(KeyCode)`/`:GetToggleKey()` ·
   `:SetNotificationsEnabled(b)`/`:GetNotificationsEnabled()` ·
-  `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` ·
+  `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` · `:OnHudChanged(fn)` ·
+  `:GetPosition()`/`:SetPosition(x,y)` · `:GetSize()`/`:SetSize(w,h)` ·
+  `:IsMaximized()`/`:SetMaximized(b, animate?)` · `:GetSelected()` ·
   `:GetConfig()` · `:ApplyConfig(t)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
+  `:OnFlagChanged(fn)` · `:NotifyFlag(name, source?)` ·
   `:SaveConfig(name, meta?)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
   `:ListConfigs()` · `:ConfigInfo(name)` · `:GetAutoload()`/`:SetAutoload(name?)` ·
   `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
   `Uranium.Config` (the file layer) · `Uranium.Settings` (the settings-panel builders)
-- `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right) — plus the
-  tab-identity options and setters under **Tabs & the sidebar** below
+- `Tab:CreateGroup{Title,Column,Collapsed,Id?}` (Column 1=left, 2=right) →
+  the control surface, plus `:IsCollapsed()`/`:SetCollapsed(b, animate?)` — see
+  **Window state** below for what `Id` is for; plus the tab-identity options and
+  setters under **Tabs & the sidebar**
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
   :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
   :Label :Divider :List :Player :Image :Custom :DataGrid :MediaPlayer`
@@ -247,6 +252,66 @@ layer is reachable without the window:
   host that learns its scope late re-scope. `Uranium.Config` exports the file
   layer itself (with `Config.sanitize`), because otherwise a host rewrites ~80
   lines of it to reach `list`/`info` for another folder.
+- `OnFlagChanged(fn)` is the *value* half of `OnFlag` — see below. Without it a
+  host that persists continuously has to poll `GetConfig()` and diff, which loses
+  everything since the last poll every time the client dies without a clean
+  unload.
+
+## Flag change notifications
+
+`Context:OnFlagChanged(fn)` → `fn(name, encodedValue, kind, source)`, synchronous,
+deduped by *encoded* value, never fired for a control taking its `Default`.
+`Window:NotifyFlag(name)` is the manual trigger for state a host registered
+itself. Four things carry the design:
+
+- **The signal is the control's own `Callback`, not a hook per component.** Every
+  stateful control already fires `Callback` on every value change (click, drag,
+  `:Set`, config landing) and updates its state *before* it does, so
+  `Controls.mount` wraps `Callback` (and `OnChanged`, which is where a Keybind in
+  an activation mode reports a re-key) on a **copy** of the caller's options and
+  gets every kind for free. Two flags aren't mounted through `Controls` and wire
+  themselves: a toggle's derived `<flag>_key` chip (via the chip's `OnChanged`)
+  and the HUD (via `hud.OnChange` → `Window:OnHudChanged` → `Settings`).
+- **`source` is the load-bearing argument**, and it's dynamically scoped —
+  `ctx:WithSource(src, fn)` / `ctx:User(fn)` — because the notification is raised
+  several frames below whatever knows the answer. `LoadConfig` tags its whole
+  apply `"config"`; a control's input handlers tag themselves `"user"`; everything
+  else is `"code"`. `task.spawn` resumes immediately, so a callback spawned inside
+  a tagged scope is still inside it.
+- **Dedupe is by encoded value**, against a baseline seeded at `RegisterFlag` and
+  deep-copied (`freeze`) — a codec that ever handed back its own live table would
+  otherwise mutate the baseline along with the value and silence the feature.
+  Read `encodeFlag` once for both `GetConfig` and a single notification so the two
+  can never disagree about what a control's value is.
+- **Zero watchers = zero work**: `NotifyFlag` returns before the read + encode.
+
+## Window state
+
+`uranium_window` (kind `window`) persists position, size, maximize, the selected
+tab and the folded state of every group — registered by `Window` itself, opt out
+with `CreateWindow{ PersistWindow = false }`, rename with `WindowFlag`. It's the
+HUD flag's precedent: every host wants the menu to come back where it was left,
+and none of it was even *readable* before (`GetPosition`/`GetSize`/`GetSelected`/
+`Group:IsCollapsed` are all new), so each host would have reimplemented the same
+clamping and fallbacks.
+
+- **Geometry reads use the LAYOUT size, not `AbsoluteSize`** (`layoutSize()` /
+  `topLeft()` in Window.lua). The rendered size runs through the window's UIScale,
+  which sits at 0.92 through the mount animation and 0.9 the whole time the window
+  is minimized — save in either state and the restore lands a few percent off
+  centre. `moveTo` is the exact inverse of `topLeft`, preserving the Position's
+  *scale* halves so a restored window tracks the viewport like a dragged one.
+- **Restoring is defensive by contract**: position/size clamp through the same
+  path a drag does, a selected tab that no longer exists falls through to the
+  first visible one, and unmatched group keys are left alone.
+- **Groups are keyed `"<tab>::<Id or Title>"`** by `Context:RegisterGroup`, with a
+  `#n` suffix on collisions. The tab's key is fixed at creation — `SetName`
+  deliberately doesn't re-key, since that would orphan every group under it in
+  configs already on disk.
+- **Notifications are funnelled through `ctx:WindowStateChanged()`** (groups and
+  tabs raise it; Window subscribes) and are raised on *settle*, not per frame — a
+  drag reports on release, not sixty times a second. The build-time `select()` is
+  deliberately not a notification: `chooseTab` is the deliberate one.
 
 Two contracts worth knowing: `Config.sanitize` strips to `[A-Za-z0-9%-_ ]`
 (spelled in ASCII, not `%w` — `%w` follows the host's locale, and on builds where

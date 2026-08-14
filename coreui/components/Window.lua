@@ -43,6 +43,9 @@ return function(opts: any)
 	Log.field("CreateWindow", "Hud", opts.Hud, { "boolean", "table" })
 	Log.field("CreateWindow", "Keybinds", opts.Keybinds, "boolean")
 	Log.field("CreateWindow", "OnFlag", opts.OnFlag, "function")
+	Log.field("CreateWindow", "OnFlagChanged", opts.OnFlagChanged, "function")
+	Log.field("CreateWindow", "PersistWindow", opts.PersistWindow, "boolean")
+	Log.field("CreateWindow", "WindowFlag", opts.WindowFlag, "string")
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "uranium"
@@ -140,6 +143,14 @@ return function(opts: any)
 	-- while maximized, which owns the size itself (this used to fight it and snap
 	-- a maximized window back to its default size on any viewport change).
 	local maximized = false
+	-- The size the window wants to be, which is the theme's until someone says
+	-- otherwise (`Window:SetSize`, or a restored `uranium_window` record). It's the
+	-- *unclamped* wish: fitWindow below is what actually reconciles it with the
+	-- viewport, so a size saved on a big monitor survives a session on a laptop
+	-- instead of being permanently shrunk to fit it.
+	local baseWidth, baseHeight = M.windowWidth, M.windowHeight
+	-- Below this the sidebar and the two columns stop being a layout.
+	local MIN_W, MIN_H = 420, 320
 	local function fitWindow()
 		local vp = screenGui.AbsoluteSize
 		if vp.X <= 0 then
@@ -147,14 +158,14 @@ return function(opts: any)
 		end
 		if maximized then
 			main.Size = UDim2.fromOffset(
-				math.max(M.windowWidth, vp.X - 24),
-				math.max(M.windowHeight, vp.Y - 24)
+				math.max(baseWidth, vp.X - 24),
+				math.max(baseHeight, vp.Y - 24)
 			)
 			return
 		end
 		main.Size = UDim2.fromOffset(
-			math.min(M.windowWidth, vp.X - 24),
-			math.min(M.windowHeight, vp.Y - 24)
+			math.min(baseWidth, vp.X - 24),
+			math.min(baseHeight, vp.Y - 24)
 		)
 	end
 	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitWindow)
@@ -605,6 +616,14 @@ return function(opts: any)
 		ctx:OnFlag(opts.OnFlag)
 	end
 
+	-- `CreateWindow{ OnFlagChanged = function(name, value, kind, source) end }` —
+	-- the same hook as `Window:OnFlagChanged`, installed early enough that a host
+	-- persisting continuously catches the first change the menu ever makes,
+	-- including ones the built-in Settings tab causes while it builds.
+	if opts.OnFlagChanged then
+		ctx:OnFlagChanged(opts.OnFlagChanged)
+	end
+
 	-- The keybind router (util/Bind.lua): one pair of input listeners shared by
 	-- every bound control, created here so its connections are tracked and die
 	-- with the window like the toggle-key listener below.
@@ -675,6 +694,48 @@ return function(opts: any)
 	local function resnap()
 		main.Position = snapToPixels(main.Position)
 	end
+	-- The window's LAYOUT size, which is not `main.AbsoluteSize`: that one is run
+	-- through the UIScale, which sits at 0.92 through the mount animation and 0.9
+	-- the whole time the window is minimized. Reading the rendered size in those
+	-- states and writing it back later restores the window a few percent off
+	-- centre — so every geometry read below uses the size the layout actually
+	-- asked for. `fitWindow` / `setMaximized` only ever set pure offsets, so the
+	-- two halves of the UDim2 are the answer.
+	local function layoutSize(): Vector2
+		return Vector2.new(main.Size.X.Offset, main.Size.Y.Offset)
+	end
+
+	-- The window's TOP-LEFT in screen pixels — the only coordinate worth
+	-- persisting, since the live Position is a scale/offset pair carrying whatever
+	-- the drag left in it and its numbers mean nothing on a viewport of another
+	-- size.
+	local function topLeft(): Vector2
+		local vp = screenGui.AbsoluteSize
+		local pos, size = main.Position, layoutSize()
+		return Vector2.new(
+			pos.X.Scale * vp.X + pos.X.Offset - size.X / 2,
+			pos.Y.Scale * vp.Y + pos.Y.Offset - size.Y / 2
+		)
+	end
+
+	-- The exact inverse of `topLeft`. The scale halves are preserved rather than
+	-- flattened to pure offsets, so a restored window keeps tracking the viewport
+	-- exactly like a dragged one does, and the same clamp a drag goes through
+	-- guarantees a record saved on a 1440p monitor can't put the window off a
+	-- laptop screen.
+	local function moveTo(x: number, y: number)
+		local vp = screenGui.AbsoluteSize
+		local size = layoutSize()
+		if vp.X <= 0 or size.X <= 0 then
+			return
+		end
+		local pos = main.Position
+		local cx, cy = x + size.X / 2, y + size.Y / 2
+		main.Position = snapToPixels(clampToViewport(UDim2.new(
+			pos.X.Scale, cx - pos.X.Scale * vp.X,
+			pos.Y.Scale, cy - pos.Y.Scale * vp.Y
+		)))
+	end
 	main:GetPropertyChangedSignal("AbsoluteSize"):Connect(resnap)
 	screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(resnap)
 	task.defer(resnap)
@@ -692,7 +753,16 @@ return function(opts: any)
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
+			local wasDragging = dragging
 			dragging = false
+			-- On RELEASE, not per frame: the position is part of the persisted window
+			-- record, and a host writing on every change would otherwise write once
+			-- per mouse move for the length of the drag.
+			if wasDragging then
+				ctx:User(function()
+					ctx:WindowStateChanged()
+				end)
+			end
 		end
 	end))
 
@@ -710,6 +780,9 @@ return function(opts: any)
 	-- list behind `window:OnHudVisible` rather than the panel's private hook it
 	-- used to be.
 	local hudWatchers: { (boolean) -> () } = {}
+	-- ...and the same for anything else the HUD persists (its position, whether
+	-- it's collapsed), which no visibility signal covers — see Window:OnHudChanged.
+	local hudChangeWatchers: { () -> () } = {}
 	-- ...and the same for the config folder, which is no longer fixed at
 	-- CreateWindow (see window:SetConfigFolder): anything showing a config list
 	-- has to know the list it's showing just became a different folder's.
@@ -730,6 +803,16 @@ return function(opts: any)
 		end
 		content.CanvasPosition = Vector2.new(0, 0)
 		applySearch(currentQuery()) -- keep the filter consistent across tabs
+	end
+
+	-- Selecting a tab *deliberately* — a click, `Window:Select`, `tab:Select`. The
+	-- plain `select` above is also how the window picks a tab for itself while it
+	-- builds (the first tab, or a fallback when the open one is hidden), and
+	-- announcing those as window-state changes would report the menu's own
+	-- construction as a run of edits worth persisting.
+	local function chooseTab(index: number)
+		select(index)
+		ctx:WindowStateChanged()
 	end
 
 	-- ── search ────────────────────────────────────────────────────────────────
@@ -956,25 +1039,30 @@ return function(opts: any)
 	end))
 
 	-- ── maximize toggle ─────────────────────────────────────────────────────────
-	winBtns.max.Activated:Connect(function()
-		maximized = not maximized
-		if maximized then
-			local vp = screenGui.AbsoluteSize
-			Tween.play(main, Tween.Normal, {
-				Size = UDim2.fromOffset(
-					math.max(M.windowWidth, vp.X - 24),
-					math.max(M.windowHeight, vp.Y - 24)
-				),
-			})
-		else
-			local vp = screenGui.AbsoluteSize
-			Tween.play(main, Tween.Normal, {
-				Size = UDim2.fromOffset(
-					math.min(M.windowWidth, vp.X - 24),
-					math.min(M.windowHeight, vp.Y - 24)
-				),
-			})
+	-- `animate = false` snaps, which is what restoring a saved record wants — the
+	-- window shouldn't play the maximize animation for a state the user set in a
+	-- previous session.
+	local function setMaximized(value: boolean, animate: boolean?)
+		value = value == true
+		if value == maximized then
+			return
 		end
+		maximized = value
+		local vp = screenGui.AbsoluteSize
+		local size = maximized
+			and UDim2.fromOffset(math.max(baseWidth, vp.X - 24), math.max(baseHeight, vp.Y - 24))
+			or UDim2.fromOffset(math.min(baseWidth, vp.X - 24), math.min(baseHeight, vp.Y - 24))
+		if animate == false then
+			main.Size = size
+		else
+			Tween.play(main, Tween.Normal, { Size = size })
+		end
+		ctx:WindowStateChanged()
+	end
+	winBtns.max.Activated:Connect(function()
+		ctx:User(function()
+			setMaximized(not maximized)
+		end)
 	end)
 
 	-- ── close ────────────────────────────────────────────────────────────────
@@ -992,6 +1080,7 @@ return function(opts: any)
 				:format(typeof(tabOpts), type(tabOpts) == "string" and ('"%s"'):format(tabOpts) or "..."))
 		end
 		Log.field("CreateTab", "Name", tabOpts and tabOpts.Name, "string")
+		Log.field("CreateTab", "Id", tabOpts and tabOpts.Id, "string")
 		Log.field("CreateTab", "Icon", tabOpts and tabOpts.Icon, "string")
 		Log.field("CreateTab", "Desc", tabOpts and tabOpts.Desc, "string")
 		Log.field("CreateTab", "Badge", tabOpts and tabOpts.Badge, "string")
@@ -1049,10 +1138,10 @@ return function(opts: any)
 
 		table.insert(tabs, tab)
 		tab.button.Activated:Connect(function()
-			select(index)
+			ctx:User(chooseTab, index)
 		end)
 		function tab:Select()
-			select(index)
+			chooseTab(index)
 		end
 
 		-- Hiding the tab that's currently open would otherwise leave its page on
@@ -1110,7 +1199,14 @@ return function(opts: any)
 				:format(tostring(index), #tabs == 1 and "is" or "are", #tabs, #tabs == 1 and "" or "s"))
 			return
 		end
-		select(index)
+		chooseTab(index)
+	end
+
+	-- Which tab is open, 1-based — the read that makes "restore the menu where the
+	-- user left it" expressible at all, whether the window persists it itself or a
+	-- host rolls its own record.
+	function window:GetSelected(): number
+		return activeIndex
 	end
 
 	function window:Notify(notifyOpts: any)
@@ -1232,6 +1328,15 @@ return function(opts: any)
 				fn(value)
 			end
 		end
+		-- Everything the HUD persists — where it sits, whether it's folded, whether
+		-- it's up — is moved with the mouse, not through a control, so there's no
+		-- callback anywhere for a change notification to hang off. This is that
+		-- callback; components/Settings.lua turns it into one for the HUD's flag.
+		hud.OnChange = function()
+			for _, fn in table.clone(hudChangeWatchers) do
+				fn()
+			end
+		end
 		return hud
 	end
 
@@ -1246,6 +1351,24 @@ return function(opts: any)
 			for i = #hudWatchers, 1, -1 do
 				if hudWatchers[i] == fn then
 					table.remove(hudWatchers, i)
+					break
+				end
+			end
+		end
+	end
+
+	-- Fires whenever anything the HUD *persists* moves — dragged to a new spot,
+	-- folded, shown or hidden. Unlike `OnHudVisible` it doesn't fire immediately
+	-- (there's no single value to hand you) and it takes no argument: read the
+	-- HUD, or just re-save. The built-in Settings tab uses it to keep the HUD's
+	-- flag in the change stream, which is the only reason a dragged HUD shows up
+	-- in `OnFlagChanged` at all. Returns an unsubscribe.
+	function window:OnHudChanged(fn: () -> ()): () -> ()
+		table.insert(hudChangeWatchers, fn)
+		return function()
+			for i = #hudChangeWatchers, 1, -1 do
+				if hudChangeWatchers[i] == fn then
+					table.remove(hudChangeWatchers, i)
 					break
 				end
 			end
@@ -1345,6 +1468,210 @@ return function(opts: any)
 	-- installed early enough to catch every flag in the menu.
 	function window:OnFlag(fn: (string, string) -> ()): () -> ()
 		return ctx:OnFlag(fn)
+	end
+
+	-- Watch flag VALUES as they move — `fn(name, value, kind, source)`, where
+	-- `value` is the encoded value (what `GetConfig()` would file under that name)
+	-- and `source` is `"user"` / `"code"` / `"config"`. Fires synchronously, and
+	-- never for a control taking its default or for a `:Set` that lands on the
+	-- value already held. Returns an unsubscribe.
+	--
+	-- This is what a host persisting continuously hangs off: without it the only
+	-- way to notice a change is to poll `GetConfig()` and diff it, which loses
+	-- everything since the last poll whenever the client script dies without a
+	-- clean unload. `source` is what keeps a config landing 40 flags from looking
+	-- like 40 edits worth writing back.
+	function window:OnFlagChanged(fn: (string, any, string, string) -> ()): () -> ()
+		if type(fn) ~= "function" then
+			Log.fail("OnFlagChanged", ("expects a function fn(name, value, kind, source), got %s")
+				:format(typeof(fn)))
+		end
+		return ctx:OnFlagChanged(fn)
+	end
+
+	-- Tell the watchers a flag's value moved. Only needed for state YOU registered
+	-- with `RegisterFlag` — every control notifies for itself. Re-reads and
+	-- re-encodes the flag and stays silent unless the value actually differs from
+	-- the last one reported, so it's safe to call on any suspicion of a change.
+	function window:NotifyFlag(name: string, source: string?)
+		if type(name) ~= "string" or name == "" then
+			Log.warn("NotifyFlag", ("expects a flag name, got %s — ignoring.")
+				:format(name == "" and '""' or typeof(name)))
+			return
+		end
+		if not ctx.Flags[name] then
+			Log.warn("NotifyFlag", ('no flag named "%s" is registered — ignoring.'):format(name))
+			return
+		end
+		ctx:NotifyFlag(name, source)
+	end
+
+	-- ── settings: window geometry + UI state ──────────────────────────────────
+	-- Where the window is, how big it is, which tab is open and which groups are
+	-- folded — all of it state the user set with the mouse, none of it readable
+	-- until now, so "put the menu back where I left it" wasn't expressible by
+	-- anyone, library or host.
+	--
+	-- Position is the window's TOP-LEFT in screen pixels, matching the HUD's
+	-- convention. Setting it clamps the same way a drag does, so a coordinate from
+	-- a bigger monitor can't strand the window off-screen.
+	function window:GetPosition(): Vector2
+		return topLeft()
+	end
+
+	function window:SetPosition(x: number, y: number)
+		local px, py = tonumber(x), tonumber(y)
+		if not px or not py then
+			Log.warn("SetPosition", ("expects two numbers (x, y), got %s, %s — ignoring.")
+				:format(typeof(x), typeof(y)))
+			return
+		end
+		moveTo(px, py)
+		ctx:WindowStateChanged()
+	end
+
+	-- The size the window is actually drawn at. `SetSize` sets the size it *wants*
+	-- — it's still clamped to the viewport (and overridden while maximized), so a
+	-- laptop session doesn't permanently shrink a size set on a bigger screen.
+	function window:GetSize(): Vector2
+		return layoutSize()
+	end
+
+	function window:SetSize(width: number, height: number)
+		local w, h = tonumber(width), tonumber(height)
+		if not w or not h then
+			Log.warn("SetSize", ("expects two numbers (width, height), got %s, %s — ignoring.")
+				:format(typeof(width), typeof(height)))
+			return
+		end
+		baseWidth = math.max(MIN_W, math.floor(w))
+		baseHeight = math.max(MIN_H, math.floor(h))
+		fitWindow()
+		ctx:WindowStateChanged()
+	end
+
+	function window:IsMaximized(): boolean
+		return maximized
+	end
+
+	function window:SetMaximized(value: boolean, animate: boolean?)
+		setMaximized(value ~= false, animate)
+	end
+
+	-- ── the window-state flag ─────────────────────────────────────────────────
+	-- Registered by the library itself, on the same terms as the bind HUD's flag:
+	-- every host wants the menu to come back where it was left, and asking each of
+	-- them to reimplement the clamping and the "that tab doesn't exist any more"
+	-- fallbacks is how those get written four different ways and wrong three of
+	-- them. `CreateWindow{ PersistWindow = false }` opts out; `WindowFlag` renames
+	-- it, exactly like `HudFlag`.
+	local windowFlagName = opts.WindowFlag or "uranium_window"
+	local persistWindow = opts.PersistWindow ~= false
+	local applyingWindowState = false
+
+	local function windowState(): any
+		local groups: { [string]: boolean } = {}
+		for _, entry in ctx.Groups do
+			groups[entry.key] = entry.handle:IsCollapsed() == true
+		end
+		local record: any = {
+			Width = baseWidth,
+			Height = baseHeight,
+			Maximized = maximized,
+			Tab = activeIndex,
+			Groups = groups,
+		}
+		-- Position only once the viewport has actually been measured. A snapshot
+		-- taken on the frame the window is built (a host that saves immediately)
+		-- would otherwise resolve the scale half of the Position against a zero
+		-- viewport and record the window as sitting off the top-left corner — a
+		-- coordinate that means nothing, written down as if the user had chosen it.
+		-- Omitted, the restore just leaves the window where it opens.
+		if screenGui.AbsoluteSize.X > 0 then
+			local origin = topLeft()
+			record.X = origin.X
+			record.Y = origin.Y
+		end
+		return record
+	end
+
+	-- Every field is optional and every one of them is allowed to be wrong: a
+	-- record is written by one session and applied by another, with a different
+	-- viewport, a different set of tabs (a game script that isn't loaded this
+	-- time) and possibly a different build of the menu. Nothing in here errors on
+	-- a mismatch — it restores what still makes sense and drops the rest.
+	local function applyWindowState(value: any)
+		if type(value) ~= "table" then
+			return
+		end
+		applyingWindowState = true
+		-- Size first (the position clamp is computed against it), then maximize
+		-- (which overrides the size), then the position it's clamped into.
+		if value.Width and value.Height then
+			baseWidth = math.max(MIN_W, math.floor(value.Width))
+			baseHeight = math.max(MIN_H, math.floor(value.Height))
+			fitWindow()
+		end
+		if value.Maximized ~= nil then
+			setMaximized(value.Maximized == true, false)
+		end
+		if value.X and value.Y then
+			moveTo(value.X, value.Y)
+		end
+
+		if value.Tab then
+			local index = math.floor(value.Tab)
+			local target = tabs[index]
+			if target and target:IsVisible() then
+				select(index)
+			else
+				-- The saved tab is gone (or hidden) — a config written with a
+				-- game-specific tab loaded, restored without it. Fall through to the
+				-- first tab that's actually there rather than erroring or leaving the
+				-- window on a page nobody can navigate back to.
+				for i, other in tabs do
+					if other:IsVisible() then
+						select(i)
+						break
+					end
+				end
+			end
+		end
+
+		-- Only groups that still exist under the same key. Anything built after
+		-- this runs isn't in the registry yet and keeps its own `Collapsed` option,
+		-- which is the same ordering rule as every other flag: state is restored
+		-- for the controls that exist when the config is applied.
+		if type(value.Groups) == "table" then
+			for _, entry in ctx.Groups do
+				local collapsed = value.Groups[entry.key]
+				if collapsed ~= nil then
+					entry.handle:SetCollapsed(collapsed == true, false)
+				end
+			end
+		end
+		applyingWindowState = false
+	end
+
+	if persistWindow then
+		ctx:RegisterFlag(windowFlagName, {
+			GetFlag = function(): any
+				return windowState()
+			end,
+			SetFlag = function(_, value: any)
+				applyWindowState(value)
+			end,
+		}, "window")
+		-- One funnel for everything that moves the record — a drag landing, a
+		-- maximize, a tab click, a group folded three components away. Suppressed
+		-- while a restore is in flight: applying one record would otherwise report
+		-- a change per field, each with a half-applied value, and Context:LoadConfig
+		-- announces the finished result once anyway.
+		ctx:OnWindowState(function()
+			if not applyingWindowState then
+				ctx:NotifyFlag(windowFlagName)
+			end
+		end)
 	end
 
 	-- ── settings: config persistence ──────────────────────────────────────────

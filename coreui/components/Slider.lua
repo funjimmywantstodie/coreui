@@ -138,13 +138,16 @@ return function(ctx: any, opts: any)
 		valBox.Text = format(value, suffix)
 	end
 
+	-- Drag is the only caller, so the whole body is user-driven — tagged for
+	-- Context:OnFlagChanged, which is how a host tells a slider someone dragged
+	-- from one a script moved.
 	local function setFromX(x: number)
 		local span = rail.AbsoluteSize.X
 		local pct = span > 0 and clamp((x - rail.AbsolutePosition.X) / span, 0, 1) or 0
 		value = clamp(snap(min + pct * (max - min)), min, max)
 		render()
 		if opts.Callback then
-			task.spawn(opts.Callback, value)
+			ctx:User(task.spawn, opts.Callback, value)
 		end
 	end
 

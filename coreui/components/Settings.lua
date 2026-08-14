@@ -115,7 +115,8 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			hudSwitch:Set(value)
 		end
 	end)
-	window:RegisterFlag(o.HudFlag or "uranium_hud", {
+	local hudFlag = o.HudFlag or "uranium_hud"
+	window:RegisterFlag(hudFlag, {
 		GetFlag = function(): any
 			local live = window:GetHud()
 			return live and live:GetFlag() or { Visible = false }
@@ -134,6 +135,13 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			end
 		end,
 	}, "hud")
+	-- The HUD's state moves with the mouse, so nothing in the flag system hears
+	-- about it on its own — a host persisting on change (`Window:OnFlagChanged`)
+	-- would miss a dragged or folded HUD entirely. This is the one flag whose
+	-- change notification has to be wired by whoever registered it.
+	controls.HudChanges = window:OnHudChanged(function()
+		window:NotifyFlag(hudFlag)
+	end)
 
 	return controls
 end

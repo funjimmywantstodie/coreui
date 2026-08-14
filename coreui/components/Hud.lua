@@ -81,6 +81,19 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local connections: { RBXScriptConnection } = {}
 	local destroyed = false
 
+	-- Built up front (its methods are filled in at the bottom) so the drag and
+	-- collapse handlers below can reach `handle.OnChange` — the hook Window fans
+	-- out to `Window:OnHudChanged`, which is how the HUD's flag gets a change
+	-- notification. Everything the HUD persists (where it is, whether it's folded,
+	-- whether it's up) moves without a control callback anywhere in sight, so
+	-- there'd otherwise be nothing to hang one on.
+	local handle: any = {}
+	local function changed()
+		if handle.OnChange then
+			handle.OnChange()
+		end
+	end
+
 	-- ── root ─────────────────────────────────────────────────────────────────
 	-- Two cards stacked in one draggable unit: the bind panel, and the FPS/ping
 	-- readout as its own bar beneath it. `root` is transparent — it exists to own
@@ -542,7 +555,14 @@ return function(ctx: any, parent: Instance, opts: any): any
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
+			local wasDragging = dragging
 			dragging = false
+			-- Announced on RELEASE, not per frame: `place` runs on every mouse move
+			-- and the position is part of the HUD's persisted record, so a host
+			-- writing on every change would write sixty times a second across a drag.
+			if wasDragging and dragMoved then
+				ctx:User(changed)
+			end
 			-- Clear the drag flag here rather than only in the caret's handler. The
 			-- caret is a TextButton and sinks input, so a click on it never reaches
 			-- root.InputBegan to reset the flag — after any drag of the panel, the
@@ -590,7 +610,6 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 
 	-- ── handle ───────────────────────────────────────────────────────────────
-	local handle: any = {}
 	handle.Frame = root  -- the whole unit: panel + stat bar
 	handle.Panel = panel
 	handle.OnVisible = nil :: ((boolean) -> ())? -- Window syncs its settings toggle through this
@@ -643,6 +662,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if handle.OnVisible then
 			handle.OnVisible(visible)
 		end
+		changed()
 	end
 
 	function handle:Show()
@@ -671,6 +691,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		else
 			Tween.play(caret, Tween.Spin, { Rotation = collapsed and 180 or 0 })
 		end
+		changed()
 	end
 
 	function handle:SetTitle(text: string)
@@ -691,6 +712,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 	function handle:SetPosition(x: number, y: number)
 		place(Vector2.new(tonumber(x) or pos.X, tonumber(y) or pos.Y))
+		changed()
 	end
 
 	function handle:Refresh()
@@ -716,6 +738,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if value.Visible ~= nil then
 			handle:SetVisible(value.Visible == true, false)
 		end
+		-- A record that only moved the panel gets no notification from the setters
+		-- above (`place` isn't one of them), and a host mirroring the HUD needs to
+		-- hear about a restore either way. Deduped downstream by value.
+		changed()
 	end
 
 	function handle:Destroy()
@@ -739,7 +765,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 			dragMoved = false
 			return
 		end
-		handle:SetCollapsed(not collapsed)
+		ctx:User(function()
+			handle:SetCollapsed(not collapsed)
+		end)
 	end)
 
 	refresh()

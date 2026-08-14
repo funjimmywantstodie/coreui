@@ -102,8 +102,13 @@ return function(ctx: any, opts: any)
 		end
 	end
 
+	-- Tagged so a host watching Context:OnFlagChanged can tell a switch the user
+	-- flipped from one a script set. The tag is dynamically scoped and task.spawn
+	-- resumes immediately, so it still covers the callback :Set fires.
 	track.Activated:Connect(function()
-		handle:Set(not state)
+		ctx:User(function()
+			handle:Set(not state)
+		end)
 	end)
 
 	-- ── keybind ──────────────────────────────────────────────────────────────
@@ -121,6 +126,15 @@ return function(ctx: any, opts: any)
 	end
 
 	if bindable then
+		-- Resolved before the chip is built so the chip's OnChanged can name it —
+		-- re-keying or mode-cycling the chip is a change to this flag, and it's the
+		-- only one whose value never passes through a control callback (the chip
+		-- isn't mounted through components/Controls.lua, the toggle is).
+		local keyFlag = opts.KeybindFlag
+		if keyFlag == nil and type(opts.Flag) == "string" and opts.Flag ~= "" then
+			keyFlag = opts.Flag .. "_key"
+		end
+
 		local chip, chipHandle = BindChip(ctx, {
 			-- `true` (force the chip on) isn't a key — only a real one presets it.
 			Key = typeof(opts.Keybind) == "EnumItem" and opts.Keybind or nil,
@@ -140,6 +154,11 @@ return function(ctx: any, opts: any)
 			OnActivate = function(active)
 				handle:Set(active)
 			end,
+			OnChanged = function()
+				if keyFlag then
+					ctx:NotifyFlag(keyFlag)
+				end
+			end,
 		})
 		chip.Parent = f.row
 		bind = chipHandle
@@ -148,13 +167,10 @@ return function(ctx: any, opts: any)
 		-- config restores "hold B" as well as "on". A chip whose key doesn't
 		-- survive a config load is worse than no chip, and nothing now asks the
 		-- call site for one — so with no `KeybindFlag` given, derive it from the
-		-- toggle's own `Flag`. `<flag>_key` is the convention consumers were
-		-- already spelling out by hand, so a derived name matches what's in the
-		-- configs they've already saved. An explicit `KeybindFlag` still wins.
-		local keyFlag = opts.KeybindFlag
-		if keyFlag == nil and type(opts.Flag) == "string" and opts.Flag ~= "" then
-			keyFlag = opts.Flag .. "_key"
-		end
+		-- toggle's own `Flag` (resolved above). `<flag>_key` is the convention
+		-- consumers were already spelling out by hand, so a derived name matches
+		-- what's in the configs they've already saved. An explicit `KeybindFlag`
+		-- still wins.
 		if keyFlag then
 			ctx:RegisterFlag(keyFlag, chipHandle, "bind")
 		end

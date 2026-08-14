@@ -117,6 +117,9 @@ local Window = Uranium:CreateWindow({
     Hud          = true,                     -- floating bind HUD (default off; see below)
     Keybinds     = true,                     -- toggles carry a bind chip (default true)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
+    OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
+    PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
+    WindowFlag   = "uranium_window",         -- rename that flag        (default "uranium_window")
 })
 ```
 
@@ -174,11 +177,18 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:GetHud()` | The HUD handle, or `nil` if there isn't one. |
 | `Window:SetHudVisible(bool)` | Show/hide it, building it on first use. |
 | `Window:OnHudVisible(fn)` → `unsub` | Mirror the HUD's visibility. Fires now + on every change. |
+| `Window:OnHudChanged(fn)` → `unsub` | Fires whenever anything the HUD *persists* moves (dragged, folded, shown). No argument, no initial call. |
+| `Window:GetPosition()` / `:SetPosition(x, y)` | The window's top-left in screen pixels. Setting clamps on-screen. |
+| `Window:GetSize()` / `:SetSize(w, h)` | Its layout size. Setting is still clamped to the viewport. |
+| `Window:IsMaximized()` / `:SetMaximized(bool, animate?)` | The maximize state. |
+| `Window:GetSelected()` → `number` | Which tab is open (1-based). |
 | `Window:GetConfig()` → `table` | Snapshot every flag — what `SaveConfig` serializes. |
 | `Window:ApplyConfig(table)` → `applied, skipped` | Apply a flag table — what `LoadConfig` applies. |
 | `Window:GetFlags()` → `{[name]=kind}` | Every registered flag and its codec kind. |
 | `Window:RegisterFlag(name, handle, kind)` | Register your own non-control state as a flag. |
 | `Window:OnFlag(fn)` → `unsub` | `fn(name, kind)` as each flag registers, synchronously. |
+| `Window:OnFlagChanged(fn)` → `unsub` | `fn(name, value, kind, source)` as each flag's **value** changes. |
+| `Window:NotifyFlag(name, source?)` | Announce that a flag you registered yourself has moved. |
 | `Window:SaveConfig(name, meta?)` → `bool, reason?` | Save all flagged values to `<name>.json`, optionally stamped with `meta`. |
 | `Window:LoadConfig(name)` → `bool, reason?` | Load + apply a saved config. |
 | `Window:DeleteConfig(name)` → `bool, reason?` | Delete a saved config. |
@@ -308,8 +318,14 @@ local Tab = Window:CreateTab({
     Icon  = "home",   -- Lucide icon short-name  (default "gear")
     Desc  = nil,      -- second flyout line
     Badge = nil,      -- small chip in the flyout, in the tab's colour
+    Id    = nil,      -- stable identity for persisted group state (default: Name)
 })
 ```
+
+`Id` only matters for [window state](#window-state-uranium_window): it's what the
+folded-group map is keyed on, so give a tab one when its `Name` is duplicated or
+gets renamed at runtime (`SetName` deliberately does **not** re-key it — that
+would orphan every group under it in configs already on disk).
 
 The sidebar is icon-only, so the **hover flyout is the tab's label**: hovering
 the button shows `Name`, then `Desc`, then a `Badge` chip. It's placed beside the
@@ -370,12 +386,24 @@ local Group = Tab:CreateGroup({
     Title     = "Profile",  -- card header                 (default "Group")
     Column    = 1,          -- 1 = left column, 2 = right  (default 1)
     Collapsed = false,      -- start collapsed             (default false)
+    Id        = nil,        -- stable identity for persisted state (default: Title)
 })
 ```
 
 The header is clickable — it collapses/expands the card. The returned object is a
 **control surface**: call the control methods below on it. The same surface is
 returned by `Group:Section{}`.
+
+Two methods live on the surface itself rather than being controls:
+
+| Method | Description |
+| --- | --- |
+| `Group:IsCollapsed()` → `bool` | Is the card folded? |
+| `Group:SetCollapsed(bool, animate?)` | Fold / unfold it. `animate == false` snaps. |
+
+Which groups are folded is persisted with the window (see
+[Window state](#window-state-uranium_window)), keyed on `"<tab>::<Id or Title>"` —
+`Id` is there for when two groups in a tab share a title, or a title changes.
 
 ---
 
@@ -891,7 +919,102 @@ the menu ever registers, including the Settings tab's own.
 same config file. `handle` needs `:Get()`/`:Set(v)` — or `:GetFlag()`/`:SetFlag(v)`
 when the persisted value isn't the primary one — and `kind` names the codec
 (`"toggle"`, `"slider"`, `"input"`, `"dropdown"`, `"colorpicker"`, `"bind"`,
-`"playerselect"`, `"code"`, `"hud"`).
+`"playerselect"`, `"code"`, `"hud"`, `"window"`).
+
+### Watching values change
+
+`OnFlag` says which flags *exist*; `OnFlagChanged` says which one just **moved**.
+That's the hook to hang continuous persistence off — without it the only way to
+notice a change is to poll `GetConfig()` and diff it, which loses everything
+since the last poll whenever the client script dies without a clean unload (a
+teleport, a server hop, an alt-F4).
+
+```lua
+local unsub = Window:OnFlagChanged(function(name, value, kind, source)
+    if source == "config" then return end   -- we're the ones applying it
+    snapshot[name] = value                  -- already encoded — file it as-is
+    scheduleWrite()                         -- debounce ~1s and save once
+end)
+```
+
+| Argument | What |
+| --- | --- |
+| `name` | The flag. |
+| `value` | The **encoded** value — byte-for-byte what `GetConfig()` would put in the file under that name, so you can patch a snapshot in place instead of re-reading every flag to find the one that moved. Treat it as read-only; every watcher gets the same table. |
+| `kind` | The codec kind, as `GetFlags()` reports it. |
+| `source` | `"user"` — a control the user operated · `"code"` — a programmatic `:Set` · `"config"` — inside `ApplyConfig` / `LoadConfig`. |
+
+`source` is the load-bearing one. A config landing 40 flags must not look like 40
+edits worth writing back, and the alternative — a re-entrancy flag around your own
+`ApplyConfig` call — can't see an autoload the library ran itself.
+
+Four promises:
+
+- **Synchronous**, like `OnFlag`. Note that most controls hand their callback to
+  `task.spawn`, so a watcher usually runs on that spawned thread rather than the
+  one that caused the change: safe to yield in, never safe to assume you're still
+  inside the click handler.
+- **Never on registration.** A control taking its `Default` is not a change.
+- **Never on a no-op.** A `:Set` that lands on the value already held is silent —
+  values are compared *encoded*, so this holds for tables (a bind's key + mode, a
+  multi-dropdown's list) as well as scalars.
+- **Every flag kind**, including the ones nobody declared: the bind chip a toggle
+  gets for free reports under `<flag>_key` when it's re-keyed or its mode is
+  cycled, and the HUD reports when it's dragged or folded.
+
+A watcher that throws is `pcall`'d and warned about — your bookkeeping blowing up
+never takes the control that moved down with it. `Window:NotifyFlag(name)` is the
+other half for state *you* registered with `RegisterFlag`: call it whenever your
+own value may have moved, and it stays silent unless it really did.
+
+`CreateWindow{ OnFlagChanged = fn }` installs the same hook early enough to catch
+the first change the menu ever makes.
+
+### Window state (`uranium_window`)
+
+Where the window sits, how big it is, which tab is open and which groups are
+folded is state the user set with the mouse — so the library persists it itself,
+on the same terms as the bind HUD. It's one flag, `uranium_window`, in every
+config you save:
+
+```lua
+Uranium:CreateWindow({
+    PersistWindow = false,             -- opt out entirely
+    WindowFlag    = "my_window_state", -- or just rename it
+})
+```
+
+Restoring is defensive, because a record is written by one session and applied by
+another — different viewport, possibly a different set of tabs:
+
+- **Position and size are clamped** exactly the way a drag is, so a record saved
+  on a 1440p monitor can't put the window off a laptop screen.
+- **A selected tab that no longer exists** — a config saved with a game script's
+  tab loaded, restored without it — falls through to the first visible tab
+  instead of erroring.
+- **Groups are matched by key**, `"<tab>::<group>"`, from the tab's `Name` and the
+  group's `Id` (or its `Title`). Anything that doesn't match is left alone, and
+  groups built *after* the config is applied keep their own `Collapsed` option —
+  the same ordering rule as every other flag.
+
+Give a tab or a group an explicit `Id` when its title is duplicated or likely to
+change; a repeated key gets a `#2` suffix, which is stable only as long as the
+menu builds in the same order.
+
+The pieces are public too, so a host that wants its own record — or just wants to
+put the window somewhere — doesn't need the flag:
+
+```lua
+Window:SetPosition(40, 120)          -- top-left, clamped on-screen
+Window:SetSize(900, 620)             -- clamped to the viewport
+Window:SetMaximized(true)
+Window:Select(2)                     -- Window:GetSelected() reads it back
+Group:SetCollapsed(true)             -- Group:IsCollapsed() reads it back
+```
+
+`Group:SetCollapsed(value, animate?)` snaps when `animate == false`, which is what
+a restore wants — no fold animation for state the user set last session. Sections
+aren't persisted; only groups are.
 
 ### Per-place / per-profile configs
 

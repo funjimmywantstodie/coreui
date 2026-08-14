@@ -245,6 +245,10 @@ return function(ctx: any, opts: any): (Frame, any)
 			disarm(true)
 		end
 
+		-- Every rebind below is tagged as user-driven, so a host watching flag
+		-- changes (Context:OnFlagChanged) sees a chip the user re-keyed as
+		-- exactly that, and not as the config load or the `:Set` that takes the
+		-- same path through `binding:SetKey`.
 		armConn = UserInputService.InputBegan:Connect(function(input)
 			local kind = input.UserInputType
 			if kind == Enum.UserInputType.Keyboard then
@@ -253,9 +257,13 @@ return function(ctx: any, opts: any): (Frame, any)
 				if input.KeyCode == Enum.KeyCode.Escape then
 					-- leave the bind untouched
 				elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.Delete then
-					binding:SetKey(Enum.KeyCode.Unknown)
+					ctx:User(function()
+						binding:SetKey(Enum.KeyCode.Unknown)
+					end)
 				else
-					binding:SetKey(input.KeyCode)
+					ctx:User(function()
+						binding:SetKey(input.KeyCode)
+					end)
 				end
 				paint()
 				return
@@ -274,7 +282,9 @@ return function(ctx: any, opts: any): (Frame, any)
 				-- armed rather than eating the click as a cancel.
 				if BINDABLE_MOUSE[kind] then
 					finish()
-					binding:SetKey(kind)
+					ctx:User(function()
+						binding:SetKey(kind)
+					end)
 					paint()
 				end
 				return
@@ -306,7 +316,9 @@ return function(ctx: any, opts: any): (Frame, any)
 					break
 				end
 			end
-			binding:SetMode(modes[(index % #modes) + 1])
+			ctx:User(function()
+				binding:SetMode(modes[(index % #modes) + 1])
+			end)
 			paint()
 		end)
 	end

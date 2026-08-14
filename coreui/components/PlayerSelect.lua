@@ -426,8 +426,10 @@ local function build(ctx: any, opts: any, multi: boolean)
 			row.MouseLeave:Connect(function()
 				Tween.play(row, Tween.Fast, { BackgroundTransparency = 1 })
 			end)
+			-- Tagged as user-driven for Context:OnFlagChanged; `handle:Set` reaches
+			-- the same state through its own path and keeps its ambient tag.
 			row.Activated:Connect(function()
-				pick(p)
+				ctx:User(pick, p)
 			end)
 		end
 	end
