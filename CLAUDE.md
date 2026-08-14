@@ -50,12 +50,18 @@ module in `__modules[key] = function() … end`, rewrites every
 `__require("")` (root = init.lua). Module keys: `init.lua`→`""`,
 `components/Window.lua`→`"components.Window"`.
 
-**Icon tree-shaking:** bundle.py parses `Icons.lua`'s `ALIAS` table + literal
-`Icons.new("name"…)` / `Icons.apply(…,"name")` calls, keeps only those entries
-from `LucideData`'s `48px` set, and drops the `256px` set entirely (~2/3 of the
-raw size). A name with no 48px entry degrades to a Unicode glyph (no error). If a
-consumer passes a raw Lucide name not present in source, add it to `EXTRA_ICONS`
-in bundle.py.
+**Icon set:** bundle.py ships **all 1573** entries of `LucideData`'s `48px` set
+and drops the `256px` set entirely (nothing renders that large). `Icon` fields
+are consumer-facing — downstream menus pass arbitrary Lucide names, and a name
+with no entry degrades to a `•` glyph with no error, so a tree-shaken build made
+icons *silently* vanish. The full set costs ~70 KB of bundle text and nothing
+else: entries are `{assetId,{w,h},{offX,offY}}`, and only the spritesheets an
+icon actually references get fetched at runtime.
+
+`python3 bundle.py --shake` opts back into the old minimal build (`ALIAS` values
++ literal `Icons.new("name"…)` / `Icons.apply(…,"name")` calls — ~30 icons, ~70 KB
+smaller); `EXTRA_ICONS` in bundle.py force-keeps raw names in *that* mode only.
+Every build prints the icon count and the before/after bundle size.
 
 ## Architecture
 
@@ -64,7 +70,7 @@ coreui/
   init.lua            library table; only :CreateWindow
   Theme.lua           design tokens — colors / metrics (offset px) / fonts
   Icons.lua           short-name → Lucide sprite (Unicode glyph fallback)
-  LucideData.lua      icon spritesheet data (tree-shaken at bundle time)
+  LucideData.lua      icon spritesheet data (48px set kept, 256px dropped)
   util/
     Create.lua        instance factory + corner/stroke/padding/listLayout helpers
     Tween.lua         shared TweenInfo presets + Tween.play
@@ -353,10 +359,9 @@ for display-only controls; stateful ones expose at least `:Get()`/`:Set(v)`.
      should round-trip through config Flags. Skip this (pass `kind = nil` to
      `mount`) for transient/caller-owned content — see `Custom`/`DataGrid`.
 - `bundle.py` needs **no edit** for a new file — it walks the whole `coreui/`
-  tree and picks up any `.lua` module automatically. Its icon tree-shaker also
-  auto-keeps any literal `Icons.new("x")` / `Icons.apply(_, "x")` call found
-  anywhere in source; only a *dynamically computed* icon name needs a manual
-  `EXTRA_ICONS` entry in `bundle.py`.
+  tree and picks up any `.lua` module automatically. Any Lucide icon name is
+  already bundled, so a new control can reach for one freely (`EXTRA_ICONS`
+  only matters under `--shake`).
 
 **`Group:Custom(builder)` / `Section:Custom(builder)`** (`components/Custom.lua`)
 is the escape hatch for parenting arbitrary Instances — `builder(ctx, frame)`

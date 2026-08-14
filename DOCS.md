@@ -568,10 +568,11 @@ notifications switch, and config **save / load / delete / refresh** plus an
 ## Icons
 
 `Icon` fields take a Lucide icon **short-name** (e.g. `"home"`, `"layers"`,
-`"gear"`, `"search"`, `"user"`). Unknown names degrade to a Unicode glyph rather
-than erroring. The bundler tree-shakes icons: only names referenced in source
-are kept. If you pass a raw Lucide name that isn't bundled, add it to
-`EXTRA_ICONS` in `bundle.py` (when building from source).
+`"gear"`, `"search"`, `"user"`) **or any raw [Lucide](https://lucide.dev/icons/)
+name** — `"globe"`, `"zap"`, `"gamepad-2"`, `"shield-check"`. The full 1573-icon
+Lucide set ships in the bundle, so nothing needs registering ahead of time.
+A name that still doesn't match (typo, or an icon added to Lucide after this
+build) degrades to a `•` glyph rather than erroring.
 
 ---
 
