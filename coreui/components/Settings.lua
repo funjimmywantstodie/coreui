@@ -1,0 +1,385 @@
+--!strict
+-- components/Settings.lua — the built-in settings panel, as three INDEPENDENT
+-- group builders rather than one sealed tab.
+--
+-- `Window:CreateSettingsTab` composes all three (that's still the one-line
+-- drop-in), but the panel used to be all-or-nothing: a host with its own config
+-- UI got the library's Configuration group whether it wanted it or not, couldn't
+-- switch it off, and couldn't even fake it off — the group tested util/Config.lua's
+-- own `supported` flag rather than the public `window.ConfigSupported`. So:
+--
+--   * `CreateSettingsTab{ Sections = { Config = false } }` drops a section, and
+--   * every builder here is public (`Uranium.Settings.ConfigGroup(window, tab)`),
+--     so a host can compose its own settings tab out of the parts it likes and
+--     put its own controls in between.
+--
+-- Everything below goes through the PUBLIC window API — nothing reaches into the
+-- Context, the flag registry or util/Config.lua directly. That's deliberate: it's
+-- the proof that a host can build the same panel, and it means the auto-load
+-- pointer (the one config path that used to bypass `window:`) is interceptable
+-- like every other.
+
+local Theme = require(script.Parent.Parent.Theme)
+local Log = require(script.Parent.Parent.util.Log)
+
+local Settings = {}
+
+-- Toasts, unless the caller said not to. A host that wraps the window's config
+-- methods to add its own rules (per-place scoping, say) already tells the user
+-- why a load was refused; the panel piling a generic "Couldn't load X" on top of
+-- that is noise it had no way to suppress.
+local function notifier(window: any, opts: any): (string) -> ()
+	local enabled = not (opts and opts.Notify == false)
+	return function(text: string)
+		if enabled then
+			window:Notify({ Title = "Config", Text = text })
+		end
+	end
+end
+
+-- "Couldn't load "x" — corrupt JSON." out of the `(ok, reason)` pair.
+local function because(text: string, reason: string?): string
+	if type(reason) == "string" and reason ~= "" then
+		return ("%s — %s."):format(text, reason)
+	end
+	return text .. "."
+end
+
+local function group(tab: any, opts: any, title: string, column: number): any
+	if opts.Group then
+		return opts.Group
+	end
+	return tab:CreateGroup({ Title = opts.Title or title, Column = opts.Column or column })
+end
+
+-- ── Interface ────────────────────────────────────────────────────────────────
+-- Accent colour, the toggle keybind, notifications, the bind HUD switch.
+-- Returns `{ Group, Accent, ToggleKey, Notifications, Hud }`.
+function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
+	local o: any = opts or {}
+	local g = group(tab, o, "Interface", 1)
+	local controls: any = { Group = g }
+
+	controls.Accent = g:Colorpicker({
+		Name = "Accent Color",
+		Desc = "Re-themes the whole UI.",
+		Flag = o.AccentFlag or "uranium_accent",
+		Default = window:GetAccent(),
+		Callback = function(c)
+			window:SetAccent(c)
+		end,
+	})
+	controls.ToggleKey = g:Keybind({
+		Name = "Toggle UI",
+		Desc = "Show or hide the window.",
+		Flag = o.ToggleKeyFlag or "uranium_togglekey",
+		Default = window:GetToggleKey(),
+		Callback = function(k)
+			window:SetToggleKey(k)
+		end,
+	})
+	controls.Notifications = g:Toggle({
+		Name = "Notifications",
+		Desc = "Show toast notifications.",
+		Flag = o.NotificationsFlag or "uranium_notifications",
+		Default = window:GetNotificationsEnabled(),
+		Callback = function(on)
+			window:SetNotificationsEnabled(on)
+		end,
+	})
+
+	-- The bind HUD switch. Deliberately NOT flagged itself: the HUD is the source
+	-- of truth (it also persists its position and collapsed state), and two flags
+	-- for one thing would fight each other on load. Instead the flag below proxies
+	-- to the HUD — built on demand, so a config that has it off never creates one —
+	-- and the switch mirrors whatever the HUD ends up at. Both directions no-op
+	-- when already in step, so the sync can't loop.
+	local hud = window:GetHud()
+	local hudSwitch = g:Toggle({
+		Name = "Keybind HUD",
+		Desc = "Floating panel: active binds, FPS and ping.",
+		Default = hud ~= nil and hud:IsVisible(),
+		Callback = function(on)
+			local live = window:GetHud()
+			if live and live:IsVisible() == on then
+				return
+			end
+			window:SetHudVisible(on)
+		end,
+	})
+	controls.Hud = hudSwitch
+	-- Fires once immediately with the HUD's current state, so the switch is in
+	-- step even if the HUD moved between being built and this tab existing.
+	controls.HudMirror = window:OnHudVisible(function(value: boolean)
+		if hudSwitch:Get() ~= value then
+			hudSwitch:Set(value)
+		end
+	end)
+	window:RegisterFlag(o.HudFlag or "uranium_hud", {
+		GetFlag = function(): any
+			local live = window:GetHud()
+			return live and live:GetFlag() or { Visible = false }
+		end,
+		SetFlag = function(_, value: any)
+			if type(value) ~= "table" then
+				return
+			end
+			if value.Visible == true then
+				window:CreateHud():SetFlag(value)
+			else
+				local live = window:GetHud()
+				if live then
+					live:SetFlag(value)
+				end
+			end
+		end,
+	}, "hud")
+
+	return controls
+end
+
+-- ── Configuration ────────────────────────────────────────────────────────────
+-- Save / load / delete + the auto-load pointer. Returns
+-- `{ Group, Name, List, AutoLoad, Refresh, Save, Load, Delete }` — the handles
+-- used to be locals in a closure, so a host couldn't refresh the list after its
+-- own write, read what was selected, or hang its own button off the selection.
+--
+-- `Notify = false` silences the panel's own toasts. A host wrapping
+-- `window:LoadConfig` can also return `false, "handled"` from its wrapper to
+-- suppress the failure toast for one call while keeping the rest.
+function Settings.ConfigGroup(window: any, tab: any, opts: any?): any
+	local o: any = opts or {}
+	local g = group(tab, o, "Configuration", 2)
+	local controls: any = { Group = g }
+	local say = notifier(window, o)
+
+	-- The PUBLIC flag, not util/Config.lua's own — a host that wants the library's
+	-- config UI to stand down (because it owns persistence itself) can set
+	-- `window.ConfigSupported = false` and get the same honest "unavailable" panel
+	-- an executor without file access gets.
+	if not window.ConfigSupported then
+		controls.Unavailable = g:Paragraph({
+			Title = "Unavailable",
+			Body = o.UnavailableText
+				or "Your executor doesn't expose file functions, so configs can't "
+					.. "be saved. Everything else here still works.",
+		})
+		return controls
+	end
+
+	local nameBox = g:Input({ Name = "Config Name", Placeholder = "my config" })
+	local list: any
+	local autoSwitch: any
+	-- Auto Load points at whatever is selected NOW. It used to be written only
+	-- from the switch's own callback, so picking a different config afterwards
+	-- left the pointer on the old one — and flipping the switch on with nothing
+	-- selected wrote nil, silently clearing it while the switch read "on".
+	local function syncAutoload()
+		if not autoSwitch then
+			return
+		end
+		local on = autoSwitch:Get()
+		local name = list:Get()
+		if on and (name == nil or name == "") then
+			window:SetAutoload(nil)
+			autoSwitch:Set(false) -- re-enters here with `on` false; terminates
+			say("Pick a config to auto-load first.")
+			return
+		end
+		window:SetAutoload(on and name or nil)
+	end
+
+	list = g:Dropdown({
+		Name = "Saved Configs",
+		Placeholder = "None saved",
+		Stack = true,
+		Options = window:ListConfigs(),
+		Callback = syncAutoload,
+	})
+	local function refresh()
+		list:SetOptions(window:ListConfigs())
+	end
+	-- Re-scoping persistence (window:SetConfigFolder — per-place folders, profiles)
+	-- makes this list a different folder's; it fires once immediately, which is a
+	-- harmless second read of the list we just built.
+	controls.FolderWatch = window:OnConfigFolder(function()
+		refresh()
+	end)
+
+	local function save()
+		local n = nameBox:Get()
+		if n == nil or n == "" then
+			say("Enter a name first.")
+			return
+		end
+		local ok, reason = window:SaveConfig(n)
+		if ok then
+			refresh()
+			list:Set(n)
+			say(('Saved "%s".'):format(n))
+		elseif reason ~= "handled" then
+			say(because(('Couldn\'t save "%s"'):format(n), reason))
+		end
+	end
+
+	local function load()
+		local n = list:Get()
+		if not n then
+			say("Pick a config to load.")
+			return
+		end
+		local ok, reason = window:LoadConfig(n)
+		if ok then
+			say(('Loaded "%s".'):format(n))
+		elseif reason ~= "handled" then
+			-- Saying nothing on failure made a missing or corrupt file look like a
+			-- dead button; saying only "Couldn't load" made it look like a bug. The
+			-- reason comes straight off the (ok, reason) pair.
+			say(because(('Couldn\'t load "%s"'):format(n), reason))
+		end
+	end
+
+	local function remove()
+		local n = list:Get()
+		if not n then
+			say("Pick a config to delete.")
+			return
+		end
+		local deleted, reason = window:DeleteConfig(n)
+		refresh()
+		if deleted then
+			say(('Deleted "%s".'):format(n))
+		elseif reason ~= "handled" then
+			say(because(('Couldn\'t delete "%s"'):format(n), reason))
+		end
+	end
+
+	g:ButtonRow({
+		{ Label = "Save", Callback = save },
+		{ Label = "Load", Callback = load },
+	})
+	g:ButtonRow({
+		{ Label = "Delete", Callback = remove },
+		{ Label = "Refresh", Callback = refresh },
+	})
+	autoSwitch = g:Toggle({
+		Name = "Auto Load",
+		Desc = "Apply the selected config on launch.",
+		Default = window:GetAutoload() ~= nil,
+		Callback = syncAutoload,
+	})
+
+	controls.Name = nameBox
+	controls.List = list
+	controls.AutoLoad = autoSwitch
+	controls.Refresh = refresh
+	controls.Save = save
+	controls.Load = load
+	controls.Delete = remove
+
+	-- Apply the auto-load config once the rest of the UI has finished building
+	-- (this tab is meant to be created last, so all flags exist). `AutoLoad = false`
+	-- opts out for a host that decides itself what to apply on boot.
+	if o.AutoLoad ~= false then
+		task.defer(function()
+			local auto = window:GetAutoload()
+			if auto then
+				list:Set(auto)
+				window:LoadConfig(auto)
+			end
+		end)
+	end
+
+	return controls
+end
+
+-- ── Danger Zone ──────────────────────────────────────────────────────────────
+-- Pass `Group` (the Configuration group) to append into it behind a divider,
+-- which is where it has always lived; without one it gets its own card, so a tab
+-- built with `Sections = { Config = false }` still has an unload button.
+function Settings.DangerGroup(window: any, tab: any, opts: any?): any
+	local o: any = opts or {}
+	local inline = o.Group ~= nil
+	local g = group(tab, o, "Danger Zone", 2)
+	local controls: any = { Group = g }
+	if inline then
+		g:Divider()
+	end
+	controls.Unload = g:Button({
+		Name = inline and "Danger Zone" or nil,
+		Label = o.Label or ("Unload " .. Theme.Brand.name),
+		Callback = function()
+			window:Destroy()
+		end,
+	})
+	return controls
+end
+
+-- ── the whole panel ──────────────────────────────────────────────────────────
+-- What `Window:CreateSettingsTab` calls. `opts.Sections` switches sections off
+-- individually (`{ Config = false }`); everything else is forwarded to the
+-- builders. Returns the flat control table the tab hands back alongside itself.
+function Settings.build(window: any, tab: any, opts: any?): any
+	local o: any = opts or {}
+	local sections: any = o.Sections or {}
+	if type(sections) ~= "table" then
+		Log.warn("CreateSettingsTab", ("Sections must be a table like { Config = false }, got %s"
+			.. " — building all of them."):format(typeof(sections)))
+		sections = {}
+	end
+	local controls: any = {}
+
+	-- Copied, never edited in place: `o.Config` / `o.Danger` are the caller's own
+	-- tables, and a loader that reuses one options table across two windows
+	-- shouldn't find our defaults baked into it afterwards.
+	local function sub(key: string): any
+		local out: any = {}
+		if type(o[key]) == "table" then
+			for k, v in o[key] :: any do
+				out[k] = v
+			end
+		end
+		return out
+	end
+
+	if sections.Interface ~= false then
+		local iface = Settings.InterfaceGroup(window, tab, sub("Interface"))
+		controls.Interface = iface.Group
+		controls.Accent = iface.Accent
+		controls.ToggleKey = iface.ToggleKey
+		controls.Notifications = iface.Notifications
+		controls.Hud = iface.Hud
+	end
+
+	local cfgGroup: any = nil
+	if sections.Config ~= false then
+		local cfgOpts: any = sub("Config")
+		if cfgOpts.Notify == nil then
+			cfgOpts.Notify = o.Notify -- `CreateSettingsTab{ Notify = false }` covers the panel
+		end
+		local cfg = Settings.ConfigGroup(window, tab, cfgOpts)
+		cfgGroup = cfg.Group
+		controls.Configuration = cfg.Group
+		controls.Name = cfg.Name
+		controls.List = cfg.List
+		controls.AutoLoad = cfg.AutoLoad
+		controls.Refresh = cfg.Refresh
+		controls.Save = cfg.Save
+		controls.Load = cfg.Load
+		controls.Delete = cfg.Delete
+	end
+
+	if sections.Danger ~= false then
+		local dangerOpts: any = sub("Danger")
+		if dangerOpts.Group == nil then
+			dangerOpts.Group = cfgGroup -- nil when Config is off → its own card
+		end
+		local danger = Settings.DangerGroup(window, tab, dangerOpts)
+		controls.Danger = danger.Group
+		controls.Unload = danger.Unload
+	end
+
+	return controls
+end
+
+return Settings

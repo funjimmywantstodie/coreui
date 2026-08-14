@@ -26,6 +26,7 @@ export type Context = typeof(setmetatable(
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		_consumers: { (Color3, Color3) -> () },
+		_flagWatchers: { (string, string) -> () },
 		_popover: {
 			menu: Instance,
 			catcher: Instance,
@@ -74,6 +75,7 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		overlay = overlay,
 		Flags = {},
 		_consumers = {},
+		_flagWatchers = {},
 		_popover = nil,
 		_capturing = 0,
 	}, Context)
@@ -263,6 +265,44 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 	},
 }
 
+-- Watch flag registration. `fn(name, kind)` fires SYNCHRONOUSLY from inside
+-- RegisterFlag, which is the whole point: a loader that wants to know which
+-- module (or which boot phase) a flag came from tags it against whatever it is
+-- currently building, and that only works if the notification lands before the
+-- next line of the builder runs. A BindableEvent would not do — Roblox's
+-- deferred signal behaviour hands the callback back at the end of the
+-- resumption cycle, by which time "what are we building right now?" has moved
+-- on. Same shape as RegisterAccent: returns an unsubscribe.
+--
+-- Unlike RegisterAccent this does NOT replay the flags already registered —
+-- Context:GetFlags() is there for that, and a watcher installed at CreateWindow
+-- time (the `OnFlag` option) has missed nothing.
+function Context:OnFlag(fn: (string, string) -> ()): () -> ()
+	table.insert(self._flagWatchers, fn)
+	return function()
+		local list = self._flagWatchers
+		for i = #list, 1, -1 do
+			if list[i] == fn then
+				table.remove(list, i)
+				break
+			end
+		end
+	end
+end
+
+-- Every registered flag as `{ [name] = kind }` — a copy, so a caller can't edit
+-- the live registry through it. Enumerating at two points in time is what lets a
+-- host split flags into groups it registered before and after some milestone
+-- (a per-place module, a profile), which is the difference between a config that
+-- scopes and one that has to be all-or-nothing.
+function Context:GetFlags(): { [string]: string }
+	local out = {}
+	for name, entry in self.Flags do
+		out[name] = entry.kind
+	end
+	return out
+end
+
 -- Register a stateful control's handle under `name` so config save/load can
 -- read (:Get) and write (:Set) it. `kind` selects the codec. No-op without both.
 function Context:RegisterFlag(name: string?, handle: any, kind: string?)
@@ -277,6 +317,18 @@ function Context:RegisterFlag(name: string?, handle: any, kind: string?)
 			.. "slot, so only the last will save/load. Give each a unique Flag."):format(name))
 	end
 	self.Flags[name] = { handle = handle, kind = kind }
+	-- Clone before notifying: a watcher is allowed to unsubscribe itself (or add
+	-- another) from inside the callback, and mutating the array mid-walk would
+	-- skip the next one. Same reason SetAccent and util/Bind.lua clone.
+	for _, fn in table.clone(self._flagWatchers) do
+		local ok, err = pcall(fn, name, kind)
+		if not ok then
+			-- A host's bookkeeping blowing up must not take the control down with
+			-- it — the flag is registered either way.
+			Log.warn("OnFlag", ('watcher errored for flag "%s" (%s): %s')
+				:format(name, kind, tostring(err)))
+		end
+	end
 end
 
 -- Snapshot every flagged control into a JSON-safe table.
@@ -313,14 +365,26 @@ function Context:GetConfig(): { [string]: any }
 end
 
 -- Apply a saved table back onto the flagged controls (fires their callbacks).
-function Context:LoadConfig(data: { [string]: any })
+-- Returns how many flags were applied and how many keys were skipped.
+--
+-- **A key with no registered flag is skipped, quietly and on purpose** — that's
+-- a promised part of the format, not an accident of the loop. It's what lets a
+-- config carry data that isn't a control value: `Config.MetaKey` ("__uranium")
+-- is the library's own reserved slot for the metadata `Window:SaveConfig(name,
+-- meta)` stamps, and a host is free to keep its own bookkeeping keys alongside
+-- it. It also means a config written by a build with more controls than this one
+-- still loads the flags this build does have.
+function Context:LoadConfig(data: { [string]: any }): (number, number)
 	if type(data) ~= "table" then
-		return
+		return 0, 0
 	end
+	local applied, skipped = 0, 0
 	for name, raw in data do
 		local entry = self.Flags[name]
 		local codec = entry and Codec[entry.kind]
-		if codec then
+		if not codec then
+			skipped += 1
+		else
 			-- Every failure below used to be swallowed by a bare pcall, so one broken
 			-- control read as "the whole config didn't load". Skip the bad flag, say
 			-- which one, and keep applying the rest.
@@ -328,6 +392,7 @@ function Context:LoadConfig(data: { [string]: any })
 			if not okDecode then
 				Log.warn("LoadConfig", ('flag "%s" (%s) failed to decode — skipped: %s')
 					:format(name, entry.kind, tostring(value)))
+				skipped += 1
 			else
 				local okSet, err = pcall(function()
 					if entry.handle.SetFlag then
@@ -336,13 +401,17 @@ function Context:LoadConfig(data: { [string]: any })
 						entry.handle:Set(value)
 					end
 				end)
-				if not okSet then
+				if okSet then
+					applied += 1
+				else
 					Log.warn("LoadConfig", ('flag "%s" (%s) failed to apply — skipped: %s')
 						:format(name, entry.kind, tostring(err)))
+					skipped += 1
 				end
 			end
 		end
 	end
+	return applied, skipped
 end
 
 -- ── Popovers ───────────────────────────────────────────────────────────────

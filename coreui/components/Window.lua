@@ -22,6 +22,7 @@ local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 local Splash = require(script.Parent.Splash)
 local Hud = require(script.Parent.Hud)
+local SettingsPanel = require(script.Parent.Settings)
 
 local M = Theme.Metrics
 
@@ -40,6 +41,7 @@ return function(opts: any)
 	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
 	Log.field("CreateWindow", "Splash", opts.Splash, { "boolean", "table" })
 	Log.field("CreateWindow", "Hud", opts.Hud, { "boolean", "table" })
+	Log.field("CreateWindow", "OnFlag", opts.OnFlag, "function")
 
 	-- where configs are saved on disk + which key shows/hides the window
 	local configFolder = opts.ConfigFolder or "uranium"
@@ -589,6 +591,15 @@ return function(opts: any)
 
 	local ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
 
+	-- `CreateWindow{ OnFlag = function(name, kind) end }` — installed before a
+	-- single control exists, so a loader sees every flag the menu ever registers,
+	-- in order, including the ones the built-in Settings tab adds. Fires
+	-- synchronously from inside the registration (see Context:OnFlag), which is
+	-- what makes "tag this flag with the module I'm building right now" work.
+	if opts.OnFlag then
+		ctx:OnFlag(opts.OnFlag)
+	end
+
 	-- The keybind router (util/Bind.lua): one pair of input listeners shared by
 	-- every bound control, created here so its connections are tracked and die
 	-- with the window like the toggle-key listener below.
@@ -689,7 +700,15 @@ return function(opts: any)
 	-- The bind HUD, once something asks for one (components/Hud.lua). It's a
 	-- sibling of `main` in the ScreenGui, not a child, so minimize leaves it up.
 	local hud: any = nil
-	local onHudVisible: ((boolean) -> ())? = nil -- Settings tab's switch, if it exists
+	-- Anything mirroring the HUD's visibility — the Settings tab's switch is one,
+	-- but a host that builds its own settings UI needs the same signal, so it's a
+	-- list behind `window:OnHudVisible` rather than the panel's private hook it
+	-- used to be.
+	local hudWatchers: { (boolean) -> () } = {}
+	-- ...and the same for the config folder, which is no longer fixed at
+	-- CreateWindow (see window:SetConfigFolder): anything showing a config list
+	-- has to know the list it's showing just became a different folder's.
+	local folderWatchers: { (string) -> () } = {}
 
 	local searchOpen = false
 	local function currentQuery(): string
@@ -1115,6 +1134,12 @@ return function(opts: any)
 		ctx:SetAccent(color)
 	end
 
+	-- The live accent. A host building its own settings panel needs it to seed a
+	-- colour picker with what the window is actually wearing.
+	function window:GetAccent(): Color3
+		return ctx.Accent
+	end
+
 	-- ── settings: theme / keybind / notifications ─────────────────────────────
 	function window:SetToggleKey(key: Enum.KeyCode)
 		if key ~= nil and typeof(key) ~= "EnumItem" then
@@ -1127,8 +1152,16 @@ return function(opts: any)
 			or "Re-bind a toggle key to show it again."
 	end
 
+	function window:GetToggleKey(): Enum.KeyCode
+		return toggleKey
+	end
+
 	function window:SetNotificationsEnabled(enabled: boolean)
 		notificationsEnabled = enabled ~= false
+	end
+
+	function window:GetNotificationsEnabled(): boolean
+		return notificationsEnabled
 	end
 
 	-- ── settings: the bind HUD ────────────────────────────────────────────────
@@ -1190,11 +1223,28 @@ return function(opts: any)
 		-- Keep the Settings tab's switch in step with the HUD however it moved
 		-- (its own :SetVisible, a loaded config, the panel being dismissed).
 		hud.OnVisible = function(value: boolean)
-			if onHudVisible then
-				onHudVisible(value)
+			for _, fn in table.clone(hudWatchers) do
+				fn(value)
 			end
 		end
 		return hud
+	end
+
+	-- Mirror the HUD's visibility however it moved (its own :SetVisible, a loaded
+	-- config, the panel being dismissed). Fires immediately with the current
+	-- state, like ctx:RegisterAccent, so a switch built from it starts in step;
+	-- returns an unsubscribe.
+	function window:OnHudVisible(fn: (boolean) -> ()): () -> ()
+		table.insert(hudWatchers, fn)
+		fn(hud ~= nil and hud:IsVisible())
+		return function()
+			for i = #hudWatchers, 1, -1 do
+				if hudWatchers[i] == fn then
+					table.remove(hudWatchers, i)
+					break
+				end
+			end
+		end
 	end
 
 	function window:GetHud(): any
@@ -1236,8 +1286,67 @@ return function(opts: any)
 		return binds:Register(o)
 	end
 
+	-- ── settings: the flag registry ───────────────────────────────────────────
+	-- The two primitives everything else here is built on. The named-file methods
+	-- below are just these plus util/Config.lua — which is the point: a host that
+	-- wants its own layout on disk, remote or shared configs, in-memory profiles
+	-- or a "reset to defaults" button needs the snapshot/apply pair WITHOUT the
+	-- library's file path in the middle, and previously the only way to apply a
+	-- table of flags was to write it to <ConfigFolder>/configs/<name>.json first.
+	--
+	--   local snapshot = Window:GetConfig()      -- exactly what SaveConfig serializes
+	--   Window:ApplyConfig(snapshot)             -- exactly what LoadConfig applies
+	--
+	-- GetConfig returns flags only — no `Config.MetaKey` stamp; that's SaveConfig's
+	-- doing, and a host composing its own file adds whatever metadata it wants.
+	function window:GetConfig(): { [string]: any }
+		return ctx:GetConfig()
+	end
+
+	-- Apply a table of flags. Returns how many were applied and how many keys were
+	-- skipped (unknown flag, failed decode, control refused the value). Keys with
+	-- no registered flag are skipped rather than erroring — see Context:LoadConfig,
+	-- where that promise is spelled out.
+	function window:ApplyConfig(data: { [string]: any }): (number, number)
+		if type(data) ~= "table" then
+			Log.warn("ApplyConfig", ("expects a table of flags, got %s — ignoring.")
+				:format(typeof(data)))
+			return 0, 0
+		end
+		return ctx:LoadConfig(data)
+	end
+
+	-- Every registered flag as `{ [name] = kind }`. Snapshot it at two moments —
+	-- before and after a per-place module builds its controls — and the difference
+	-- is that module's flags, which is how a config gets scoped (apply the portable
+	-- half anywhere, the game-specific half only in the right game) instead of
+	-- being all-or-nothing.
+	function window:GetFlags(): { [string]: string }
+		return ctx:GetFlags()
+	end
+
+	-- Register a flag by hand. `handle` needs `:Get()`/`:Set(v)` (or `:GetFlag()`/
+	-- `:SetFlag(v)` when the persisted value isn't the primary one), `kind` names
+	-- the codec — the same contract every control satisfies. This is how the
+	-- built-in Settings tab persists the bind HUD, which isn't a control at all,
+	-- and it's how a host puts its own non-control state in the same config file.
+	function window:RegisterFlag(name: string, handle: any, kind: string)
+		ctx:RegisterFlag(name, handle, kind)
+	end
+
+	-- Watch flags as they're registered — `fn(name, kind)`, synchronously, so the
+	-- callback can attribute the flag to whatever is being built at that instant.
+	-- Returns an unsubscribe. `CreateWindow{ OnFlag = fn }` is the same hook,
+	-- installed early enough to catch every flag in the menu.
+	function window:OnFlag(fn: (string, string) -> ()): () -> ()
+		return ctx:OnFlag(fn)
+	end
+
 	-- ── settings: config persistence ──────────────────────────────────────────
-	-- These read/write the flag registry (any control built with a `Flag`).
+	-- These are the flag registry (above) plus a file on disk. Every one of them
+	-- returns `(result, reason)`: the library always knew whether it was a missing
+	-- file, corrupt JSON or an executor with no file access, and a bare `false`
+	-- threw that away — leaving a host with nothing to say but "Couldn't load".
 	window.ConfigSupported = Config.supported
 
 	local function badConfigName(where: string, name: any): boolean
@@ -1249,39 +1358,126 @@ return function(opts: any)
 		return false
 	end
 
-	function window:SaveConfig(name: string): boolean
+	-- `meta` is stamped into the file under `Config.MetaKey` alongside the flags,
+	-- and read back by ConfigInfo without applying anything — provenance
+	-- ("which game / profile / build wrote this?") without a second file to keep
+	-- in sync. It's skipped on load like any unregistered key.
+	function window:SaveConfig(name: string, meta: any?): (boolean, string?)
 		if badConfigName("SaveConfig", name) then
-			return false
+			return false, "invalid name"
+		end
+		if meta ~= nil and type(meta) ~= "table" then
+			Log.warn("SaveConfig", ("meta must be a table, got %s — saving without it.")
+				:format(typeof(meta)))
+			meta = nil
 		end
 		local snapshot = ctx:GetConfig()
-		local ok = Config.save(configFolder, name, snapshot)
 		local n = 0
 		for _ in snapshot do
 			n += 1
 		end
-		print(("[Uranium] SaveConfig(%q) -> %s  (%d flags)"):format(tostring(name), tostring(ok), n))
-		return ok
+		if meta then
+			snapshot[Config.MetaKey] = meta
+		end
+		local ok, reason = Config.save(configFolder, name, snapshot)
+		print(("[Uranium] SaveConfig(%q) -> %s  (%d flags%s)"):format(
+			tostring(name), tostring(ok), n, ok and "" or ", " .. tostring(reason)))
+		return ok, reason
 	end
-	function window:LoadConfig(name: string): boolean
+
+	function window:LoadConfig(name: string): (boolean, string?)
 		if badConfigName("LoadConfig", name) then
-			return false
+			return false, "invalid name"
 		end
-		local data = Config.load(configFolder, name)
-		print(("[Uranium] LoadConfig(%q) -> %s"):format(tostring(name), tostring(data ~= nil)))
-		if data then
-			ctx:LoadConfig(data)
-			return true
+		local data, reason = Config.load(configFolder, name)
+		print(("[Uranium] LoadConfig(%q) -> %s%s"):format(
+			tostring(name), tostring(data ~= nil), data and "" or " (" .. tostring(reason) .. ")"))
+		if not data then
+			return false, reason
 		end
-		return false
+		local applied = ctx:LoadConfig(data)
+		if applied == 0 then
+			-- The file was fine and nothing in it matched a control we have. That's a
+			-- different failure from "no such config" and it used to read as success.
+			return false, "applied nothing"
+		end
+		return true
 	end
-	function window:DeleteConfig(name: string): boolean
+
+	function window:DeleteConfig(name: string): (boolean, string?)
 		if badConfigName("DeleteConfig", name) then
-			return false
+			return false, "invalid name"
 		end
 		return Config.delete(configFolder, name)
 	end
+
 	function window:ListConfigs(): { string }
 		return Config.list(configFolder)
+	end
+
+	-- The metadata a config was saved with, without touching a single control —
+	-- the read a "does this config belong to this game?" check actually wants.
+	function window:ConfigInfo(name: string): (any?, string?)
+		if badConfigName("ConfigInfo", name) then
+			return nil, "invalid name"
+		end
+		return Config.info(configFolder, name)
+	end
+
+	-- ── settings: auto-load pointer ───────────────────────────────────────────
+	-- The Settings tab used to call Config.setAutoload/getAutoload directly, which
+	-- made it the one config path a host couldn't intercept — every other one goes
+	-- through a window: method. Now it goes through these too.
+	function window:SetAutoload(name: string?)
+		if name ~= nil and type(name) ~= "string" then
+			Log.warn("SetAutoload", ("expects a config name or nil, got %s — ignoring.")
+				:format(typeof(name)))
+			return
+		end
+		Config.setAutoload(configFolder, name)
+	end
+
+	function window:GetAutoload(): string?
+		return Config.getAutoload(configFolder)
+	end
+
+	-- ── settings: where configs live ──────────────────────────────────────────
+	function window:GetConfigFolder(): string
+		return configFolder
+	end
+
+	-- Re-scope persistence at runtime — per-place config folders, user profiles,
+	-- an account switch. Anything already showing a config list is notified
+	-- (window:OnConfigFolder) because its contents just became a different
+	-- folder's; the built-in Settings tab refreshes its dropdown from that.
+	function window:SetConfigFolder(path: string)
+		if type(path) ~= "string" or path == "" then
+			Log.warn("SetConfigFolder", ("expects a non-empty path, got %s — ignoring.")
+				:format(path == "" and '""' or typeof(path)))
+			return
+		end
+		if path == configFolder then
+			return
+		end
+		configFolder = path
+		for _, fn in table.clone(folderWatchers) do
+			fn(configFolder)
+		end
+	end
+
+	-- Fires immediately with the current folder, then on every change; returns an
+	-- unsubscribe.
+	function window:OnConfigFolder(fn: (string) -> ()): () -> ()
+		table.insert(folderWatchers, fn)
+		fn(configFolder)
+		return function()
+			for i = #folderWatchers, 1, -1 do
+				if folderWatchers[i] == fn then
+					table.remove(folderWatchers, i)
+					break
+				end
+			end
+		end
 	end
 
 	-- ── teardown ───────────────────────────────────────────────────────────────
@@ -1333,8 +1529,24 @@ return function(opts: any)
 	-- A drop-in panel: accent color, the toggle keybind, a notifications switch,
 	-- and full config save / load / delete + auto-load. Call it LAST so the
 	-- auto-load pass sees every flagged control your other tabs registered.
-	function window:CreateSettingsTab(settingsOpts: any?)
+	--
+	-- Returns `tab, controls` — the second value is every handle the panel built
+	-- (`controls.List`, `.Name`, `.AutoLoad`, `.Accent`, `.Hud`, `.Refresh`, …).
+	-- They used to be locals in this closure, which left a host unable to refresh
+	-- the saved-config list after its own write, read what was selected, or put its
+	-- own button next to it. Also on `tab.Controls`, for callers that want one value.
+	--
+	-- `Sections = { Config = false }` drops a section; the groups themselves are
+	-- public (components/Settings.lua → `Uranium.Settings`) so a host can compose
+	-- its own settings tab out of the parts it wants.
+	function window:CreateSettingsTab(settingsOpts: any?): (any, any)
 		settingsOpts = settingsOpts or {}
+		if type(settingsOpts) ~= "table" then
+			Log.fail("CreateSettingsTab", ("options must be a table like { Pin = \"bottom\" }, got %s")
+				:format(typeof(settingsOpts)))
+		end
+		Log.field("CreateSettingsTab", "Sections", settingsOpts.Sections, "table")
+		Log.field("CreateSettingsTab", "Notify", settingsOpts.Notify, "boolean")
 		print(("[Uranium] CreateSettingsTab: building (config supported=%s)"):format(tostring(Config.supported)))
 		-- Every CreateTab option is forwarded, so the settings tab can be pinned
 		-- away from the feature tabs (`CreateSettingsTab{ Pin = "bottom" }`) or
@@ -1354,204 +1566,18 @@ return function(opts: any)
 			Order = settingsOpts.Order,
 		})
 
-		-- Interface ──────────────────────────────────────────────────────────────
-		local iface = tab:CreateGroup({ Title = "Interface", Column = 1 })
-		iface:Colorpicker({
-			Name = "Accent Color",
-			Desc = "Re-themes the whole UI.",
-			Flag = "uranium_accent",
-			Default = ctx.Accent,
-			Callback = function(c)
-				window:SetAccent(c)
-			end,
-		})
-		iface:Keybind({
-			Name = "Toggle UI",
-			Desc = "Show or hide the window.",
-			Flag = "uranium_togglekey",
-			Default = toggleKey,
-			Callback = function(k)
-				window:SetToggleKey(k)
-			end,
-		})
-		iface:Toggle({
-			Name = "Notifications",
-			Desc = "Show toast notifications.",
-			Flag = "uranium_notifications",
-			Default = true,
-			Callback = function(on)
-				window:SetNotificationsEnabled(on)
-			end,
-		})
-
-		-- The bind HUD switch. Deliberately NOT flagged itself: the HUD is the
-		-- source of truth (it also persists its position and collapsed state), and
-		-- two flags for one thing would fight each other on load. Instead the flag
-		-- below proxies to the HUD — built on demand, so a config that has it off
-		-- never creates one — and the switch mirrors whatever the HUD ends up at.
-		-- Both directions no-op when already in step, so the sync can't loop.
-		local hudSwitch = iface:Toggle({
-			Name = "Keybind HUD",
-			Desc = "Floating panel: active binds, FPS and ping.",
-			Default = hud ~= nil and hud:IsVisible(),
-			Callback = function(on)
-				if hud and hud:IsVisible() == on then
-					return
-				end
-				window:SetHudVisible(on)
-			end,
-		})
-		onHudVisible = function(value: boolean)
-			if hudSwitch:Get() ~= value then
-				hudSwitch:Set(value)
-			end
-		end
-		ctx:RegisterFlag("uranium_hud", {
-			GetFlag = function(): any
-				return hud and hud:GetFlag() or { Visible = false }
-			end,
-			SetFlag = function(_, value: any)
-				if type(value) ~= "table" then
-					return
-				end
-				if value.Visible == true then
-					window:CreateHud():SetFlag(value)
-				elseif hud then
-					hud:SetFlag(value)
-				end
-			end,
-		}, "hud")
-
-		-- Configuration ────────────────────────────────────────────────────────────
-		local cfg = tab:CreateGroup({ Title = "Configuration", Column = 2 })
-		if not Config.supported then
-			cfg:Paragraph({
-				Title = "Unavailable",
-				Body = "Your executor doesn't expose file functions, so configs can't "
-					.. "be saved. Everything else here still works.",
-			})
-		else
-			local nameBox = cfg:Input({ Name = "Config Name", Placeholder = "my config" })
-			local list: any
-			local autoSwitch: any
-			-- Auto Load points at whatever is selected NOW. It used to be written only
-			-- from the switch's own callback, so picking a different config afterwards
-			-- left the pointer on the old one — and flipping the switch on with nothing
-			-- selected wrote nil, silently clearing it while the switch read "on".
-			local function syncAutoload()
-				if not autoSwitch then
-					return
-				end
-				local on = autoSwitch:Get()
-				local name = list:Get()
-				if on and (name == nil or name == "") then
-					Config.setAutoload(configFolder, nil)
-					autoSwitch:Set(false) -- re-enters here with `on` false; terminates
-					window:Notify({ Title = "Config", Text = "Pick a config to auto-load first." })
-					return
-				end
-				Config.setAutoload(configFolder, on and name or nil)
-			end
-
-			list = cfg:Dropdown({
-				Name = "Saved Configs",
-				Placeholder = "None saved",
-				Stack = true,
-				Options = window:ListConfigs(),
-				Callback = syncAutoload,
-			})
-			local function refresh()
-				list:SetOptions(window:ListConfigs())
-			end
-
-			cfg:ButtonRow({
-				{
-					Label = "Save",
-					Callback = function()
-						local n = nameBox:Get()
-						if n == nil or n == "" then
-							window:Notify({ Title = "Config", Text = "Enter a name first." })
-							return
-						end
-						if window:SaveConfig(n) then
-							refresh()
-							list:Set(n)
-							window:Notify({ Title = "Config", Text = ('Saved "%s".'):format(n) })
-						else
-							window:Notify({ Title = "Config", Text = "Save failed." })
-						end
-					end,
-				},
-				{
-					Label = "Load",
-					Callback = function()
-						local n = list:Get()
-						if not n then
-							window:Notify({ Title = "Config", Text = "Pick a config to load." })
-							return
-						end
-						if window:LoadConfig(n) then
-							window:Notify({ Title = "Config", Text = ('Loaded "%s".'):format(n) })
-						else
-							-- Saying nothing on failure made a missing or corrupt file look
-							-- like a dead button.
-							window:Notify({ Title = "Config", Text = ('Couldn\'t load "%s".'):format(n) })
-						end
-					end,
-				},
-			})
-			cfg:ButtonRow({
-				{
-					Label = "Delete",
-					Callback = function()
-						local n = list:Get()
-						if not n then
-							return
-						end
-						local deleted = window:DeleteConfig(n)
-						refresh()
-						window:Notify({
-							Title = "Config",
-							Text = deleted and ('Deleted "%s".'):format(n)
-								or ('Couldn\'t delete "%s".'):format(n),
-						})
-					end,
-				},
-				{ Label = "Refresh", Callback = refresh },
-			})
-			autoSwitch = cfg:Toggle({
-				Name = "Auto Load",
-				Desc = "Apply the selected config on launch.",
-				Default = Config.getAutoload(configFolder) ~= nil,
-				Callback = syncAutoload,
-			})
-
-			-- Apply the auto-load config once the rest of the UI has finished
-			-- building (this tab is meant to be created last, so all flags exist).
-			task.defer(function()
-				local auto = Config.getAutoload(configFolder)
-				if auto then
-					list:Set(auto)
-					window:LoadConfig(auto)
-				end
-			end)
-		end
-
-		cfg:Divider()
-		cfg:Button({
-			Name = "Danger Zone",
-			Label = "Unload " .. Theme.Brand.name,
-			Callback = function()
-				window:Destroy()
-			end,
-		})
+		-- The panel itself lives in components/Settings.lua, built entirely on this
+		-- window's public API — which is what makes the same groups reusable from a
+		-- host's own tab (Uranium.Settings.ConfigGroup(window, tab)).
+		local controls = SettingsPanel.build(window, tab, settingsOpts)
+		tab.Controls = controls
 
 		local flagCount = 0
 		for _ in ctx.Flags do
 			flagCount += 1
 		end
 		print(("[Uranium] CreateSettingsTab: done (%d flags registered)"):format(flagCount))
-		return tab
+		return tab, controls
 	end
 
 	-- ── bind HUD ──────────────────────────────────────────────────────────────

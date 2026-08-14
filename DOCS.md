@@ -115,8 +115,12 @@ local Window = Uranium:CreateWindow({
     LogoZoom     = 1,                        -- crop a margin baked into the art (default 1)
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
     Hud          = true,                     -- floating bind HUD (default off; see below)
+    OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
 })
 ```
+
+`ConfigFolder` may be a nested path (`"uranium/games/12345"`) — every folder on
+it is created — and `Window:SetConfigFolder(path)` re-scopes it later.
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
@@ -151,24 +155,39 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | Method | Description |
 | --- | --- |
 | `Window:CreateTab(opts)` | Add a tab. Returns a **Tab**. See below. |
-| `Window:CreateSettingsTab(opts?)` | Add the built-in settings panel. Call **last**. |
+| `Window:CreateSettingsTab(opts?)` → `tab, controls` | Add the built-in settings panel. Call **last**. |
 | `Window:Notify(opts)` | Show a toast notification (bottom-right). |
 | `Window:Select(index)` | Switch to tab `index` (1-based). |
 | `Window:SetAccent(color)` | Re-theme the whole UI to `color` (a `Color3`), live. |
+| `Window:GetAccent()` → `Color3` | The live accent. |
 | `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
+| `Window:GetToggleKey()` → `Enum.KeyCode` | The current show/hide key. |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
+| `Window:GetNotificationsEnabled()` → `bool` | Whether toasts are on. |
 | `Window:CreateHud(opts?)` | Build (or fetch) the floating bind HUD. See below. |
 | `Window:GetHud()` | The HUD handle, or `nil` if there isn't one. |
 | `Window:SetHudVisible(bool)` | Show/hide it, building it on first use. |
-| `Window:SaveConfig(name)` → `bool` | Save all flagged values to `<name>.json`. |
-| `Window:LoadConfig(name)` → `bool` | Load + apply a saved config. |
-| `Window:DeleteConfig(name)` → `bool` | Delete a saved config. |
+| `Window:OnHudVisible(fn)` → `unsub` | Mirror the HUD's visibility. Fires now + on every change. |
+| `Window:GetConfig()` → `table` | Snapshot every flag — what `SaveConfig` serializes. |
+| `Window:ApplyConfig(table)` → `applied, skipped` | Apply a flag table — what `LoadConfig` applies. |
+| `Window:GetFlags()` → `{[name]=kind}` | Every registered flag and its codec kind. |
+| `Window:RegisterFlag(name, handle, kind)` | Register your own non-control state as a flag. |
+| `Window:OnFlag(fn)` → `unsub` | `fn(name, kind)` as each flag registers, synchronously. |
+| `Window:SaveConfig(name, meta?)` → `bool, reason?` | Save all flagged values to `<name>.json`, optionally stamped with `meta`. |
+| `Window:LoadConfig(name)` → `bool, reason?` | Load + apply a saved config. |
+| `Window:DeleteConfig(name)` → `bool, reason?` | Delete a saved config. |
 | `Window:ListConfigs()` → `{string}` | List saved config names. |
+| `Window:ConfigInfo(name)` → `meta?, reason?` | Read a config's `meta` **without** applying it. |
+| `Window:GetAutoload()` / `:SetAutoload(name?)` | Read / write the auto-load pointer (`nil` clears it). |
+| `Window:GetConfigFolder()` / `:SetConfigFolder(path)` | Read / re-scope where configs live. |
+| `Window:OnConfigFolder(fn)` → `unsub` | Fires now + whenever the folder is re-scoped. |
 | `Window:Destroy(immediate?)` | Fade out and fully unload (disconnects listeners, frees the singleton slot). `immediate` skips the fade. |
 
 `Window.ConfigSupported` (`boolean`) tells you whether the executor exposes file
-functions. In Studio / unsupported executors, config calls no-op safely.
+functions. In Studio / unsupported executors, config calls no-op safely. It's a
+plain field: set it to `false` yourself and the built-in Configuration group
+stands down (useful when your hub owns persistence).
 
 ### Notify
 
@@ -748,14 +767,114 @@ Window:DeleteConfig("loadout")
 - Persistence requires executor file functions (`writefile`/`readfile`/…). When
   unavailable (Studio, locked-down executors) the calls no-op and
   `Window.ConfigSupported` is `false`.
+- Every one of these returns `(result, reason)` — `reason` is a short phrase
+  (`"no such config"`, `"corrupt JSON"`, `"no file access"`, `"applied nothing"`,
+  `"invalid name"`) meant to be pasted into a message.
+
+### Owning persistence yourself
+
+`SaveConfig`/`LoadConfig` are the flag registry plus a file. If you want the
+registry *without* the file — your own layout on disk, remote or shared configs,
+in-memory profiles, a "reset to defaults" button — take the two primitives:
+
+```lua
+local snapshot = Window:GetConfig()      -- exactly what SaveConfig serializes
+Window:ApplyConfig(snapshot)             -- exactly what LoadConfig applies
+```
+
+`ApplyConfig` returns `applied, skipped`. **Keys with no registered flag are
+skipped, on purpose** — that's a promised part of the format, so a config can
+carry data that isn't a control value, and a file written by a build with more
+controls than yours still applies the flags you do have.
+
+`Uranium.Config` is the file layer itself (`util/Config.lua`), if you want to
+read another folder's configs or check a name:
+
+```lua
+Uranium.Config.sanitize(name) == name    -- will this name round-trip? (see below)
+Uranium.Config.list(folder)              -- another folder's config names
+Uranium.Config.info(folder, name)        -- its metadata, without applying it
+Uranium.Config.MetaKey                   -- "__uranium" — where that metadata lives
+```
+
+> **Config names are filtered.** A name is stripped to `[A-Za-z0-9-_ ]` and
+> trimmed before it becomes a filename, and the saved-config list matches names
+> by string equality afterwards. So any name you display has to survive the strip
+> **unchanged** — no parentheses, `@`, `·`, emoji. `Config.sanitize(n) == n` is
+> the check.
+
+### Metadata (provenance)
+
+```lua
+Window:SaveConfig("main", { place = game.PlaceId, game = "Blox Fruits", v = 2 })
+
+local meta = Window:ConfigInfo("main")   -- reads it WITHOUT applying anything
+if meta and meta.place ~= game.PlaceId then
+    Window:Notify({ Title = "Config", Text = "That config is from another game." })
+end
+```
+
+`meta` is stored under `Config.MetaKey` (`"__uranium"`) alongside the flags and
+skipped on load like any unregistered key. `ConfigInfo` is the read a "which game
+does this belong to?" check actually wants — no decoding the whole file to look
+at four fields.
+
+### Flag introspection & the registration hook
+
+```lua
+local before = Window:GetFlags()          -- { username = "input", volume = "slider", ... }
+buildGameSpecificTab(Window)
+local after  = Window:GetFlags()          -- the difference is that module's flags
+```
+
+For the same thing without the diff, watch registration as it happens.
+`fn(name, kind)` fires **synchronously** from inside the registration, so it can
+attribute each flag to whatever your loader is building at that instant:
+
+```lua
+local phase = "core"
+local Window = Uranium:CreateWindow({
+    Title  = "Uranium",
+    OnFlag = function(name, kind) origin[name] = phase end,
+})
+-- ...later, per-place:
+phase = "game:" .. game.PlaceId
+```
+
+`Window:OnFlag(fn)` installs the same hook later and returns an unsubscribe; the
+`OnFlag` window option is just the one that's early enough to catch every flag
+the menu ever registers, including the Settings tab's own.
+
+`Window:RegisterFlag(name, handle, kind)` puts your own non-control state in the
+same config file. `handle` needs `:Get()`/`:Set(v)` — or `:GetFlag()`/`:SetFlag(v)`
+when the persisted value isn't the primary one — and `kind` names the codec
+(`"toggle"`, `"slider"`, `"input"`, `"dropdown"`, `"colorpicker"`, `"bind"`,
+`"playerselect"`, `"code"`, `"hud"`).
+
+### Per-place / per-profile configs
+
+`ConfigFolder` is free-form and **nested paths are created recursively**, so
+scoping is a folder:
+
+```lua
+Window:SetConfigFolder("uranium/games/" .. game.PlaceId)
+```
+
+Anything showing a config list is notified through `Window:OnConfigFolder(fn)`
+(the built-in Settings tab refreshes its dropdown from it), so re-scoping at
+runtime — a profile switch, a place you only recognize after boot — is safe.
 
 ### Built-in Settings tab
 
 ```lua
-Window:CreateSettingsTab({
+local tab, controls = Window:CreateSettingsTab({
     Name = "Settings",  -- tab label (default "Settings")
     Icon = "gear",      -- tab icon  (default "gear")
     Pin  = "bottom",    -- every CreateTab option is forwarded (see Tab)
+
+    Sections = { Interface = true, Config = false, Danger = true },  -- drop sections
+    Notify   = false,   -- silence the panel's own config toasts
+    Config   = { AutoLoad = false },  -- per-section options (Title, Column, Group, …)
 })
 ```
 
@@ -764,8 +883,47 @@ notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
 **Unload** button.
 
+The second return is every handle the panel built, also on `tab.Controls`:
+
+| Key | What |
+| --- | --- |
+| `Accent` `ToggleKey` `Notifications` `Hud` | The Interface controls. |
+| `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
+| `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |
+| `Interface` `Configuration` `Danger` | The groups, to add your own controls to. |
+| `Unload` | The unload button. |
+
+```lua
+local _, c = Window:CreateSettingsTab({ Pin = "bottom" })
+Window:SaveConfig("main", { place = game.PlaceId })
+c.Refresh()                    -- pick up a config you wrote yourself
+print(c.List:Get())            -- what's selected
+c.Configuration:Button({ Label = "Import into this game", Callback = ... })
+```
+
+If you wrap the window's config methods to add your own rules, return
+`false, "handled"` from the wrapper when you've already told the user why —
+the panel skips its own toast for that call. `Notify = false` silences it
+entirely.
+
+Each group is also public, so you can compose your own settings tab instead:
+
+```lua
+local tab = Window:CreateTab({ Name = "Settings", Icon = "gear" })
+Uranium.Settings.InterfaceGroup(Window, tab)          -- accent / key / toasts / HUD
+myOwnConfigGroup(Window, tab)                         -- ...and your own persistence UI
+Uranium.Settings.DangerGroup(Window, tab)
+```
+
+`InterfaceGroup` / `ConfigGroup` / `DangerGroup` all take `(window, tab, opts?)`,
+where `opts` may carry `Title`, `Column`, or `Group` (an existing group to build
+into instead of creating one). They're written against the public window API
+only — nothing in them reaches past what your own code can call.
+
 > **Call it last.** Its auto-load pass runs deferred and only sees flags that
 > were registered *before* it. Create all your other tabs and controls first.
+> (`Config = { AutoLoad = false }` turns that pass off if you'd rather decide
+> what to apply on boot yourself.)
 
 ---
 

@@ -79,6 +79,7 @@ coreui/
     Fade.lua          fade a whole subtree — the CanvasGroup replacement
     Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
   components/         one file per control
+    Settings.lua      the built-in settings panel, as composable group builders
 ```
 
 **Component signature:** each `components/*.lua` returns
@@ -88,13 +89,19 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?}` →
-  `:CreateTab` · `:CreateSettingsTab{Name?,Icon?}` · `:Notify` · `:Select(i)` ·
-  `:SetAccent(Color3)` · `:SetLogo(source, zoom?)` · `:SetToggleKey(KeyCode)` · `:SetNotificationsEnabled(b)` ·
-  `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` ·
-  `:SaveConfig(name)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
-  `:ListConfigs()` · `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
-- Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below)
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,OnFlag?}` →
+  `:CreateTab` · `:CreateSettingsTab{Name?,Icon?,Sections?,Notify?}` → `tab, controls` · `:Notify` · `:Select(i)` ·
+  `:SetAccent(Color3)`/`:GetAccent()` · `:SetLogo(source, zoom?)` ·
+  `:SetToggleKey(KeyCode)`/`:GetToggleKey()` ·
+  `:SetNotificationsEnabled(b)`/`:GetNotificationsEnabled()` ·
+  `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` ·
+  `:GetConfig()` · `:ApplyConfig(t)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
+  `:SaveConfig(name, meta?)` · `:LoadConfig(name)` · `:DeleteConfig(name)` ·
+  `:ListConfigs()` · `:ConfigInfo(name)` · `:GetAutoload()`/`:SetAutoload(name?)` ·
+  `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
+  `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
+- Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
+  `Uranium.Config` (the file layer) · `Uranium.Settings` (the settings-panel builders)
 - `Tab:CreateGroup{Title,Column,Collapsed}` (Column 1=left, 2=right) — plus the
   tab-identity options and setters under **Tabs & the sidebar** below
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
@@ -207,16 +214,74 @@ Any stateful control built with `Flag = "id"` is registered in `ctx.Flags` by
 `Controls.mount` (`util/Context.lua` → `RegisterFlag/GetConfig/LoadConfig`).
 `GetConfig` snapshots every flag to a JSON-safe table via per-kind codecs (Color3
 → hex, `Enum.KeyCode` → name); `LoadConfig` decodes + `:Set`s them (firing
-callbacks). `util/Config.lua` is the executor filesystem layer — feature-detected
-(`Config.supported`) and fully pcall-guarded so it no-ops in Studio. Configs are
-JSON at `<ConfigFolder>/configs/<name>.json`; `<ConfigFolder>/autoload.txt` holds
-the auto-load pointer.
+callbacks) and returns `applied, skipped`. `util/Config.lua` is the executor
+filesystem layer — feature-detected (`Config.supported`) and fully pcall-guarded
+so it no-ops in Studio. Configs are JSON at `<ConfigFolder>/configs/<name>.json`;
+`<ConfigFolder>/autoload.txt` holds the auto-load pointer.
+
+**The host is a first-class consumer here.** A hub that scopes configs (per
+place, per profile) shouldn't have to express every idea as a file at the
+library's own path, so the registry is reachable without the disk and the file
+layer is reachable without the window:
+
+- `Window:GetConfig()` / `:ApplyConfig(t)` are the snapshot/apply primitives —
+  `Save`/`LoadConfig` are these plus a file. Own persistence entirely with two
+  lines instead of wrapping four methods and post-processing JSON.
+- `Window:GetFlags()` → `{[name]=kind}`, and `OnFlag(fn)` / `CreateWindow{OnFlag}`
+  fire **synchronously** inside `RegisterFlag` — that's the point, since the only
+  reason to watch registration is to tag a flag with the module/phase building it,
+  and Roblox's deferred BindableEvents would hand it back too late. Diff the
+  registry across a per-place module's build and you can scope a config instead of
+  making it all-or-nothing.
+- Every config method returns `(result, reason)` (`"no such config"`, `"corrupt
+  JSON"`, `"no file access"`, `"applied nothing"`, `"invalid name"`). The library
+  always knew which; a bare `false` threw it away.
+- `SaveConfig(name, meta)` stamps `Config.MetaKey` (`"__uranium"`) into the file
+  and `ConfigInfo(name)` reads it back **without applying anything** — the read a
+  "which game wrote this?" check actually wants. `Context:LoadConfig` skipping
+  unregistered keys is what makes that work, and it is now a documented promise
+  rather than a happy accident of the loop.
+- `SetAutoload`/`GetAutoload` exist so the auto-load pointer isn't the one path a
+  host can't intercept, and `SetConfigFolder(path)` + `OnConfigFolder(fn)` let a
+  host that learns its scope late re-scope. `Uranium.Config` exports the file
+  layer itself (with `Config.sanitize`), because otherwise a host rewrites ~80
+  lines of it to reach `list`/`info` for another folder.
+
+Two contracts worth knowing: `Config.sanitize` strips to `[A-Za-z0-9%-_ ]`
+(spelled in ASCII, not `%w` — `%w` follows the host's locale, and on builds where
+high bytes count as alnum a name with an emoji came apart mid-glyph and stopped
+round-tripping), and every displayed config name must survive it unchanged
+because filenames and the autoload pointer are matched by string equality. The
+autoload pointer is written sanitized and read **verbatim** — re-sanitizing on
+read could only ever mangle a name that had already round-tripped. `ensureFolders`
+walks the path segment by segment, since `ConfigFolder` is documented free-form
+and a nested one ("uranium/games/12345") silently failed to save on any executor
+whose `makefolder` isn't itself recursive.
 
 `Window:CreateSettingsTab()` is a drop-in panel (accent picker, the toggle
 keybind, notifications switch, config save/load/delete + auto-load, Unload). Its
 controls are themselves flagged, so saving a config captures them too. **Call it
-LAST** — its deferred auto-load pass only sees flags registered before it runs.
-Dropdown gained `handle:SetOptions(list)` for refreshing the saved-config list.
+LAST** — its deferred auto-load pass only sees flags registered before it runs
+(`Config = { AutoLoad = false }` opts out). Dropdown gained
+`handle:SetOptions(list)` for refreshing the saved-config list.
+
+The panel itself lives in **`components/Settings.lua`**, not in Window, as three
+independent group builders (`InterfaceGroup` / `ConfigGroup` / `DangerGroup`,
+each `(window, tab, opts?)`) composed by `Settings.build`. Three rules there:
+
+- **They're written against the PUBLIC window API only** — no `ctx`, no
+  `util/Config.lua`. That's the proof a host can build the same panel, and it's
+  what forced `GetAccent`/`GetToggleKey`/`RegisterFlag`/`OnHudVisible`/
+  `SetAutoload` into existence. Keep it that way; reaching for `ctx` in here means
+  the corresponding public method is missing.
+- `CreateSettingsTab` returns `tab, controls` (also `tab.Controls`) — the name
+  box, the saved-config dropdown, the auto-load switch, the button callbacks and
+  the groups. They used to be closure locals, so a host couldn't refresh the list
+  after its own write or read what was selected.
+- `Sections = { Config = false }` drops a section; the Configuration group tests
+  the **public** `window.ConfigSupported` (so a host can set it false to stand the
+  group down), and `Notify = false` — or a wrapper returning `false, "handled"` —
+  suppresses the panel's own toast when the host has already explained itself.
 
 ## Keybinds & modes
 

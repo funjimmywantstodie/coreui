@@ -12,7 +12,9 @@
 local Window = require(script.components.Window)
 local Theme = require(script.Theme)
 local Asset = require(script.util.Asset)
+local Config = require(script.util.Config)
 local Log = require(script.util.Log)
+local Settings = require(script.components.Settings)
 local Singleton = require(script.util.Singleton)
 
 local Uranium = {}
@@ -21,6 +23,28 @@ local Uranium = {}
 -- local files) the same way the components do — see util/Asset.lua.
 Uranium.Asset = Asset
 Uranium.Theme = Theme
+
+-- The executor filesystem layer (util/Config.lua) — feature-detected
+-- (`Config.supported`), fully pcall-guarded, and now reachable, because a host
+-- that scopes or shares configs otherwise ends up rewriting all of it (globals
+-- resolution, isfile/readfile guards, list-by-extension) to do anything the
+-- window's own methods don't cover.
+--
+--   Uranium.Config.sanitize(name) == name   -- will this name round-trip?
+--   Uranium.Config.list(folder)             -- another folder's configs
+--   Uranium.Config.info(folder, name)       -- its metadata, without applying it
+--   Uranium.Config.MetaKey                  -- the reserved key that metadata lives under
+Uranium.Config = Config
+
+-- The built-in settings panel, as three composable group builders
+-- (`InterfaceGroup` / `ConfigGroup` / `DangerGroup`). `Window:CreateSettingsTab`
+-- is these three on a tab of their own; a host that wants its own layout — or
+-- only the Interface half next to its own config UI — builds from here instead:
+--
+--   local tab = Window:CreateTab({ Name = "Settings", Icon = "gear" })
+--   Uranium.Settings.InterfaceGroup(Window, tab)
+--   myOwnConfigGroup(tab)
+Uranium.Settings = Settings
 
 -- Point the asset helper at the public art repo, so `Asset.url("x.png")`
 -- resolves a bare filename against it. Set here (not in Asset.lua) to keep the
