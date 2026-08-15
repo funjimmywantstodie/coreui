@@ -1,10 +1,13 @@
 # Uranium — agent guide
 
 **Branding:** the library is **Uranium** (the author's script-hub UI kit; it was
-Krypton before). The repo, the `coreui/` source folder, `coreui.bundle.lua` and
-the separate public **`Krypton`** art repo deliberately keep their old names —
-the loadstring URL and the raw asset URLs are pinned to those paths, so renaming
-them breaks every shipped loader. The rebrand is user-visible strings + palette
+Krypton before). The repo, the `coreui/` source folder and `coreui.bundle.lua`
+deliberately keep their old names — the loadstring URL is pinned to those paths,
+so renaming them breaks every shipped loader. The art host is *not* pinned like
+that (one line in `Theme.lua` points at it) and has moved to the public
+**`uranium-public`** repo; the old `Krypton` raw path now **404s**, which is a
+silent failure — a dead art URL and an executor with no file access both come
+out as the accent square + "U". The rebrand is user-visible strings + palette
 only: window title + ScreenGui name, the `[Uranium]` log prefix, the default
 config folder (`uranium`), `Asset.CacheFolder` (`uranium/images`), the settings
 flags (`uranium_*`) and `Singleton.Key` (`_URANIUM_LOADED`). The library table is
@@ -245,10 +248,24 @@ Five things hold it up:
   window radius, a soft shadow, and the tone chip sitting *beside* the title
   rather than alone on a row above it. It used to be a lone `card`-coloured box
   — right palette, but nothing about it said Uranium, which is strange for the
-  one screen whose entire job is being the product speaking. The mark is
-  `Theme.Brand.logo` where it can be fetched and the accent square + initial
-  where it can't — which is **always** in the standalone build, so the image
-  layer and the prelude's `loadLogo` are inside a `--@lib` region.
+  one screen whose entire job is being the product speaking. The drop shadow is
+  `--@lib`'d — the standalone traded it for the mark, which is worth more there.
+- **The mark reaches the standalone through the disk cache, not the network.**
+  `loadLogo` is a prelude name because the two builds get the art differently:
+  the library runs `Asset.load(Theme.Brand.logo)` (download → cache →
+  `getcustomasset`), while the standalone — no network, and no uploaded asset id
+  for the mark yet — does only that last leg, `getcustomasset` on the path the
+  library *already* cached the PNG at. That path (`Asset.CacheFolder` + a djb2 of
+  the brand URL) is **injected** by bundle.py, since all three inputs live in the
+  library; if any of them moves without bundle.py keeping up, the file isn't
+  found and the page draws the accent square + initial, which is exactly what it
+  did before. Anyone reading a "stale loader" or "banned" page is a returning
+  user, so that cache is usually warm — but the real fix is an uploaded
+  `rbxassetid://` in `Theme.Brand.logo`'s chain, which would make the mark
+  unconditional on every build. The fallback is never *hidden* on the standalone
+  (`done(false)` always): the art is an opaque tile that covers the square when
+  it renders, so a path that resolves to nothing leaves the square rather than a
+  hole.
 - **`Tone` tints, it doesn't repaint.** Icon chip + one hairline; the surfaces
   stay the library's own on a dimmed `chrome` backdrop, same radius and type
   scale as the window. `info` maps to the **accent**, not Notify's neutral grey
@@ -304,11 +321,11 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
 - `--@lib` … `--@endlib` blocks are dropped from the standalone. Today that's
   `Detail` — the refusal path never passes one, and every byte there is paid on
   every refused request rather than once per session.
-- The palette, the Lucide slices, `Theme.Brand.name` (the wordmark) and
-  `Gui.Attribute` are **injected** by bundle.py from `Theme.lua` /
-  `LucideData.lua` / `util/Gui.lua` into `--@inject` lines, so the standalone
-  can't drift out of the palette, start calling the product something else, or
-  stop being recognised by the sweep. The colour subset is scraped from the body
+- The palette, the Lucide slices, `Theme.Brand.name` (the wordmark), the brand
+  mark's cache path and `Gui.Attribute` are **injected** by bundle.py from
+  `Theme.lua` / `LucideData.lua` / `util/Asset.lua` / `util/Gui.lua` into
+  `--@inject` lines, so the standalone can't drift out of the palette, start
+  calling the product something else, or stop being recognised by the sweep. The colour subset is scraped from the body
   (`C.foo`) rather than listed, because a hand-kept list goes stale as a nil
   index inside the page — visible only when the page is.
 - Constraints the standalone has that the library doesn't: it must parse **inside
@@ -320,12 +337,13 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
   and their `Actions`, so no literal reaches the tree-shaker; they seed
   `EXTRA_ICONS` too).
 - Size: `bundle.py` prints it every build against a 15 KB target and a 30 KB
-  ceiling. It currently lands ~28.9 KB, which is **tight** — the titlebar and the
+  ceiling. It currently lands ~29.0 KB, which is **tight** — the titlebar and the
   mark cost ~3 KB of that and the `Input` block ~7 KB, and neither can be
   `--@lib`'d away (the key gate is a *standalone* caller, and the branding is
-  most load-bearing on the build that shows up before the library exists). Watch
-  the printed size on every change here; the next feature likely has to buy its
-  bytes from somewhere. The remaining levers are all
+  most load-bearing on the build that shows up before the library exists). The
+  card's drop shadow was already spent to buy the mark its bytes. Watch the
+  printed size on every change here; the next feature has to buy its bytes from
+  somewhere. The remaining levers are all
   quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
   means the card pops in at full opacity over a still-dimming backdrop.
   `compact()` in bundle.py strips whole-line comments, blank lines and
@@ -706,10 +724,12 @@ body can't be cached as a `.png`.
 
 **Two repos, don't conflate them.** This one (`coreui`) is the library source +
 bundle, public only so the loadstring resolves. Art is hosted in the separate
-public **`Krypton`** repo (`Assets/`, still under the old name), whose raw base
-is `Theme.Brand.assets`;
-`init.lua` copies it into `Asset.Base`, so `Asset.url("name.png")` builds the
-full URL and shipping new art is just committing the file there.
+public **`uranium-public`** repo (`Assets/`), whose raw base is
+`Theme.Brand.assets`; `init.lua` copies it into `Asset.Base`, so
+`Asset.url("name.png")` builds the full URL and shipping new art is just
+committing the file there. (It used to be `Krypton` — that path is gone, and the
+stale URL sat in `Theme.lua` for a while showing the fallback mark everywhere.
+`curl -sI` the raw URL before believing an executor is at fault.)
 
 **`Asset.load(image, source, onDone)` — two rules, both learned the hard way:**
 1. Never use `ContentProvider:PreloadAsync` to decide whether an image loaded.

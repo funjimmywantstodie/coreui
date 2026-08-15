@@ -316,6 +316,46 @@ def screen_brand():
     return m.group(1)
 
 
+def screen_mark():
+    """Where util/Asset.lua caches the brand PNG on disk, plus Brand.zoom.
+
+    The standalone page has no network, so the only real art it can reach is the
+    copy the library downloaded during an earlier, working session —
+    `getcustomasset` on that path needs nothing but the file. The path is
+    `Asset.CacheFolder` + a djb2 hash of the URL, so it's derived here from the
+    same three sources rather than pasted: a pasted one would go stale silently
+    the first time any of them moved.
+
+    Every failure here is soft — no logo URL, an unreadable Asset.lua, a hashing
+    scheme that has since changed — because the page degrades to the accent
+    square + initial it drew before this existed. It must never fail the build.
+    """
+    try:
+        theme = _read(os.path.join(ROOT, "Theme.lua"))
+        base = re.search(r'local ASSETS\s*=\s*"([^"]+)"', theme)
+        logo = re.search(r"logo\s*=\s*\{\s*(?:ASSETS\s*\.\.\s*)?\"([^\"]+)\"", theme)
+        zoom = re.search(r"\bzoom\s*=\s*([0-9.]+)", theme)
+        folder = re.search(r'Asset\.CacheFolder\s*=\s*"([^"]+)"',
+                           _read(os.path.join(ROOT, "util", "Asset.lua")))
+        if not (base and logo and folder):
+            raise ValueError("no cacheable brand logo")
+        url = logo.group(1)
+        if not url.startswith("http"):
+            url = base.group(1) + url
+        ext = url.rsplit(".", 1)[-1].lower()
+        if ext not in ("png", "jpg", "jpeg", "webp", "tga", "bmp"):
+            ext = "png"
+        h = 5381
+        for byte in url.encode("utf-8"):
+            h = (h * 33 + byte) % 4294967296
+        path = f"{folder.group(1)}/{h:010d}.{ext}"
+        return path, float(zoom.group(1)) if zoom else 1.0
+    except Exception as err:  # noqa: BLE001 — soft by design, see the docstring
+        print(f"warn: no cached brand mark for the standalone page ({err}) — "
+              "it will draw the fallback square")
+        return "", 1.0
+
+
 def screen_attribute():
     """util/Gui.lua's identity attribute, so the singleton sweep in a later
     library load finds and clears a stale standalone page."""
@@ -339,7 +379,9 @@ def build_screen(version):
     icons |= set(re.findall(r'putIcon\([^,]+,\s*"([^"]+)"', body))
     colors = set(re.findall(r"\bC\.(\w+)", body))
 
+    mark_path, mark_zoom = screen_mark()
     values = {
+        "MARK": f'local MARK, ZOOM = "{mark_path}", {mark_zoom:g}',
         "COLORS": "local C = {" + screen_colors(colors) + "}",
         "ICONS": "local ICONS = {" + screen_icons(icons) + "}",
         "ATTR": f'local ATTR = "{screen_attribute()}"',

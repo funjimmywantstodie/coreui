@@ -116,10 +116,9 @@ end
 --   mountGui(gui, preferred?)        parent it + stamp the identity attribute
 --   gname()                          a neutral, per-load ScreenGui name
 --   BRAND                            the brand name, for the wordmark
---   loadLogo(image, done)            paint the brand mark; done(loaded).
---                                    LIBRARY ONLY — its one call site is inside
---                                    a --@lib region, since the standalone has
---                                    no art to load.
+--   loadLogo(image, done)            paint the brand mark; done(loaded). The
+--                                    library downloads it; the standalone reads
+--                                    the copy already cached on disk, if any.
 --
 -- Plus the engine globals (Enum, UDim2, Color3, Vector2, task, typeof, …).
 -- Nothing else. No `require`, no library table, no executor globals except the
@@ -141,8 +140,10 @@ local RADIUS = 12  -- Theme.Metrics.windowRadius
 local BAR = 42     -- titlebar height (the window's own is 50; this is a dialog)
 local LOGO = 24    -- brand mark, square
 local CHIP = 36    -- tone icon chip
+--@lib
 local SHADOW_PAD = 48 -- how far the shadow's soft tail bleeds past the card
 local SHADOW_T = 0.72 -- resting transparency (high = faint)
+--@endlib
 
 -- The one input funnel. Anything that isn't usable text becomes nil, and every
 -- caller treats nil as "hide that row" — which is how a junk options table
@@ -278,11 +279,18 @@ return function(opts: any): any
 		Parent = screenGui,
 	})
 
+	--@lib
 	-- The elevation under the card, same radial image and the same job as the
 	-- window's: it's what stops a flat rectangle from reading as part of the
 	-- backdrop. Sized off the card rather than a constant, because the card grows
 	-- with its content (and shrinks with the entrance UIScale, which the shadow
 	-- should follow rather than sit still through).
+	--
+	-- Library-only, and this is a deliberate quality-for-bytes trade rather than
+	-- a design decision: the standalone build is ~1 KB off its ceiling and the
+	-- brand mark is worth more there than a shadow that's mostly hidden by the
+	-- backdrop dim anyway. If that build ever gets room back, this is the first
+	-- thing to give it.
 	local shadow = new("ImageLabel", {
 		Name = "Shadow",
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -296,6 +304,7 @@ return function(opts: any): any
 		ZIndex = 0,
 		Parent = backdrop,
 	})
+	--@endlib
 
 	-- Scale width + a max-size cap: 420px on anything desktop-shaped, and a
 	-- proportion of the viewport once the screen is narrower than that.
@@ -315,10 +324,12 @@ return function(opts: any): any
 		new("UISizeConstraint", { MaxSize = Vector2.new(CARD_W, math.huge) }),
 	})
 	local scale = new("UIScale", { Parent = card })
+	--@lib
 	card:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		local size = card.AbsoluteSize
 		shadow.Size = UDim2.fromOffset(size.X + SHADOW_PAD, size.Y + SHADOW_PAD)
 	end)
+	--@endlib
 
 	-- ── titlebar: the mark, the wordmark, the close ──────────────────────────
 	-- Chrome over the `bg` body, one hairline between them, top corners rounded
@@ -391,11 +402,6 @@ return function(opts: any): any
 		FontFace = F.Bold,
 		Parent = logo,
 	})
-	--@lib
-	-- The art layer is library-only, and that's not a byte-saving: the standalone
-	-- build has no network and no asset id for the mark, so an ImageLabel there
-	-- could only ever be an empty one over the square that's already drawn. The
-	-- square + initial is the mark on that build, by design.
 	local logoImage = new("ImageLabel", {
 		Name = "Mark",
 		BackgroundTransparency = 1,
@@ -410,12 +416,13 @@ return function(opts: any): any
 	})
 	-- `Visible`, not transparency: this lands whenever the asset does, which can
 	-- be mid-fade, and writing a transparency util/Fade.lua is driving strands
-	-- the mark half-painted.
+	-- the mark half-painted. `loaded = false` is not a failure state — it just
+	-- leaves the square showing under an ImageLabel that may still paint itself
+	-- later (or never), which is the standalone build's normal case.
 	loadLogo(logoImage, function(loaded)
 		logoSquare.Visible = not loaded
 		logoInitial.Visible = not loaded
 	end)
-	--@endlib
 
 	local BRAND_X = 14 + LOGO + 10
 	new("TextLabel", {

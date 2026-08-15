@@ -187,13 +187,47 @@ end
 
 -- ── the brand mark ──────────────────────────────────────────────────────────
 -- `BRAND` is injected from Theme.lua so this build's wordmark can't drift from
--- the library's. There is no ART here and there can't be: this page exists
--- because our own API just refused this client, so there is no network to fetch
--- the logo PNG over and no uploaded asset id standing in for it. The body's
--- image layer (and the `loadLogo` the library prelude supplies for it) is
--- therefore inside a `--@lib` region, and the accent square + brand initial
--- drawn underneath it IS the logo on this build.
+-- the library's.
+--
+-- The art is the harder half. There is no network here — this page exists
+-- because our own API just refused this client — and there's no uploaded asset
+-- id for the mark yet, so the library's own route (download the PNG, cache it,
+-- hand it over as a custom asset) is closed. What IS open is the *last* leg of
+-- it: if this user has ever loaded the hub successfully, util/Asset.lua already
+-- wrote that PNG to disk, and `getcustomasset` on the same path needs no network
+-- at all. Anyone being told their loader is stale, or that they're banned, is by
+-- definition a returning user, so that file is usually there.
+--
+-- `MARK` (the cached path + the zoom) is injected rather than retyped, because
+-- the path is Asset.CacheFolder plus a hash of the brand URL and all three of
+-- those live in the library. If any of them changes without bundle.py keeping
+-- up, the file simply isn't found and the square below shows instead — the
+-- failure mode is the old behaviour, not a broken page.
 local BRAND = "Uranium" --@inject BRAND
+local MARK, ZOOM = "", 1 --@inject MARK
+
+-- Never reports `true`: the square + initial stays underneath, so a path that
+-- resolves to something the engine won't render leaves the fallback mark rather
+-- than a hole. The art is a full-bleed opaque tile, so when it does render it
+-- covers the square anyway.
+local function loadLogo(image: any, done: any)
+	local content: any = nil
+	pcall(function()
+		local get = getcustomasset or getsynasset or get_custom_asset
+		if type(get) ~= "function" or MARK == "" then
+			return
+		end
+		if type(isfile) == "function" and not isfile(MARK) then
+			return
+		end
+		content = get(MARK)
+	end)
+	if type(content) == "string" and content ~= "" then
+		image.Size = UDim2.fromScale(ZOOM, ZOOM)
+		image.Image = content
+	end
+	done(false)
+end
 
 -- ── fade (util/Fade.lua, compact) ───────────────────────────────────────────
 -- Same contract and the same reason it isn't a CanvasGroup: a group rasterizes

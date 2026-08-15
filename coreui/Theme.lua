@@ -31,14 +31,19 @@
 local Theme = {}
 
 -- ── Brand ─────────────────────────────────────────────────────────────────
--- `assets` is the **Krypton public repo** — the author's asset host, a separate
+-- `assets` is the **uranium-public** repo — the author's asset host, a separate
 -- thing from this UI library (which lives in the `coreui` repo and is only
--- public so the loadstring works). Both keep their old names on purpose: the
--- loadstring URL and the raw asset URLs are pinned to those paths, and renaming
--- either breaks every shipped loader. The rebrand to Uranium is user-visible
--- strings + palette only. Art the UI ships with goes in that repo, not here;
--- drop a file in its `Assets/` folder and reference it as
--- `Theme.Brand.assets .. "name.png"` (or `Uranium.Asset.url("name.png")`).
+-- public so the loadstring works). `coreui` keeps its old name on purpose: the
+-- loadstring URL is pinned to that path and renaming it breaks every shipped
+-- loader. The art host is NOT pinned that way — nothing but this line points at
+-- it — so it moved off the old `Krypton` name, and that path now 404s. Art the
+-- UI ships with goes in that repo, not here; drop a file in its `Assets/` folder
+-- and reference it as `Theme.Brand.assets .. "name.png"` (or
+-- `Uranium.Asset.url("name.png")`).
+--
+-- If the mark ever comes up as the accent square + a "U", check this URL first:
+-- that fallback is what a 404 looks like, and it looks identical to "no file
+-- access", so it reads as an executor problem when it's really a dead link.
 --
 -- The logo is a fallback chain — util/Asset.lua walks it in order, so
 -- `Window{ Logo = ... }` can be a single source or a chain of its own.
@@ -48,9 +53,10 @@ local Theme = {}
 -- so it sidesteps every Roblox asset rule: no moderation wait, no Asset Privacy
 -- restriction, no decal-vs-image id confusion. An uploaded asset id would be the
 -- fallback for executors with no file access — there isn't one for the Uranium
--- mark yet, so those fall through to the accent square + "U" initial instead of
--- showing the old Krypton art. Add the id here once it's uploaded.
-local ASSETS = "https://raw.githubusercontent.com/funjimmywantstodie/Krypton/main/Assets/"
+-- mark yet, so those fall through to the accent square + "U" initial. Add the id
+-- here once it's uploaded; the standalone status page (ui/screen.lua) can only
+-- ever use *that*, since it has no network to download a PNG over.
+local ASSETS = "https://raw.githubusercontent.com/funjimmywantstodie/uranium-public/main/Assets/"
 
 Theme.Brand = {
 	name   = "Uranium",
