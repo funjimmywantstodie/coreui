@@ -457,6 +457,7 @@ local page = Uranium:Screen({
     Discord     = "discord.gg/uranium",         -- adds a Copy button + selectable text
     Dismissable = true,                         -- default true (Esc + a × button)
     Parent      = someInstance,                 -- same meaning as CreateWindow.Parent
+    Input       = nil,                          -- a text entry block — see below
     Actions     = {
         { Label = "Reload", Icon = "refresh-cw", Primary = true,
           Close = true, Callback = function(page) Hub:Reload() end },
@@ -490,6 +491,7 @@ local page = Uranium:Screen({
 | `page:Set(opts)` | Patch any of the options above, in place. |
 | `page:Flash(text)` | Transient status line under the buttons (~3s). |
 | `page.ScreenGui` | The `ScreenGui`, if you want to re-parent it yourself. |
+| `page.Input` | The entry block's handle — **absent unless you passed `Input`**. |
 
 Everything is optional and nothing here throws on junk input — a value that
 isn't usable text hides its own row and the page still comes up. That's the
@@ -512,6 +514,111 @@ you say otherwise.
 
 **`Dismissable = false`** removes Esc and the × — the only way out is re-running
 the loadstring. That's deliberate for a ban.
+
+### `Input` — taking a value back
+
+A page can also *ask* for something. The case it's built for is a key gate: the
+hub refusing to load until the user types a key, with this page as the only UI on
+screen. Pass an `Input` table and the card grows an entry block between the body
+text and the Discord row — so the reading order is *what went wrong → what to
+type → where to get one → the buttons*.
+
+```lua
+local page = Uranium:Screen({
+    Title = "Key required",
+    Text  = "Uranium needs a key to run. Enter yours to unlock it.",
+    Code  = "NO KEY",
+    Icon  = "key",
+    Tone  = "warning",
+    Discord = "discord.gg/uranium",
+    Dismissable = true,
+    Input = {
+        Label       = "Your key",              -- small caps caption above the box
+        Placeholder = "XXXX-XXXX-XXXX-XXXX",
+        Value       = "",                      -- prefill
+        Button      = "Unlock",                -- submit label      (default "Continue")
+        Paste       = true,                    -- a paste chip in the row, if the
+                                               --   executor can read the clipboard
+        MaxLength   = 64,                      -- clamped AFTER Filter
+        Filter      = function(text) return text:upper() end,  -- live, every keystroke
+        Submit      = function(value, ui) end, -- Enter, or the button
+    },
+})
+```
+
+```
+        │  YOUR KEY                                │   ← Label, small caps, muted
+        │  ┌────────────────────────┐ ┌──────────┐ │
+        │  │ XXXX-XXXX-XXXX-XXXX  📋│ │  Unlock  │ │   ← box + paste, then submit
+        │  └────────────────────────┘ └──────────┘ │
+        │  That key isn't one we've issued.        │   ← the Error / Success line
+```
+
+Everything but `Submit` is optional. On a narrow viewport the button wraps under
+the box rather than squeezing it — a key has to stay readable.
+
+| `page.Input` | |
+|---|---|
+| `:Get()` | Current text. |
+| `:Set(text)` | Set it (runs `Filter`, then `MaxLength`). |
+| `:Focus()` | Focus the box. |
+| `:Clear()` | Empty it. |
+| `:Busy(true/false)` | Disable the box and button and dim them; `false` restores both with the text still in place. |
+| `:Error(text)` | Red line under the box, and the caret goes back in the box. Clears on the next edit. |
+| `:Success(text)` | Accent line under the box. |
+
+**`page.Input` is `nil` when no `Input` block was passed**, and that absence is
+the capability probe — check it before assuming the page can take a value, and
+fall back to a clipboard button if it can't:
+
+```lua
+if type(page.Input) ~= "table" then
+    page:Set({ Text = "Copy your key, then press Paste key." })
+end
+```
+
+The same object is handed to `Submit` as its second argument, so a caller that
+never kept the page handle can still report back:
+
+```lua
+Submit = function(value, ui)
+    task.spawn(function()
+        ui:Busy(true)
+        local ok, why = redeem(value)
+        if not ok then
+            ui:Busy(false)
+            ui:Error(why)          -- "That key isn't one we've issued."
+            return
+        end
+        ui:Success("Key accepted — loading.")
+    end)
+end,
+```
+
+Behaviour worth knowing:
+
+- **Enter submits**, same as the button, and an **empty submit does nothing** —
+  no callback, no error flash for something the user hasn't done yet.
+- **An error never clears the box.** Someone who typed nineteen characters and
+  got one wrong should be editing, not retyping, so `Error` puts the caret back
+  where they left it. `Error` and `Success` share one line; the second replaces
+  the first, and an error clears itself as soon as the user edits.
+- **`Busy(true)` blocks re-entry** — the box stops being editable and the button
+  stops responding and visibly dims. `Busy(false)` restores both, text intact.
+- **`Paste = true`** draws a small chip in the row that reads the clipboard
+  (`getclipboard` / `getclipboardtext` / `toclipboard`, whichever exists), fills
+  the box and submits. Where the executor exposes none, the chip isn't drawn at
+  all rather than drawn dead.
+- **Nothing is logged.** No `print`, no `warn` carrying the value — this is a
+  licence key and the console is readable by the game.
+- **`page:Set` works over a live input page**, which is how a gate rewords itself
+  mid-attempt. Patching `Text` or `Title` leaves the box alone; `Value` is only
+  re-applied when you pass a *new* `Input` table, so a reword can't wipe what the
+  user has typed. An `Input` passed once is never torn down — dropping it from a
+  later patch only hides the block.
+- **Escape with the box focused** is the engine's first: it releases text capture
+  and the page closes on the second press. Taking Escape off the `gameProcessed`
+  guard would mean a game that consumes it closes the page out from under itself.
 
 Only one page exists at a time: a second `Uranium:Screen` replaces the first, and
 both `Uranium:Unload()` and the next `CreateWindow` take a live page down with
@@ -543,10 +650,11 @@ end
 warn("[Uranium] outdated loader") -- fall back if the page couldn't be shown
 ```
 
-It takes the same options minus `Detail`, parents its own `ScreenGui`
-(`gethui` → `CoreGui` → `PlayerGui`, each guarded), fetches nothing over the
-network, and is generated by `bundle.py` from the *same source* as
-`Uranium:Screen` — see CLAUDE.md for how the two builds share one body.
+It takes the same options minus `Detail` — **`Input` included**, which is the
+build the key gate actually runs — parents its own `ScreenGui` (`gethui` →
+`CoreGui` → `PlayerGui`, each guarded), fetches nothing over the network, and is
+generated by `bundle.py` from the *same source* as `Uranium:Screen` — see
+CLAUDE.md for how the two builds share one body.
 
 ---
 

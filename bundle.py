@@ -108,6 +108,10 @@ def resolve(chain, own_key):
 SCREEN_ICONS = {
     "triangle-alert", "octagon-alert", "ban", "wrench", "download",
     "pause", "package", "refresh-cw", "message-circle",
+    # The key gate: its page icon, and the icons on its two Actions. `clipboard`
+    # is also a body literal (the Input block's paste affordance), but the gate
+    # passes it too and the set dedupes.
+    "key", "external-link", "clipboard",
 }
 
 EXTRA_ICONS: set = set(SCREEN_ICONS)

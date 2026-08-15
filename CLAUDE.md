@@ -111,9 +111,10 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
-  `Uranium:Screen{Title,Text?,Code?,Icon?,Tone?,Detail?,Footer?,Discord?,Dismissable?,Actions?,Parent?}`
-  → `:Close()` · `:Set(opts)` · `:Flash(text)` · `.ScreenGui` (needs no window —
-  see **The status page** below) ·
+  `Uranium:Screen{Title,Text?,Code?,Icon?,Tone?,Detail?,Footer?,Discord?,Dismissable?,Input?,Actions?,Parent?}`
+  → `:Close()` · `:Set(opts)` · `:Flash(text)` · `.ScreenGui` · `.Input`
+  (`:Get/:Set/:Focus/:Clear/:Busy/:Error/:Success`, present only when `Input` was
+  passed) (needs no window — see **The status page** below) ·
   `Uranium.Config` (the file layer) · `Uranium.Settings` (the settings-panel builders)
 - `Tab:CreateGroup{Title,Column,Collapsed,Id?,Parent?}` (Column 1=left, 2=right) →
   the control surface, plus `:IsCollapsed()`/`:SetCollapsed(b, animate?)` — see
@@ -260,6 +261,20 @@ Five things hold it up:
   page over a live window is modal), and Modal also releases a captured mouse —
   without it a shift-lock game leaves the user looking at buttons they can't
   click.
+- **The optional `Input` block is the page taking a value back**, for the key
+  gate: the hub refusing to load until the user types a key. It's built **lazily**
+  and `handle.Input` is *absent* without it — callers probe that absence to decide
+  whether to fall back to a clipboard button, so a page with no `Input` has to
+  stay byte-for-byte the page it was. Three things there: `Busy` repaints with
+  colours, never transparency (transparency in this tree belongs to `util/Fade.lua`
+  and writing one it's driving strands the control half-visible); the row's wrap
+  is done by hand rather than with `UIListLayout.Wraps` (a recent property, and
+  this file runs on whatever engine the client is on), and the wrap *decision*
+  uses the submit button's **estimated** width, never its measured one — a stacked
+  button is as wide as the row, so measuring latches it into the stacked branch
+  and it never comes back; and `Value` is re-applied only when the `Input` table
+  itself changed, so a `Set{ Text = … }` reword mid-attempt can't wipe what the
+  user has typed.
 
 **One source, two builds — this is the part to not break.** `ui/screen.lua` is
 the same page with none of the library behind it, inlined by the delivery worker
@@ -291,10 +306,13 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
   and there is **no network and no asset fetch** — icons are `rbxassetid`
   spritesheet slices, never an `https://` image, because the client running it
   has just been refused by our own API. `SCREEN_ICONS` in bundle.py is the list
-  of names the two known callers pass (they reach the page through the `Icon`
-  option, so no literal reaches the tree-shaker; they seed `EXTRA_ICONS` too).
+  of names the known callers pass (they reach the page through the `Icon` option
+  and their `Actions`, so no literal reaches the tree-shaker; they seed
+  `EXTRA_ICONS` too).
 - Size: `bundle.py` prints it every build against a 15 KB target and a 30 KB
-  ceiling. It currently lands ~18 KB. The remaining levers are all
+  ceiling. It currently lands ~26 KB — the `Input` block is ~7 KB of that, and it
+  can't be `--@lib`'d away, because the key gate is a *standalone* caller. The
+  remaining levers are all
   quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
   means the card pops in at full opacity over a still-dimming backdrop.
   `compact()` in bundle.py strips whole-line comments, blank lines and
