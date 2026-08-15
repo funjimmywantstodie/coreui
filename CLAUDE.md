@@ -341,17 +341,17 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
   of names the known callers pass (they reach the page through the `Icon` option
   and their `Actions`, so no literal reaches the tree-shaker; they seed
   `EXTRA_ICONS` too).
-- Size: `bundle.py` prints it every build against a 15 KB target and a 34 KB
-  ceiling — that ceiling was 30 KB and was raised **once**, deliberately, when
-  the page grew a titlebar, the mark and the fetch behind it (the reasoning is
-  written out at `SCREEN_CEILING`). It lands ~29.8 KB: the `Input` block is ~7 KB
-  of that and the branding ~4 KB, and neither can be `--@lib`'d away — the key
-  gate is a *standalone* caller, and the branding is most load-bearing on the
-  build that shows up before the library exists. The card's drop shadow was
-  already spent buying the mark its bytes. Watch the printed size on every change
-  here. The remaining levers are all
-  quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
-  means the card pops in at full opacity over a still-dimming backdrop.
+- Size: `bundle.py` prints it every build against a 32 KB target and a 64 KB
+  ceiling, and it lands ~30 KB. Those numbers are a **reporting aid, not a
+  budget**: they were 15 KB / 30 KB when the page was a bare card and the worry
+  was that a per-request cost would creep, and they have been raised twice since
+  (once for the titlebar + mark + fetch, once at the author's call) rather than
+  the page being trimmed to fit them. Keep watching the printed size — a refusal
+  reply is a hot path and a page that doubles overnight is worth noticing — but
+  don't refuse a real improvement here over a kilobyte. For reference, the `Input`
+  block is ~7 KB and the branding ~4 KB, and neither could be `--@lib`'d away
+  anyway: the key gate is a *standalone* caller, and the branding is most
+  load-bearing on the build that shows up before the library exists.
   `compact()` in bundle.py strips whole-line comments, blank lines and
   indentation and is deliberately nothing more: no renaming, no trailing-comment
   stripping (telling one from a `--` inside a string needs a real lexer), because

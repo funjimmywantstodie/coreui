@@ -33,16 +33,20 @@ SCREEN_PRELUDE = os.path.join(BASE, "standalone", "screen.prelude.lua")
 # ui/screen.lua is inlined into *every* refusal reply the delivery worker sends,
 # so its size is a per-request cost rather than a per-session one.
 #
-# The ceiling was 30 KB and was raised deliberately when the page grew a titlebar,
-# the brand mark and the fetch behind it. That is a real cost on a real hot path,
-# and it was weighed rather than waved through: a refusal reply is rare (a banned
-# or stale client, not every session), the alternative was a page that doesn't
-# look like the product it's speaking for, and the client this page *does* let
-# through is otherwise about to download a ~600 KB bundle. Don't read the new
-# number as room to spend — the target is still 15 KB and every KB here is paid
-# per request.
-SCREEN_TARGET = 15 * 1024
-SCREEN_CEILING = 34 * 1024
+# These are a REPORTING aid, not a budget the page has to be squeezed into. The
+# numbers started at 15 KB / 30 KB, back when the page was a bare card and the
+# worry was that a per-request cost would creep. It has since grown a titlebar,
+# the brand mark, the fetch behind it and the key-gate input block, and every one
+# of those was worth its bytes — so the limits have been raised to match rather
+# than the page trimmed to fit them.
+#
+# Keep the print, because a page that doubles overnight is still worth noticing:
+# a refusal reply goes out on a hot path. But it is a rare reply (a banned or
+# stale client, not every session), and the client this page *lets through* is
+# about to download a ~600 KB bundle — so don't refuse a genuine improvement here
+# over a kilobyte.
+SCREEN_TARGET = 32 * 1024
+SCREEN_CEILING = 64 * 1024
 
 
 def build_version():

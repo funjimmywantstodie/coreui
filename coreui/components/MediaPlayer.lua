@@ -495,12 +495,30 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		end)
 	end
 
+	-- Whole seconds currently ON the two labels, so the strings are only rebuilt
+	-- when they'd actually read differently. `renderProgress` runs every Heartbeat
+	-- while a track plays: the fill and the knob genuinely move every frame, but
+	-- the clocks change once a second, and reformatting both plus writing both
+	-- `Text` properties 60 times a second was ~59 wasted string allocations and
+	-- two wasted layout invalidations per second, forever, on the render path.
+	-- `-1` can't collide with a real value (both are floored to ≥ 0), so the first
+	-- call always paints.
+	local shownElapsed, shownDuration = -1, -1
+
 	renderProgress = function()
 		local pct = duration > 0 and clamp(elapsed / duration, 0, 1) or 0
 		progressFill.Size = UDim2.fromScale(pct, 1)
 		progressKnob.Position = UDim2.fromScale(pct, 0.5)
-		timeCur.Text = fmtTime(elapsed)
-		timeDur.Text = duration > 0 and fmtTime(duration) or "0:00"
+		local secs = math.floor(math.max(0, elapsed))
+		if secs ~= shownElapsed then
+			shownElapsed = secs
+			timeCur.Text = fmtTime(elapsed)
+		end
+		local total = math.floor(math.max(0, duration))
+		if total ~= shownDuration then
+			shownDuration = total
+			timeDur.Text = duration > 0 and fmtTime(duration) or "0:00"
+		end
 	end
 
 	renderVolume = function()

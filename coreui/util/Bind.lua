@@ -258,6 +258,17 @@ function Bind:List(): { any }
 	return table.clone(self.entries)
 end
 
+-- `Bind:List()` without the copy — the LIVE array, for a walk that only reads,
+-- doesn't outlive itself, and happens often enough for the copy to matter.
+-- components/Hud.lua's repaint is the case: it runs on every activation edge (a
+-- Hold key down and up is two) and only asks each binding what it currently is.
+--
+-- Registering or destroying a binding while iterating this will corrupt the walk.
+-- If you might do either, or you're keeping the result, use `List`.
+function Bind:Entries(): { any }
+	return self.entries
+end
+
 -- Called synchronously on every change, so a HUD repaints in the same frame as
 -- the key that moved it (the same reason Binding:_set paints before it spawns
 -- the user callback).
@@ -301,14 +312,55 @@ function Bind:_dispatch(input: InputObject, gameProcessed: boolean, began: boole
 	if began and (gameProcessed or self.ctx:IsCapturing()) then
 		return -- typing into a textbox, or a chip is listening for this very press
 	end
-	-- A callback is free to add or destroy bindings, so walk a snapshot.
-	for _, entry in table.clone(self.entries) do
+	-- Walked by index over the LIVE array rather than over a clone.
+	--
+	-- This runs on every key and every mouse press in the game, in both
+	-- directions, over an array that holds one entry per bindable control — and
+	-- since components/Toggle.lua gives every toggle a chip, a large hub is 150+
+	-- of them. `table.clone` there was a 150-element allocation per press edge, on
+	-- the input thread, purely to survive a callback that mutates the registry.
+	--
+	-- A callback is free to register or destroy bindings from inside this loop, so
+	-- nothing here assumes the array is stable. What it guarantees instead:
+	--   * nothing is dispatched to twice;
+	--   * nothing still registered when the walk ends is skipped. The index only
+	--     advances when the entry it just handled is STILL at that index — a
+	--     destroy shifts everything after it down by one, so whatever moved into
+	--     this slot is visited next rather than stepped over;
+	--   * `n` pins the length on entry, so the walk can't be extended by a
+	--     registration (a binding created by this press doesn't receive it).
+	--
+	-- It is NOT identical to the clone, and the difference is the point: the
+	-- snapshot went on dispatching to bindings a callback had already destroyed
+	-- earlier in the same press — flipping `state` on a dead binding and waking
+	-- every registry observer for it, after `Destroy` had nil'd its callbacks.
+	-- Those are skipped now. A destroyed binding shouldn't activate.
+	--
+	-- (One consequence, for completeness: a callback that destroys one binding and
+	-- registers another in the same press leaves the length unchanged, so the new
+	-- one lands in a slot this walk still visits. Nothing in the library does that,
+	-- and either answer is defensible.)
+	local entries = self.entries
+	local n = #entries
+	local i = 1
+	while i <= n do
+		local entry = entries[i]
+		if entry == nil then
+			break
+		end
 		if began then
 			if entry.key == key then
 				entry:_press()
 			end
 		elseif entry._downKey == key then
 			entry:_release()
+		end
+		if entries[i] == entry then
+			i += 1
+		end
+		-- Removals shrink the walk; registrations don't extend it.
+		if #entries < n then
+			n = #entries
 		end
 	end
 end

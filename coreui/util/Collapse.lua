@@ -106,7 +106,13 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 		collapsed = value
 		stop()
 
-		if not animate then
+		-- `animate == false`, not `not animate`. Every other `animate: boolean?` in
+		-- the library reads nil as "yes, animate" (Group:SetCollapsed,
+		-- Window:SetMaximized, Hud:SetVisible all spell it `animate ~= false`), and
+		-- this one alone read nil as "snap". Both call sites happen to pass an
+		-- explicit boolean, so nothing moves today — but the next one to omit it
+		-- would have got the opposite of what the rest of the codebase taught them.
+		if animate == false then
 			holder.AutomaticSize = value and Enum.AutomaticSize.None or Enum.AutomaticSize.Y
 			holder.Size = UDim2.new(1, 0, 0, value and 0 or content.AbsoluteSize.Y)
 			return

@@ -487,13 +487,60 @@ return function(ctx: any, parent: Instance, opts: any): any
 		row.frame.Visible = true
 	end
 
+	-- Scratch state for `refresh`, cleared and refilled rather than reallocated.
+	-- The repaint runs on every registry edge — a Hold key down and up is two, and
+	-- a re-key, a mode cycle, a register and a destroy each raise one — so six
+	-- fresh tables plus one per block was garbage produced on the input thread, in
+	-- a function whose entire premise is that it doesn't churn instances.
+	local sListed: { any } = {}
+	local sIsListed: { [any]: boolean } = {}
+	local sBlocks: { any } = {}
+	local sBlockOf: { [any]: any } = {}
+	local sOrder: { any } = {}
+	local sSubRow: { [any]: boolean } = {}
+	local sActive: { any } = {}
+	local sIdle: { any } = {}
+	-- ...and the blocks with them. A block is `{ entries, active }`; the pool hands
+	-- back the same tables every repaint and `blockUsed` is the high-water mark for
+	-- this pass, so nothing beyond it is read.
+	local blockPool: { any } = {}
+	local blockUsed = 0
+	local function takeBlock(entry: any): any
+		blockUsed += 1
+		local block = blockPool[blockUsed]
+		if not block then
+			block = { entries = {}, active = false }
+			blockPool[blockUsed] = block
+		end
+		table.clear(block.entries)
+		block.entries[1] = entry
+		block.active = entry:GetState() == true
+		return block
+	end
+
+	-- The parent of `entry`, but only if that parent is itself on screen — a bound
+	-- sub-option whose feature isn't listed has nothing to sit under. Hoisted out
+	-- of `refresh` because it closes over `sIsListed`, which is now stable: built
+	-- inside, it was one more closure allocated per activation edge.
+	local function parentOf(entry: any): any?
+		local parent = entry.GetParent and entry:GetParent() or nil
+		return (parent and sIsListed[parent]) and parent or nil
+	end
+
 	local function refresh()
 		if destroyed then
 			return
 		end
-		local listed = {}
-		local isListed: { [any]: boolean } = {}
-		for _, entry in binds:List() do
+		local listed, isListed = sListed, sIsListed
+		table.clear(listed)
+		table.clear(isListed)
+		table.clear(sBlockOf)
+		table.clear(sOrder)
+		table.clear(sSubRow)
+		blockUsed = 0
+		-- `Entries`, not `List`: nothing in this walk registers or destroys a
+		-- binding, so the copy `List` makes is pure garbage here.
+		for _, entry in binds:Entries() do
 			if entry:IsListed() then
 				table.insert(listed, entry)
 				isListed[entry] = true
@@ -515,16 +562,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 		-- top-level rows and the roll-up count went missing. Parent-first is what
 		-- `Parent = true` on a card produces, but an explicit `Parent = "aimbot"`
 		-- is free to name a feature built in a later group, and did.
-		local blocks: { any } = {}
-		local blockOf: { [any]: any } = {}
-		local function parentOf(entry: any): any?
-			local parent = entry.GetParent and entry:GetParent() or nil
-			return (parent and isListed[parent]) and parent or nil
-		end
+		local blocks, blockOf = sBlocks, sBlockOf
+		table.clear(blocks)
 		-- Roots first, in registration order — that's the order of the panel.
 		for _, entry in listed do
 			if not parentOf(entry) then
-				local block = { entries = { entry }, active = entry:GetState() == true }
+				local block = takeBlock(entry)
 				blockOf[entry] = block
 				table.insert(blocks, block)
 			end
@@ -552,7 +595,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				if block then
 					table.insert(block.entries, entry)
 				else
-					block = { entries = { entry }, active = false }
+					block = takeBlock(entry)
 					table.insert(blocks, block)
 				end
 				blockOf[entry] = block
@@ -563,19 +606,27 @@ return function(ctx: any, parent: Instance, opts: any): any
 		-- Under the cap, rows stay in registration order so nothing jumps around
 		-- while you read it. Over the cap, what's LIVE has to be the part you can
 		-- see, so active binds float to the top (relative order preserved).
+		--
+		-- Partitioned through two scratch lists and written back into `blocks`
+		-- rather than rebound to a fresh array: `blocks` IS the scratch table, and
+		-- pointing the local somewhere else would leave it holding the pooled
+		-- blocks from the previous repaint.
 		if #listed > maxRows then
-			local active, idle = {}, {}
+			table.clear(sActive)
+			table.clear(sIdle)
 			for _, block in blocks do
-				table.insert(block.active and active or idle, block)
+				table.insert(block.active and sActive or sIdle, block)
 			end
-			blocks = active
-			for _, block in idle do
+			table.clear(blocks)
+			for _, block in sActive do
+				table.insert(blocks, block)
+			end
+			for _, block in sIdle do
 				table.insert(blocks, block)
 			end
 		end
 
-		local order: { any } = {}
-		local subRow: { [any]: boolean } = {}
+		local order, subRow = sOrder, sSubRow
 		for _, block in blocks do
 			for i, entry in block.entries do
 				table.insert(order, entry)
@@ -598,7 +649,11 @@ return function(ctx: any, parent: Instance, opts: any): any
 		empty.Visible = shown == 0
 		local rest = #order - shown
 		more.Visible = rest > 0
-		more.Text = ("+%d more"):format(rest)
+		-- Only formatted when it's actually on screen: the overflow line is empty
+		-- in the overwhelmingly common case, and this runs on every key edge.
+		if rest > 0 then
+			more.Text = ("+%d more"):format(rest)
+		end
 	end
 
 	local unsubscribeBinds = binds:Observe(refresh)

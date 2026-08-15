@@ -139,18 +139,18 @@ end
 -- across sessions (a re-run reuses the file instead of re-downloading).
 local urlCache: { [string]: string } = {}
 
-function Asset.fromUrl(url: string, filename: string?): string?
-	if type(url) ~= "string" or url == "" then
-		return nil
-	end
-	local hit = urlCache[url]
-	if hit then
-		return hit
-	end
-	if not Asset.canDownload then
-		return nil
-	end
+-- URLs with a fetch in flight right now. Resolving is a yielding operation on a
+-- spawned thread (every component calls it that way), so the same url is
+-- routinely asked for two or three times before the first answer lands —
+-- `Theme.Brand.logo` alone is resolved by the titlebar, the splash and the status
+-- page. Without this they each ran their own HttpGet and each wrote the same
+-- bytes to the same path, which is a wasted round trip per caller and two
+-- writefiles racing for one file. The later callers wait for the first instead.
+local urlPending: { [string]: boolean } = {}
 
+-- The download itself. Split out so `Asset.fromUrl` can hold the in-flight mark
+-- across it and clear the mark on every exit, including a throw.
+local function download(url: string, filename: string?): string?
 	-- Name the cache file after the url so repeat calls land on the same file.
 	local name = filename
 	if not name then
@@ -191,6 +191,44 @@ function Asset.fromUrl(url: string, filename: string?): string?
 		urlCache[url] = content
 	end
 	return content
+end
+
+-- How long a second caller waits on the first one's fetch before giving up and
+-- showing its placeholder. Comfortably past `whenLoaded`'s own budget, since the
+-- fetch it's waiting on is one HttpGet plus a writefile.
+local PENDING_WAIT = 15
+
+function Asset.fromUrl(url: string, filename: string?): string?
+	if type(url) ~= "string" or url == "" then
+		return nil
+	end
+	local hit = urlCache[url]
+	if hit then
+		return hit
+	end
+	if not Asset.canDownload then
+		return nil
+	end
+
+	-- Someone else is already fetching this one: wait for their answer rather than
+	-- starting a second download of the same bytes. Polling, not a signal —
+	-- BindableEvents here would mean an instance per url and a deferred resumption
+	-- on a path that already yields for a network round trip.
+	if urlPending[url] then
+		local deadline = os.clock() + PENDING_WAIT
+		while urlPending[url] and os.clock() < deadline do
+			task.wait(0.05)
+		end
+		return urlCache[url]
+	end
+
+	urlPending[url] = true
+	-- pcall so a throw anywhere in the fetch can't strand the mark — every later
+	-- caller for this url would then wait out PENDING_WAIT and give up, turning one
+	-- bad download into a permanently dead image.
+	local ok, content = pcall(download, url, filename)
+	urlPending[url] = nil
+	return (ok and content) or nil
 end
 
 -- The body of Asset.resolve (below), plus the chain-depth counter.

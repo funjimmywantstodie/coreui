@@ -446,6 +446,11 @@ function Settings.build(window: any, tab: any, opts: any?): any
 		controls.ToggleKey = iface.ToggleKey
 		controls.Notifications = iface.Notifications
 		controls.Hud = iface.Hud
+		-- Carried through for the same reason as the config group's below: a host
+		-- that tears its own settings UI down needs the unsubscribers, and there is
+		-- no second way to reach them once this returns.
+		controls.HudMirror = iface.HudMirror
+		controls.HudChanges = iface.HudChanges
 	end
 
 	local cfgGroup: any = nil
@@ -464,6 +469,15 @@ function Settings.build(window: any, tab: any, opts: any?): any
 		controls.Save = cfg.Save
 		controls.Load = cfg.Load
 		controls.Delete = cfg.Delete
+		-- The selection event, and the unsubscriber for the folder watch. These
+		-- were built by ConfigGroup and then dropped on the floor here, which made
+		-- `OnSelect` — a documented part of what CreateSettingsTab hands back, and
+		-- the only way to correct the name box for a list whose entries aren't file
+		-- names — a nil index for everyone who reached it the documented way. The
+		-- ConfigSupported = false branch returns a no-op OnSelect for the same
+		-- reason, so this is never nil.
+		controls.OnSelect = cfg.OnSelect
+		controls.FolderWatch = cfg.FolderWatch
 	end
 
 	if sections.Danger ~= false then

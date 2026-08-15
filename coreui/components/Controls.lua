@@ -43,15 +43,12 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 	-- name here rather than a handle so it behaves exactly like the explicit form.
 	local autoParent: any = nil
 
-	local function refresh()
-		local n = #items
-		for i, entry in items do
-			if entry.sep then
-				entry.sep.Visible = entry.bordered and i < n
-			end
-		end
-	end
-
+	-- The invariant every separator is kept at: visible iff its own item is
+	-- bordered AND something still follows it (the CSS `:last-child` rule the
+	-- reference draws). Only TWO of them can move when an item is appended — the
+	-- new one (nothing follows it yet) and the previous one (something does now) —
+	-- so that's all this touches. Re-deriving the whole list on every insert made
+	-- building a card quadratic in its control count, for no answer that differed.
 	local function place(inst: Instance, bordered: boolean)
 		count += 1
 		;(inst :: any).LayoutOrder = count * 2
@@ -64,12 +61,16 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 				Size = UDim2.new(1, 0, 0, 1),
 				BackgroundColor3 = Theme.Colors.border_soft,
 				BorderSizePixel = 0,
+				Visible = false, -- last item so far; the next `place` turns it on
 				LayoutOrder = count * 2 + 1,
 				Parent = frame,
 			})
 		end
+		local previous = items[#items]
+		if previous and previous.sep then
+			previous.sep.Visible = previous.bordered
+		end
 		table.insert(items, { inst = inst, sep = sep, bordered = bordered })
-		refresh()
 	end
 
 	-- Build via a component, drop it in, register it as a flag (if it carries one
@@ -101,6 +102,18 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		-- is skipped like nil — otherwise it was cloned onto every control's
 		-- `Parent`, where util/Bind.lua's refKey discards it anyway.
 		local bindable = kind == "toggle" or kind == "bind"
+		-- ...and of those, the ones that can actually GO LIVE. A `Keybind` defaults
+		-- to `Mode = "None"` — a pure key picker, which never activates and is never
+		-- listed in the bind HUD (util/Bind.lua `Binding:IsListed`). Only a control
+		-- that can be *running* is allowed to be the feature a `Parent = true` card
+		-- is named after: letting a picker claim the slot pointed every toggle in
+		-- the card at a parent that can never appear, and a keyless sub-option is
+		-- only listed when it has no parent — so the whole card silently dropped out
+		-- of the HUD. Inheriting a parent is still fine for a picker (it's invisible
+		-- either way); it's claiming one that isn't.
+		local activates = kind == "toggle"
+			or (kind == "bind" and opts ~= nil and type(opts.Mode) == "string"
+				and opts.Mode:lower() ~= "none")
 		if bindable and inheritParent ~= nil and inheritParent ~= false
 			and opts ~= nil and opts.Parent == nil then
 			if inheritParent ~= true then
@@ -110,7 +123,10 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 				-- `Parent = true`: the first bindable control here IS the feature, so
 				-- it claims the slot rather than filling one. `false` = it had neither
 				-- a Flag nor a Name, so there's nothing later controls could point at.
-				autoParent = opts.Flag or opts.Name or false
+				-- A picker leaves the slot open for whatever comes next instead.
+				if activates then
+					autoParent = opts.Flag or opts.Name or false
+				end
 			elseif autoParent then
 				opts = table.clone(opts)
 				opts.Parent = autoParent

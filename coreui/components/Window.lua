@@ -874,15 +874,70 @@ return function(opts: any)
 	end
 
 	-- ── search ────────────────────────────────────────────────────────────────
-	-- Concatenate every bit of text under an instance, lowercased, for matching.
+	-- This used to derive everything it needed from scratch on every keystroke:
+	-- `page:GetDescendants()` to find the groups, a recursive `FindFirstChild`
+	-- per group to find its card (which searches the card's ENTIRE subtree — every
+	-- control in it — before it gets there), and a `GetDescendants()` + concat +
+	-- lower per field to collect its text. On a few hundred controls that's tens
+	-- of thousands of instance visits and hundreds of fresh strings per character
+	-- typed, on the thread the user is typing on.
+	--
+	-- The layout is fixed by components/Tab.lua and util/Collapse.lua, so both
+	-- walks can be exact instead of exhaustive, and the text can be collected once
+	-- per search session instead of once per keystroke.
+
+	-- page → Columns → Column → Group. Groups never nest, so this is the same set
+	-- the old `GetDescendants()` filter produced, minus the whole subtree.
+	local function pageGroups(page: Instance): { Frame }
+		local out: { Frame } = {}
+		local columns = page:FindFirstChild("Columns")
+		if not columns then
+			return out
+		end
+		for _, column in columns:GetChildren() do
+			if column.Name == "Column" then
+				for _, group in column:GetChildren() do
+					if group:IsA("Frame") and group.Name == "Group" then
+						table.insert(out, group)
+					end
+				end
+			end
+		end
+		return out
+	end
+
+	-- group → Collapse (util/Collapse.lua's clipping holder) → Card. The recursive
+	-- lookup is kept as a fallback so a future change to that nesting degrades to
+	-- the old behaviour rather than silently filtering nothing.
+	local function groupCard(group: Instance): Instance?
+		local holder = group:FindFirstChild("Collapse")
+		local card = holder and holder:FindFirstChild("Card")
+		return card or group:FindFirstChild("Card", true)
+	end
+
+	-- Every bit of text under a field, lowercased, cached for the life of one
+	-- search session (`searchText` is cleared whenever the box is opened, which is
+	-- the only moment the menu can have been rebuilt since the last one).
+	--
+	-- Caching means the filter matches the labels a field was BUILT with rather
+	-- than whatever a live value reads at this instant — which is what the box is
+	-- for, and what people type into it. Weak keys so a destroyed control doesn't
+	-- pin its strings until the next clear.
+	local searchText: { [Instance]: string } = setmetatable({}, { __mode = "k" }) :: any
 	local function collectText(inst: Instance): string
+		local hit = searchText[inst]
+		if hit then
+			return hit
+		end
 		local parts = {}
 		for _, d in inst:GetDescendants() do
 			if (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.Text ~= "" then
 				table.insert(parts, d.Text)
 			end
 		end
-		return string.lower(table.concat(parts, " "))
+		local text = string.lower(table.concat(parts, " "))
+		searchText[inst] = text
+		return text
 	end
 
 	-- Filter the active tab: show a group if its title matches, otherwise show
@@ -893,64 +948,61 @@ return function(opts: any)
 		if not tab then
 			return
 		end
-		for _, group in tab.page:GetDescendants() do
-			if group:IsA("Frame") and group.Name == "Group" then
-				local head = group:FindFirstChild("Head")
-				-- card now sits inside a collapse holder, so search recursively
-				local card = group:FindFirstChild("Card", true)
-				local titleLabel = head and head:FindFirstChild("Title")
-				local titleText = (titleLabel and titleLabel:IsA("TextLabel"))
-					and string.lower(titleLabel.Text) or ""
-				local groupMatch = query == "" or string.find(titleText, query, 1, true) ~= nil
+		for _, group in pageGroups(tab.page) do
+			local head = group:FindFirstChild("Head")
+			local card = groupCard(group)
+			local titleLabel = head and head:FindFirstChild("Title")
+			local titleText = (titleLabel and titleLabel:IsA("TextLabel"))
+				and string.lower(titleLabel.Text) or ""
+			local groupMatch = query == "" or string.find(titleText, query, 1, true) ~= nil
 
-				local anyVisible = false
-				if card then
-					-- Fields and their trailing hairlines are siblings ordered
-					-- field, separator, field, separator… so filter the fields first,
-					-- then re-derive each separator: visible only when the field
-					-- above it survived AND some field still follows it. (Leaving
-					-- separators alone stranded hairlines wherever a field was
-					-- hidden; showing them all put one under the last row.)
-					local ordered: { GuiObject } = {}
-					for _, child in card:GetChildren() do
-						if child:IsA("GuiObject") then -- skip UICorner/UIStroke/UIPadding/UIListLayout
-							table.insert(ordered, child)
-						end
-					end
-					table.sort(ordered, function(a, b)
-						return a.LayoutOrder < b.LayoutOrder
-					end)
-					for _, item in ordered do
-						if item.Name ~= "Separator" then
-							local matches = groupMatch
-								or string.find(collectText(item), query, 1, true) ~= nil
-							item.Visible = matches
-							if matches then
-								anyVisible = true
-							end
-						end
-					end
-					local previousVisible = false
-					local lastSeparator: GuiObject? = nil
-					for _, item in ordered do
-						if item.Name == "Separator" then
-							item.Visible = previousVisible
-							if previousVisible then
-								lastSeparator = item
-							end
-						else
-							if item.Visible and lastSeparator then
-								lastSeparator = nil -- a field follows it, so it stays
-							end
-							previousVisible = item.Visible
-						end
-					end
-					if lastSeparator then
-						lastSeparator.Visible = false -- trailing hairline, nothing below
+			local anyVisible = false
+			if card then
+				-- Fields and their trailing hairlines are siblings ordered
+				-- field, separator, field, separator… so filter the fields first,
+				-- then re-derive each separator: visible only when the field
+				-- above it survived AND some field still follows it. (Leaving
+				-- separators alone stranded hairlines wherever a field was
+				-- hidden; showing them all put one under the last row.)
+				local ordered: { GuiObject } = {}
+				for _, child in card:GetChildren() do
+					if child:IsA("GuiObject") then -- skip UICorner/UIStroke/UIPadding/UIListLayout
+						table.insert(ordered, child)
 					end
 				end
-				group.Visible = query == "" or groupMatch or anyVisible
+				table.sort(ordered, function(a, b)
+					return a.LayoutOrder < b.LayoutOrder
+				end)
+				for _, item in ordered do
+					if item.Name ~= "Separator" then
+						local matches = groupMatch
+							or string.find(collectText(item), query, 1, true) ~= nil
+						item.Visible = matches
+						if matches then
+							anyVisible = true
+						end
+					end
+				end
+				local previousVisible = false
+				local lastSeparator: GuiObject? = nil
+				for _, item in ordered do
+					if item.Name == "Separator" then
+						item.Visible = previousVisible
+						if previousVisible then
+							lastSeparator = item
+						end
+					else
+						if item.Visible and lastSeparator then
+							lastSeparator = nil -- a field follows it, so it stays
+						end
+						previousVisible = item.Visible
+					end
+				end
+				if lastSeparator then
+					lastSeparator.Visible = false -- trailing hairline, nothing below
+				end
 			end
+			group.Visible = query == "" or groupMatch or anyVisible
 		end
 	end
 
@@ -960,6 +1012,11 @@ return function(opts: any)
 	winBtns.search.Activated:Connect(function()
 		searchOpen = not searchOpen
 		if searchOpen then
+			-- Drop the collected-text cache: opening the box is the one moment the
+			-- menu can have grown or lost controls since the last search, and it's
+			-- the cheapest possible invalidation point (one table, once, off the
+			-- typing path).
+			table.clear(searchText)
 			-- slide + fade open from a zero-width sliver, then focus the box
 			searchField.Visible = true
 			searchField.Size = UDim2.fromOffset(0, 30)
@@ -1676,11 +1733,10 @@ return function(opts: any)
 	-- viewport, a different set of tabs (a game script that isn't loaded this
 	-- time) and possibly a different build of the menu. Nothing in here errors on
 	-- a mismatch — it restores what still makes sense and drops the rest.
-	local function applyWindowState(value: any)
-		if type(value) ~= "table" then
-			return
-		end
-		applyingWindowState = true
+	--
+	-- Split out from `applyWindowState` below so the suppression flag that call
+	-- runs under can be cleared even if something in here does throw.
+	local function restoreWindowState(value: any)
 		-- Size first (the position clamp is computed against it), then maximize
 		-- (which overrides the size), then the position it's clamped into.
 		if value.Width and value.Height then
@@ -1726,7 +1782,27 @@ return function(opts: any)
 				end
 			end
 		end
+	end
+
+	-- `restoreWindowState` under the notification-suppression flag, which has to
+	-- come back down whatever happens in there.
+	--
+	-- It used to be a bare `flag = true … flag = false` around the body, and the
+	-- body is called from inside Context:LoadConfig's pcall — so anything that
+	-- threw mid-restore was swallowed upstream and left the flag stuck ON for the
+	-- rest of the session. From then on every drag, maximize, tab click and folded
+	-- group stopped notifying `uranium_window`: the window silently stopped
+	-- persisting, with no error and nothing on screen to say so.
+	local function applyWindowState(value: any)
+		if type(value) ~= "table" then
+			return
+		end
+		applyingWindowState = true
+		local ok, err = pcall(restoreWindowState, value)
 		applyingWindowState = false
+		if not ok then
+			error(err, 0) -- re-raised untouched; LoadConfig names the flag that failed
+		end
 	end
 
 	if persistWindow then
@@ -2078,7 +2154,16 @@ return function(opts: any)
 	-- next run of the loadstring finds this record and unloads us before it
 	-- builds. `Unload` tears down without the fade: the replacement window is
 	-- already being built and shouldn't overlap the outgoing one.
-	if singleton then
+	--
+	-- ...but not if we were torn down on the way here. `Destroy` can land during
+	-- construction — a host's `OnFlag` watcher, a tab `Callback`, another chunk
+	-- running `Uranium:Unload()` while this one is still building — and it calls
+	-- `Singleton.release(record)` with `record` still nil, so it can't unclaim a
+	-- slot that hadn't been claimed yet. Claiming anyway parked a record pointing
+	-- at a destroyed window in the shared env, after which `IsLoaded()` reported a
+	-- window that isn't there and the next loader run "unloaded" a corpse instead
+	-- of finding nothing.
+	if singleton and not destroyed then
 		record = Singleton.claim({
 			Name = Theme.Brand.name,
 			Window = window,
