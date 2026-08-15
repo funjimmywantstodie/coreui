@@ -32,8 +32,17 @@ SCREEN_PRELUDE = os.path.join(BASE, "standalone", "screen.prelude.lua")
 
 # ui/screen.lua is inlined into *every* refusal reply the delivery worker sends,
 # so its size is a per-request cost rather than a per-session one.
+#
+# The ceiling was 30 KB and was raised deliberately when the page grew a titlebar,
+# the brand mark and the fetch behind it. That is a real cost on a real hot path,
+# and it was weighed rather than waved through: a refusal reply is rare (a banned
+# or stale client, not every session), the alternative was a page that doesn't
+# look like the product it's speaking for, and the client this page *does* let
+# through is otherwise about to download a ~600 KB bundle. Don't read the new
+# number as room to spend — the target is still 15 KB and every KB here is paid
+# per request.
 SCREEN_TARGET = 15 * 1024
-SCREEN_CEILING = 30 * 1024
+SCREEN_CEILING = 34 * 1024
 
 
 def build_version():
@@ -317,16 +326,16 @@ def screen_brand():
 
 
 def screen_mark():
-    """Where util/Asset.lua caches the brand PNG on disk, plus Brand.zoom.
+    """The brand PNG's url, the disk path util/Asset.lua caches it at, and the
+    zoom the holder crops it with.
 
-    The standalone page has no network, so the only real art it can reach is the
-    copy the library downloaded during an earlier, working session —
-    `getcustomasset` on that path needs nothing but the file. The path is
-    `Asset.CacheFolder` + a djb2 hash of the URL, so it's derived here from the
-    same three sources rather than pasted: a pasted one would go stale silently
-    the first time any of them moved.
+    The standalone page fetches and caches the mark exactly the way the library
+    does, so it has to agree with the library about all three or it downloads a
+    second copy under a second name. The path is `Asset.CacheFolder` + a djb2
+    hash of the url, so it's derived here rather than pasted: a pasted one goes
+    stale silently the first time any input moves.
 
-    Every failure here is soft — no logo URL, an unreadable Asset.lua, a hashing
+    Every failure here is soft — no logo url, an unreadable Asset.lua, a hashing
     scheme that has since changed — because the page degrades to the accent
     square + initial it drew before this existed. It must never fail the build.
     """
@@ -349,11 +358,11 @@ def screen_mark():
         for byte in url.encode("utf-8"):
             h = (h * 33 + byte) % 4294967296
         path = f"{folder.group(1)}/{h:010d}.{ext}"
-        return path, float(zoom.group(1)) if zoom else 1.0
+        return path, (float(zoom.group(1)) if zoom else 1.0), url
     except Exception as err:  # noqa: BLE001 — soft by design, see the docstring
-        print(f"warn: no cached brand mark for the standalone page ({err}) — "
+        print(f"warn: no brand mark for the standalone page ({err}) — "
               "it will draw the fallback square")
-        return "", 1.0
+        return "", 1.0, ""
 
 
 def screen_attribute():
@@ -379,9 +388,9 @@ def build_screen(version):
     icons |= set(re.findall(r'putIcon\([^,]+,\s*"([^"]+)"', body))
     colors = set(re.findall(r"\bC\.(\w+)", body))
 
-    mark_path, mark_zoom = screen_mark()
+    mark_path, mark_zoom, mark_url = screen_mark()
     values = {
-        "MARK": f'local MARK, ZOOM = "{mark_path}", {mark_zoom:g}',
+        "MARK": f'local MARK, ZOOM, LOGO_URL = "{mark_path}", {mark_zoom:g}, "{mark_url}"',
         "COLORS": "local C = {" + screen_colors(colors) + "}",
         "ICONS": "local ICONS = {" + screen_icons(icons) + "}",
         "ATTR": f'local ATTR = "{screen_attribute()}"',

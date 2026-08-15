@@ -14,9 +14,12 @@
 --   * It is inlined into a Lua reply and evaluated as `(function(...) … end)()`,
 --     so everything here must be legal INSIDE A FUNCTION BODY. `...` is read
 --     once, at the top, and must be optional — the caller passes nothing.
---   * No network and no asset fetch of any kind. The client running this has
---     just been refused by our own API. Icons are Roblox-hosted `rbxassetid`
---     spritesheet slices, never an https image, and there is no HttpGet here.
+--   * Nothing may call our own API — the client running this has just been
+--     refused by it. Icons are Roblox-hosted `rbxassetid` spritesheet slices,
+--     never an https image. The ONE exception is the brand mark: a single
+--     `HttpGet` of a static file on the art host, off-thread, after the page is
+--     already up, guarded end to end — see `loadLogo` below for why that one
+--     earns its place and why nothing else should follow it.
 --   * No library, no globals from the hub, no singleton, no `require`.
 --
 -- Lines tagged `--@inject NAME` are REPLACED WHOLE by bundle.py with values
@@ -189,44 +192,89 @@ end
 -- `BRAND` is injected from Theme.lua so this build's wordmark can't drift from
 -- the library's.
 --
--- The art is the harder half. There is no network here — this page exists
--- because our own API just refused this client — and there's no uploaded asset
--- id for the mark yet, so the library's own route (download the PNG, cache it,
--- hand it over as a custom asset) is closed. What IS open is the *last* leg of
--- it: if this user has ever loaded the hub successfully, util/Asset.lua already
--- wrote that PNG to disk, and `getcustomasset` on the same path needs no network
--- at all. Anyone being told their loader is stale, or that they're banned, is by
--- definition a returning user, so that file is usually there.
+-- The art is the harder half, and this file does the whole of what
+-- util/Asset.lua does for it: disk cache → `getcustomasset`, and on a miss,
+-- `HttpGet` → magic-byte check → `writefile` → `getcustomasset`. `MARK` (the
+-- cache path), `ZOOM` and `LOGO_URL` are injected from Theme.lua / Asset.lua so
+-- this build downloads the same file to the same place the library does — a
+-- second copy under a second name would be a silent waste of a request.
 --
--- `MARK` (the cached path + the zoom) is injected rather than retyped, because
--- the path is Asset.CacheFolder plus a hash of the brand URL and all three of
--- those live in the library. If any of them changes without bundle.py keeping
--- up, the file simply isn't found and the square below shows instead — the
--- failure mode is the old behaviour, not a broken page.
+-- **This is the one network call on this page, and it was a deliberate
+-- exception to the "fetches nothing" rule**, made after the cache-only version
+-- shipped and turned out to be useless in practice: the audience for a refusal
+-- page is people the API just said no to, so the library never ran, so it never
+-- wrote the cache — the one user guaranteed *not* to have the file is the user
+-- looking at this page. The exception is narrow and safe to keep that way:
+--
+--   * It is a **static file on the art host**, never our API. The reason this
+--     page must not call home is that home is what just failed; GitHub raw
+--     isn't home, and it's where the library gets the same bytes.
+--   * It runs **off-thread and after the page is already up**. `done(false)`
+--     fires first, so the fallback mark is drawn and the page is interactive
+--     before any of this starts. A hung request costs nothing but the logo.
+--   * Every leg is guarded, and any failure just leaves the accent square that
+--     is already on screen. The PNG check is the same one Asset.lua makes, for
+--     the same reason: a 404 body written to `<name>.png` would poison the
+--     cache for the library too.
+--
+-- If the mark ever gets an uploaded `rbxassetid://`, delete all of this — an id
+-- the engine fetches itself needs no network of ours, no file access, and no
+-- exception.
 local BRAND = "Uranium" --@inject BRAND
-local MARK, ZOOM = "", 1 --@inject MARK
+local MARK, ZOOM, LOGO_URL = "", 1, "" --@inject MARK
+
+local PNG = "\137PNG\r\n\26\n"
 
 -- Never reports `true`: the square + initial stays underneath, so a path that
 -- resolves to something the engine won't render leaves the fallback mark rather
 -- than a hole. The art is a full-bleed opaque tile, so when it does render it
 -- covers the square anyway.
 local function loadLogo(image: any, done: any)
-	local content: any = nil
-	pcall(function()
-		local get = getcustomasset or getsynasset or get_custom_asset
-		if type(get) ~= "function" or MARK == "" then
-			return
-		end
-		if type(isfile) == "function" and not isfile(MARK) then
-			return
-		end
-		content = get(MARK)
-	end)
-	if type(content) == "string" and content ~= "" then
-		image.Size = UDim2.fromScale(ZOOM, ZOOM)
-		image.Image = content
-	end
 	done(false)
+	if MARK == "" then
+		return
+	end
+	task.spawn(function()
+		local content: any = nil
+		pcall(function()
+			local get = getcustomasset or getsynasset or get_custom_asset
+			if type(get) ~= "function" then
+				return
+			end
+			if type(isfile) == "function" and isfile(MARK) then
+				content = get(MARK)
+				return
+			end
+			if type(writefile) ~= "function" or LOGO_URL == "" then
+				return
+			end
+			local body = game:HttpGet(LOGO_URL)
+			if type(body) ~= "string" or string.sub(body, 1, 8) ~= PNG then
+				return
+			end
+			-- makefolder doesn't create parents, so walk the path a segment at a
+			-- time exactly like util/Asset.lua's ensureFolder.
+			if type(makefolder) == "function" and type(isfolder) == "function" then
+				local built = ""
+				for segment in string.gmatch(MARK, "[^/]+") do
+					if string.find(segment, "%.") then
+						break -- the filename, not a folder
+					end
+					built = built == "" and segment or (built .. "/" .. segment)
+					if not isfolder(built) then
+						makefolder(built)
+					end
+				end
+			end
+			writefile(MARK, body)
+			content = get(MARK)
+		end)
+		-- The page can have closed while that was in flight.
+		if type(content) == "string" and content ~= "" and image.Parent then
+			image.Size = UDim2.fromScale(ZOOM, ZOOM)
+			image.Image = content
+		end
+	end)
 end
 
 -- ── fade (util/Fade.lua, compact) ───────────────────────────────────────────

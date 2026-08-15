@@ -250,22 +250,25 @@ Five things hold it up:
   — right palette, but nothing about it said Uranium, which is strange for the
   one screen whose entire job is being the product speaking. The drop shadow is
   `--@lib`'d — the standalone traded it for the mark, which is worth more there.
-- **The mark reaches the standalone through the disk cache, not the network.**
-  `loadLogo` is a prelude name because the two builds get the art differently:
-  the library runs `Asset.load(Theme.Brand.logo)` (download → cache →
-  `getcustomasset`), while the standalone — no network, and no uploaded asset id
-  for the mark yet — does only that last leg, `getcustomasset` on the path the
-  library *already* cached the PNG at. That path (`Asset.CacheFolder` + a djb2 of
-  the brand URL) is **injected** by bundle.py, since all three inputs live in the
-  library; if any of them moves without bundle.py keeping up, the file isn't
-  found and the page draws the accent square + initial, which is exactly what it
-  did before. Anyone reading a "stale loader" or "banned" page is a returning
-  user, so that cache is usually warm — but the real fix is an uploaded
-  `rbxassetid://` in `Theme.Brand.logo`'s chain, which would make the mark
-  unconditional on every build. The fallback is never *hidden* on the standalone
-  (`done(false)` always): the art is an opaque tile that covers the square when
-  it renders, so a path that resolves to nothing leaves the square rather than a
-  hole.
+- **The standalone fetches the mark itself, and that is the one network call on
+  the page.** `loadLogo` is a prelude name because the builds reach the art
+  differently — the library runs `Asset.load(Theme.Brand.logo)`, the standalone
+  reimplements the same four steps compactly (disk → `getcustomasset`; on a miss
+  `HttpGet` → PNG magic-byte check → `writefile` → `getcustomasset`). It first
+  shipped as **cache-read only**, which was wrong in a way worth remembering:
+  the audience for a refusal page is precisely the people the API said no to, so
+  the library never ran, so it never wrote the cache — the one user guaranteed
+  not to have the file is the user looking at the page. The exception is scoped
+  so it can't rot: a *static file on the art host* (never our API — the reason
+  this page must not call home is that home is what just failed), off-thread,
+  after `done(false)` has already drawn the fallback and made the page
+  interactive, every leg pcall'd. `MARK` / `ZOOM` / `LOGO_URL` are **injected**
+  by bundle.py from `Theme.lua` + `util/Asset.lua` so both builds download the
+  same file to the same path; a mismatch would mean a second copy under a second
+  name. The fallback is never *hidden* here (`done(false)` always) — the art is
+  an opaque tile that covers the square when it lands, so anything that fails
+  leaves the square rather than a hole. An uploaded `rbxassetid://` in
+  `Theme.Brand.logo`'s chain would make all of this deletable.
 - **`Tone` tints, it doesn't repaint.** Icon chip + one hairline; the surfaces
   stay the library's own on a dimmed `chrome` backdrop, same radius and type
   scale as the window. `info` maps to the **accent**, not Notify's neutral grey
@@ -330,20 +333,23 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
   index inside the page — visible only when the page is.
 - Constraints the standalone has that the library doesn't: it must parse **inside
   a function body**, `...` (an optional service cache) is read once at the top,
-  and there is **no network and no asset fetch** — icons are `rbxassetid`
-  spritesheet slices, never an `https://` image, because the client running it
-  has just been refused by our own API. `SCREEN_ICONS` in bundle.py is the list
+  and **nothing may call our API** — the client running it has just been refused
+  by that API. Icons are `rbxassetid` spritesheet slices, never an `https://`
+  image. The single exception to the no-fetch rule is the brand mark (see the
+  `loadLogo` bullet above); hold the line there — every other asset on this page
+  is one the engine fetches for us. `SCREEN_ICONS` in bundle.py is the list
   of names the known callers pass (they reach the page through the `Icon` option
   and their `Actions`, so no literal reaches the tree-shaker; they seed
   `EXTRA_ICONS` too).
-- Size: `bundle.py` prints it every build against a 15 KB target and a 30 KB
-  ceiling. It currently lands ~29.0 KB, which is **tight** — the titlebar and the
-  mark cost ~3 KB of that and the `Input` block ~7 KB, and neither can be
-  `--@lib`'d away (the key gate is a *standalone* caller, and the branding is
-  most load-bearing on the build that shows up before the library exists). The
-  card's drop shadow was already spent to buy the mark its bytes. Watch the
-  printed size on every change here; the next feature has to buy its bytes from
-  somewhere. The remaining levers are all
+- Size: `bundle.py` prints it every build against a 15 KB target and a 34 KB
+  ceiling — that ceiling was 30 KB and was raised **once**, deliberately, when
+  the page grew a titlebar, the mark and the fetch behind it (the reasoning is
+  written out at `SCREEN_CEILING`). It lands ~29.8 KB: the `Input` block is ~7 KB
+  of that and the branding ~4 KB, and neither can be `--@lib`'d away — the key
+  gate is a *standalone* caller, and the branding is most load-bearing on the
+  build that shows up before the library exists. The card's drop shadow was
+  already spent buying the mark its bytes. Watch the printed size on every change
+  here. The remaining levers are all
   quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
   means the card pops in at full opacity over a still-dimming backdrop.
   `compact()` in bundle.py strips whole-line comments, blank lines and
