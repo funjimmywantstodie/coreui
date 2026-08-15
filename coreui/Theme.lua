@@ -41,7 +41,7 @@ local Theme = {}
 -- and reference it as `Theme.Brand.assets .. "name.png"` (or
 -- `Uranium.Asset.url("name.png")`).
 --
--- If the mark ever comes up as the accent square + a "U", check this URL first:
+-- If the mark ever comes up as the `atom` fallback glyph, check this URL first:
 -- that fallback is what a 404 looks like, and it looks identical to "no file
 -- access", so it reads as an executor problem when it's really a dead link.
 --
@@ -53,9 +53,10 @@ local Theme = {}
 -- so it sidesteps every Roblox asset rule: no moderation wait, no Asset Privacy
 -- restriction, no decal-vs-image id confusion. An uploaded asset id would be the
 -- fallback for executors with no file access — there isn't one for the Uranium
--- mark yet, so those fall through to the accent square + "U" initial. Add the id
--- here once it's uploaded; the standalone status page (ui/screen.lua) can only
--- ever use *that*, since it has no network to download a PNG over.
+-- mark yet, so those fall through to the tinted tile + Lucide `atom` glyph the
+-- titlebar draws underneath the art (components/Window.lua, components/Screen.lua)
+-- — a spritesheet slice, so it needs neither network nor file access. Add the id
+-- here once it's uploaded and every client gets the real art unconditionally.
 local ASSETS = "https://raw.githubusercontent.com/funjimmywantstodie/uranium-public/main/Assets/"
 
 Theme.Brand = {

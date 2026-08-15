@@ -501,8 +501,10 @@ whole point: this is the code that runs when everything else already failed.
 brand mark and wordmark over a `bg` body, one border, a soft shadow under it —
 the same miniature-of-the-window shape the [bind HUD](#bind-hud) takes, so a
 page that appears before any window does still reads as the same product. The
-mark is the shipped logo where it can be fetched and the accent square + brand
-initial where it can't (which is always, in the standalone build below).
+mark is the shipped logo where it can be fetched, and a tinted tile with
+Lucide's `atom` glyph — the same nucleus-and-orbits shape — where it can't. That
+fallback is a spritesheet slice, so it needs no network and no file access at
+all; it is never a letter in a green box.
 
 **Tone tints, it doesn't repaint.** Only the icon chip and the hairline take the
 colour; the surfaces stay the library's own, with the same radius, accent and
@@ -667,9 +669,9 @@ Its titlebar carries the real mark: the page does the same four steps
 `util/Asset.lua` does — disk cache → `getcustomasset`, and on a miss `HttpGet`
 the PNG from the art host, magic-byte check it, `writefile` it to the same cache
 path the library uses, then hand it over. That runs **off-thread after the page
-is already on screen**, so the accent square + brand initial is what you see
-first and the art replaces it a moment later — or never, on an executor with no
-file access, which is the whole point of drawing the fallback first. It's the one
+is already on screen**, so the `atom` fallback mark is what you see first and
+the art replaces it a moment later — or never, on an executor with no file
+access, which is the whole point of drawing a real mark first. It's the one
 network call on the page; an uploaded `rbxassetid://` in `Theme.Brand.logo`'s
 chain would remove the need for it.
 

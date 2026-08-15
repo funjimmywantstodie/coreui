@@ -262,26 +262,29 @@ return function(opts: any)
 	-- background, so the async load result can hide it with `Visible` alone.
 	-- Writing a transparency from a load callback would fight util/Fade.lua if
 	-- the asset happened to arrive mid mount/minimize fade.
+	-- The fallback is a mark, not a letter. An accent square with the brand's
+	-- initial in it is indistinguishable from "the logo failed to load" — which
+	-- is what it *was*, for every client whose executor can't fetch the art (and
+	-- for a while, for everyone, because the art URL had gone stale). Lucide's
+	-- `atom` is a nucleus crossed by two elliptical orbits: the Uranium mark's own
+	-- composition, drawn from a spritesheet the engine fetches itself, so it needs
+	-- nothing from the executor. Tinted tile + accent glyph is the `accent_soft`
+	-- pattern the active nav button uses. components/Screen.lua does the same.
 	local logoSquare = Create("Frame", {
 		Name = "Square",
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = colors.accent,
+		BackgroundColor3 = colors.accent_soft,
 		BorderSizePixel = 0,
 		Parent = logo,
 	}, {
 		Create.corner(opts.LogoRadius or Theme.Brand.radius),
 	})
 	local brandName = opts.Title or Theme.Brand.name
-	local logoFallback = Create("TextLabel", {
-		Name = "Initial",
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Text = brandName:sub(1, 1):upper(),
-		TextColor3 = colors.knockout,
-		TextSize = 17,
-		FontFace = Theme.Font.Bold,
-		Parent = logo,
-	})
+	local logoFallback = Icons.new("atom", 20, colors.accent) :: any
+	logoFallback.Name = "Glyph"
+	logoFallback.AnchorPoint = Vector2.new(0.5, 0.5)
+	logoFallback.Position = UDim2.fromScale(0.5, 0.5)
+	logoFallback.Parent = logo
 	-- Fit, not Crop: a brand mark must never lose an edge or change proportion.
 	-- Fit letterboxes non-square art inside the square holder; the zoom below is
 	-- what fills the holder, and it's a scale on both axes so it can't stretch.
@@ -679,10 +682,13 @@ return function(opts: any)
 		table.insert(connections, conn)
 	end
 
-	-- the logo's accent square is only visible behind the fallback initial, but
-	-- it still needs to track SetAccent for that case
+	-- The fallback mark is only on screen when the art hasn't loaded, but it still
+	-- has to track SetAccent for that case — the tile off `ctx.AccentSoft`, the
+	-- glyph off the accent itself, both derived on the Context so the ramp is
+	-- never recomputed here.
 	ctx:RegisterAccent(function(accent)
-		logoSquare.BackgroundColor3 = accent
+		logoSquare.BackgroundColor3 = ctx.AccentSoft
+		Icons.tint(logoFallback, accent)
 	end)
 
 	-- ── titlebar dragging ────────────────────────────────────────────────────

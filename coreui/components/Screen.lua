@@ -383,25 +383,23 @@ return function(opts: any): any
 	}, {
 		corner(7),
 	})
+	-- The fallback is a MARK, not a letter. An accent square with a "U" in it is
+	-- what a missing logo looks like, and it's what everyone without file access
+	-- was looking at; Lucide's `atom` is a nucleus crossed by two elliptical
+	-- orbits, which is the Uranium mark's own composition, and it's a spritesheet
+	-- slice — a Roblox asset the engine fetches itself, so it needs no network of
+	-- ours, no `getcustomasset`, and no executor at all. Tinted tile + accent
+	-- glyph is the palette's own `accent_soft` pattern (same as the active nav).
 	local logoSquare = new("Frame", {
 		Name = "Square",
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = C.accent,
+		BackgroundColor3 = C.accent_soft,
 		BorderSizePixel = 0,
 		Parent = logo,
 	}, {
 		corner(7),
 	})
-	local logoInitial = new("TextLabel", {
-		Name = "Initial",
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Text = string.upper(string.sub(BRAND, 1, 1)),
-		TextColor3 = C.knockout,
-		TextSize = 14,
-		FontFace = F.Bold,
-		Parent = logo,
-	})
+	local logoInitial = putIcon(logo, "atom", 16, C.accent)
 	local logoImage = new("ImageLabel", {
 		Name = "Mark",
 		BackgroundTransparency = 1,

@@ -7,7 +7,7 @@ so renaming them breaks every shipped loader. The art host is *not* pinned like
 that (one line in `Theme.lua` points at it) and has moved to the public
 **`uranium-public`** repo; the old `Krypton` raw path now **404s**, which is a
 silent failure — a dead art URL and an executor with no file access both come
-out as the accent square + "U". The rebrand is user-visible strings + palette
+out as the fallback mark. The rebrand is user-visible strings + palette
 only: window title + ScreenGui name, the `[Uranium]` log prefix, the default
 config folder (`uranium`), `Asset.CacheFolder` (`uranium/images`), the settings
 flags (`uranium_*`) and `Singleton.Key` (`_URANIUM_LOADED`). The library table is

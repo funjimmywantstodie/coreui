@@ -225,6 +225,28 @@ local MARK, ZOOM, LOGO_URL = "", 1, "" --@inject MARK
 
 local PNG = "\137PNG\r\n\26\n"
 
+-- Executor globals live on the SHARED env (`getgenv`), and a chunk the delivery
+-- worker hands to `loadstring` does not always inherit it — which is exactly how
+-- the first version of this failed: `getcustomasset` read as nil, the fetch
+-- returned before it started, and every client sat on the fallback mark. So look
+-- there first and fall back to the chunk env, the same order util/Asset.lua uses.
+-- Every step is guarded because some sandboxes throw on merely touching getgenv.
+local function g(name: string): any
+	local found: any = nil
+	pcall(function()
+		local env = getgenv and getgenv()
+		if type(env) == "table" then
+			found = env[name]
+		end
+	end)
+	if found == nil then
+		pcall(function()
+			found = (getfenv and getfenv() or _G)[name]
+		end)
+	end
+	return type(found) == "function" and found or nil
+end
+
 -- Never reports `true`: the square + initial stays underneath, so a path that
 -- resolves to something the engine won't render leaves the fallback mark rather
 -- than a hole. The art is a full-bleed opaque tile, so when it does render it
@@ -237,36 +259,49 @@ local function loadLogo(image: any, done: any)
 	task.spawn(function()
 		local content: any = nil
 		pcall(function()
-			local get = getcustomasset or getsynasset or get_custom_asset
-			if type(get) ~= "function" then
+			local get = g("getcustomasset") or g("getsynasset") or g("get_custom_asset")
+			if not get then
 				return
 			end
-			if type(isfile) == "function" and isfile(MARK) then
+			local isFile, writeFile = g("isfile"), g("writefile")
+			if isFile and isFile(MARK) then
 				content = get(MARK)
 				return
 			end
-			if type(writefile) ~= "function" or LOGO_URL == "" then
+			if not writeFile or LOGO_URL == "" then
 				return
 			end
-			local body = game:HttpGet(LOGO_URL)
+			-- `game:HttpGet` is the executor's, not the engine's, so it can be
+			-- absent where the file globals aren't; `request`/`http_request` is the
+			-- other common shape and costs four lines to accept.
+			local body: any = nil
+			pcall(function()
+				body = game:HttpGet(LOGO_URL)
+			end)
+			if type(body) ~= "string" or body == "" then
+				local req = g("request") or g("http_request")
+				local ok, res = pcall(req, { Url = LOGO_URL, Method = "GET" })
+				body = (ok and type(res) == "table") and res.Body or nil
+			end
 			if type(body) ~= "string" or string.sub(body, 1, 8) ~= PNG then
 				return
 			end
 			-- makefolder doesn't create parents, so walk the path a segment at a
 			-- time exactly like util/Asset.lua's ensureFolder.
-			if type(makefolder) == "function" and type(isfolder) == "function" then
+			local makeFolder, isFolder = g("makefolder"), g("isfolder")
+			if makeFolder and isFolder then
 				local built = ""
 				for segment in string.gmatch(MARK, "[^/]+") do
 					if string.find(segment, "%.") then
 						break -- the filename, not a folder
 					end
 					built = built == "" and segment or (built .. "/" .. segment)
-					if not isfolder(built) then
-						makefolder(built)
+					if not isFolder(built) then
+						makeFolder(built)
 					end
 				end
 			end
-			writefile(MARK, body)
+			writeFile(MARK, body)
 			content = get(MARK)
 		end)
 		-- The page can have closed while that was in flight.
