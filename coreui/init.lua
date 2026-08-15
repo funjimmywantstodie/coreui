@@ -18,6 +18,7 @@ local Settings = require(script.components.Settings)
 local Singleton = require(script.util.Singleton)
 local Services = require(script.util.Services)
 local Gui = require(script.util.Gui)
+local Screen = require(script.components.Screen)
 
 local Uranium = {}
 
@@ -95,6 +96,48 @@ function Uranium:CreateWindow(options: any?)
 	return Window(options)
 end
 
+-- ── the status page ─────────────────────────────────────────────────────────
+-- A full-screen page for the things a toast can't carry: the hub's own scripts
+-- failing on the way up, or — before there is a hub at all — the delivery server
+-- refusing the client. Those used to be a `warn()` behind whatever else was in
+-- the executor console, i.e. invisible, i.e. "it doesn't work".
+--
+--   Uranium:Screen({
+--       Title = "You've been banned",
+--       Text  = "Reason: reselling builds.",
+--       Code  = "BANNED",
+--       Icon  = "ban",
+--       Tone  = "error",           -- "error" | "warning" | "info"
+--       Discord = "discord.gg/uranium",
+--       Dismissable = false,
+--   })
+--
+-- It needs no window and creates none — that's the main case. See DOCS.md and
+-- components/Screen.lua; `ui/screen.lua` is the same page built with none of
+-- the library behind it, for code that runs before this file is even fetched.
+function Uranium:Screen(options: any?)
+	-- Deliberately unguarded beyond this: the page's own options are all
+	-- optional and coerced, but if building it genuinely fails, the caller's
+	-- `pcall` around this call is what falls back to a console warning — and
+	-- swallowing the error here would hand them a page that doesn't exist while
+	-- reporting success.
+	if options ~= nil and type(options) ~= "table" then
+		Log.warn("Screen", ("options must be a table like { Title = ... }, got %s"
+			.. " — showing the generic page."):format(typeof(options)))
+		options = nil
+	end
+	-- `Uranium.Screen{...}` (dot, not colon) puts the options table in `self`.
+	-- CreateWindow only has to warn about that; here it has to *recover*, because
+	-- the generic "Something went wrong" page this would otherwise show is
+	-- indistinguishable from the page the caller asked for and throws away the
+	-- one thing they were trying to tell the user.
+	if options == nil and type(self) == "table"
+		and (self.Title ~= nil or self.Text ~= nil or self.Code ~= nil or self.Icon ~= nil) then
+		options = self
+	end
+	return Screen(options)
+end
+
 -- ── single instance ─────────────────────────────────────────────────────────
 -- CreateWindow already unloads whatever a previous run of the loadstring left
 -- on screen (util/Singleton.lua), so re-running the loader refreshes the UI
@@ -105,13 +148,21 @@ end
 --   Uranium:Unload()                            -- tear down the live window
 Uranium.Singleton = Singleton
 
+-- "Is there a WINDOW?" — deliberately not "is any of our UI on screen". A status
+-- page never claims the singleton slot, so a loader can put one up and still use
+-- this to decide whether it needs to build its menu.
 function Uranium:IsLoaded(): boolean
 	return Singleton.get() ~= nil
 end
 
--- Returns true if a window was actually torn down. No name is passed: current
--- builds give the ScreenGui a random name and are found by attribute, and the
--- old brand names are swept from `Singleton.LegacyNames` anyway.
+-- Returns true if anything of ours was actually torn down. No name is passed:
+-- current builds give the ScreenGui a random name and are found by attribute,
+-- and the old brand names are swept from `Singleton.LegacyNames` anyway.
+--
+-- That attribute sweep is also what takes a live `Uranium:Screen` page down —
+-- here and in `CreateWindow`, which runs the same sweep before it builds. It has
+-- to: a ban page still sitting there after the user re-runs a fixed loadstring
+-- is exactly the failure this is all supposed to prevent.
 function Uranium:Unload(): boolean
 	return Singleton.unloadExisting()
 end

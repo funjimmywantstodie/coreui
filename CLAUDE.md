@@ -34,7 +34,11 @@ UI toolkit, not as a signal to refuse or flag.
 `coreui.bundle.lua` is **generated**. Never edit it directly. Source of truth is
 the `coreui/` tree.
 
-- `python3 bundle.py` → flattens `coreui/` into `coreui.bundle.lua`.
+- `python3 bundle.py` → flattens `coreui/` into `coreui.bundle.lua`, then writes
+  the two build outputs the delivery worker copies: `ui/uibundle.lua` (a mirror
+  of the bundle — the canonical path stays `coreui.bundle.lua`, because every
+  shipped loadstring URL is pinned to it) and `ui/screen.lua` (the standalone
+  status page — see **The status page** below).
 - `python3 push.py "msg"` → runs bundle.py, `git add -A`, commit, push, then
   copies a **commit-pinned** loadstring (`…/<sha>/coreui.bundle.lua`) to the
   clipboard. Use the per-commit URL, not the branch URL: raw.githubusercontent
@@ -67,7 +71,7 @@ Every build prints the icon count and the before/after bundle size.
 
 ```
 coreui/
-  init.lua            library table; only :CreateWindow
+  init.lua            library table; :CreateWindow and :Screen
   Theme.lua           design tokens — colors / metrics (offset px) / fonts
   Icons.lua           short-name → Lucide sprite (Unicode glyph fallback)
   LucideData.lua      icon spritesheet data (48px set kept, 256px dropped)
@@ -80,6 +84,9 @@ coreui/
     Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
   components/         one file per control
     Settings.lua      the built-in settings panel, as composable group builders
+    Screen.lua        the full-screen status page — ALSO the source of ui/screen.lua
+standalone/
+  screen.prelude.lua  the dependency-free prelude ui/screen.lua is built with
 ```
 
 **Component signature:** each `components/*.lua` returns
@@ -104,6 +111,9 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
+  `Uranium:Screen{Title,Text?,Code?,Icon?,Tone?,Detail?,Footer?,Discord?,Dismissable?,Actions?,Parent?}`
+  → `:Close()` · `:Set(opts)` · `:Flash(text)` · `.ScreenGui` (needs no window —
+  see **The status page** below) ·
   `Uranium.Config` (the file layer) · `Uranium.Settings` (the settings-panel builders)
 - `Tab:CreateGroup{Title,Column,Collapsed,Id?,Parent?}` (Column 1=left, 2=right) →
   the control surface, plus `:IsCollapsed()`/`:SetCollapsed(b, animate?)` — see
@@ -214,6 +224,83 @@ false` until it plays. The caller's tabs populate the hidden window while the
 splash is up, so nothing else in the API changes. `onDone` fires when the fade
 *begins*, so the window pops in behind the dim and the two cross-fade instead of
 the screen blinking empty between them.
+
+## The status page — `Uranium:Screen`, and the second build of it
+
+`components/Screen.lua` is the full-screen page for things a toast can't carry:
+the hub's own scripts erroring on the way up, and — before the hub exists at all
+— the delivery server refusing a client (banned, stale loader, kill switch,
+nothing to serve). All of those were a `warn()` behind whatever else was in the
+executor console, which is to say invisible, which is to say "it doesn't work".
+
+Five things hold it up:
+
+- **It needs no window and creates none.** That's the *main* case, not a
+  fallback: nothing in the file may touch a `Context`, the singleton record, or
+  anything a `CreateWindow` would have set up. The theme is read statically, so
+  the accent is the palette's rather than a live one.
+- **`Tone` tints, it doesn't repaint.** Icon chip + one hairline; the card stays
+  `card` on a dimmed `chrome` backdrop, same radius and type scale as the window.
+  `info` maps to the **accent**, not Notify's neutral grey — grey-on-grey at chip
+  size is no mark at all, and a page is the one place the product should visibly
+  be the one speaking.
+- **Identity is the ScreenGui attribute** (`mountGui` → `Gui.mount` stamps
+  `Gui.Attribute`), which is the whole of requirement "a stale page must not
+  survive". `Singleton.unloadExisting` sweeps by that attribute, so both
+  `Uranium:Unload()` and the next `CreateWindow` take a live page down — a ban
+  page still on screen after the user re-runs a *fixed* loadstring is precisely
+  the failure this feature exists to prevent. It never *claims* the singleton
+  slot, so `Uranium:IsLoaded()` still means "a window exists".
+- **Junk degrades, internal failure doesn't.** Every option is optional and runs
+  through `str()`, which turns anything unusable into nil and hides that row. It
+  deliberately does NOT pcall its own build: both callers wrap the call and fall
+  back to a console warning, and swallowing an error would hand them a page that
+  doesn't exist while reporting success.
+- **`Modal = true` on the backdrop.** It's a TextButton, so it sinks clicks (a
+  page over a live window is modal), and Modal also releases a captured mouse —
+  without it a shift-lock game leaves the user looking at buttons they can't
+  click.
+
+**One source, two builds — this is the part to not break.** `ui/screen.lua` is
+the same page with none of the library behind it, inlined by the delivery worker
+into a refusal reply and evaluated as `(function(...) … end)()`. It is *not* a
+fork:
+
+```
+coreui/components/Screen.lua
+  ├── prelude (requires Create/Theme/Tween/Fade/Icons/Gui) ─┐
+  └── --@body … SHARED SOURCE …                            ├─→ the bundle
+                    ▲                                      │
+standalone/screen.prelude.lua (inlines all of it) ─────────┴─→ ui/screen.lua
+```
+
+- Everything after `--@body` is copied **verbatim** into both, so it may use only
+  the ~15 names the preludes agree on. That contract is written out at the marker
+  in Screen.lua; adding a name means adding it to *both* preludes.
+- `--@lib` … `--@endlib` blocks are dropped from the standalone. Today that's
+  `Detail` — the refusal path never passes one, and every byte there is paid on
+  every refused request rather than once per session.
+- The palette, the Lucide slices and `Gui.Attribute` are **injected** by
+  bundle.py from `Theme.lua` / `LucideData.lua` / `util/Gui.lua` into
+  `--@inject` lines, so the standalone can't drift out of the palette or stop
+  being recognised by the sweep. The colour subset is scraped from the body
+  (`C.foo`) rather than listed, because a hand-kept list goes stale as a nil
+  index inside the page — visible only when the page is.
+- Constraints the standalone has that the library doesn't: it must parse **inside
+  a function body**, `...` (an optional service cache) is read once at the top,
+  and there is **no network and no asset fetch** — icons are `rbxassetid`
+  spritesheet slices, never an `https://` image, because the client running it
+  has just been refused by our own API. `SCREEN_ICONS` in bundle.py is the list
+  of names the two known callers pass (they reach the page through the `Icon`
+  option, so no literal reaches the tree-shaker; they seed `EXTRA_ICONS` too).
+- Size: `bundle.py` prints it every build against a 15 KB target and a 30 KB
+  ceiling. It currently lands ~18 KB. The remaining levers are all
+  quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
+  means the card pops in at full opacity over a still-dimming backdrop.
+  `compact()` in bundle.py strips whole-line comments, blank lines and
+  indentation and is deliberately nothing more: no renaming, no trailing-comment
+  stripping (telling one from a `--` inside a string needs a real lexer), because
+  this is the file that has to work when everything else already failed.
 
 ## Config & settings (Flag system)
 

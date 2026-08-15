@@ -129,11 +129,17 @@ Window                         Uranium:CreateWindow{...}
 │       ├── Section            Group:Section{...}        -- nested, collapsible
 │       └── controls           Group:Toggle{...}, :Slider{...}, …
 └── Settings Tab               Window:CreateSettingsTab()
+
+Screen                         Uranium:Screen{...}       -- needs no window
 ```
 
 Controls are added to a **Group** (or a **Section** inside a group). A Group is a
 titled card; Sections are indented, collapsible sub-blocks. Both expose the same
 control methods.
+
+[`Screen`](#screen-status-page) is the exception to all of that: a
+full-screen page for something that has to be read, built without a window and
+usable when there will never be one.
 
 ---
 
@@ -286,6 +292,10 @@ Window:Notify({
 It is case-insensitive and `"warn"` aliases `"warning"`. Omit `Type` (or pass
 anything unrecognized) for the original accent-colored toast with no icon.
 
+A toast is for something the user may miss. For something they must not — the
+hub failing to load, a ban — use [`Uranium:Screen`](#screen-status-page),
+which needs no window at all.
+
 ### Bind HUD
 
 A small draggable panel that answers *"what's on right now?"* without opening the
@@ -424,6 +434,119 @@ hud:Destroy()
 The HUD is captured by config save/load under the flag `uranium_hud` (whether
 it's up, whether it's collapsed, and where you dragged it), so a saved config
 puts it back exactly where you left it.
+
+---
+
+## Screen (status page)
+
+A toast needs a window, and a window needs everything to have worked. `Screen`
+is for the other case: a full-screen page for something the user has to read,
+shown **with or without a window** — the hub's own scripts erroring on the way
+up, a loader that's out of date, a ban. Those used to be a `warn()` behind
+whatever else was in the executor console, which is to say invisible.
+
+```lua
+local page = Uranium:Screen({
+    Title       = "You've been banned",         -- default "Something went wrong"
+    Text        = "Reason: reselling builds.",  -- body copy, wraps
+    Code        = "BANNED",                     -- small mono line under the title
+    Icon        = "ban",                        -- Lucide name (default "triangle-alert")
+    Tone        = "error",                      -- "error" | "warning" | "info"
+    Detail      = debug.traceback(),            -- folded away behind "Details"
+    Footer      = "Uranium · build 2026-08-15", -- small muted line at the bottom
+    Discord     = "discord.gg/uranium",         -- adds a Copy button + selectable text
+    Dismissable = true,                         -- default true (Esc + a × button)
+    Parent      = someInstance,                 -- same meaning as CreateWindow.Parent
+    Actions     = {
+        { Label = "Reload", Icon = "refresh-cw", Primary = true,
+          Close = true, Callback = function(page) Hub:Reload() end },
+    },
+})
+```
+
+```
+        ┌──────────────────────────────────────────┐
+        │  ┌────┐                               ×  │
+        │  │ ⛔ │                                  │   ← chip takes the tone colour
+        │  └────┘                                  │
+        │  You've been banned                      │
+        │  BANNED                                  │
+        │  ────────────────────────────────────────│   ← hairline, same tone
+        │  Reason: reselling builds.               │
+        │  ┌──────────────────────────────────────┐│
+        │  │ 💬  discord.gg/uranium               ││   ← selectable, not editable
+        │  └──────────────────────────────────────┘│
+        │  ▸ Details                               │
+        │  [ Reload ]  [ Copy Discord ]            │
+        │  Copied discord.gg/uranium               │   ← the flash line, ~3s
+        │  ──────────────────────────────────────  │
+        │  Uranium · build 2026-08-15              │
+        └──────────────────────────────────────────┘
+```
+
+| Method | |
+|---|---|
+| `page:Close()` | Fade out and destroy. |
+| `page:Set(opts)` | Patch any of the options above, in place. |
+| `page:Flash(text)` | Transient status line under the buttons (~3s). |
+| `page.ScreenGui` | The `ScreenGui`, if you want to re-parent it yourself. |
+
+Everything is optional and nothing here throws on junk input — a value that
+isn't usable text hides its own row and the page still comes up. That's the
+whole point: this is the code that runs when everything else already failed.
+
+**Tone tints, it doesn't repaint.** Only the icon chip and the hairline take the
+colour; the card stays the library's dark surface, with the same radius, accent
+and type scale as the window. `"error"` is red, `"warning"` amber, `"info"` the
+accent (Notify's neutral grey vanishes at this size).
+
+**`Discord` is an option, not an action you build.** Give it an invite and the
+page grows a *Copy Discord* button after your own `Actions` (and becomes the
+accent button if you passed none), which copies via `setclipboard` and flashes a
+confirmation. The invite is also on the page as selectable text, so an executor
+with no clipboard still hands the user something they can read out.
+
+**Actions** get the page handle as their argument. `Primary = true` picks the
+accent button; `Close` defaults to `true`, so a button dismisses the page unless
+you say otherwise.
+
+**`Dismissable = false`** removes Esc and the × — the only way out is re-running
+the loadstring. That's deliberate for a ban.
+
+Only one page exists at a time: a second `Uranium:Screen` replaces the first, and
+both `Uranium:Unload()` and the next `CreateWindow` take a live page down with
+them (a stale ban page still on screen after the user re-runs a *fixed* loader is
+the failure this exists to prevent). A page never claims the singleton slot, so
+`Uranium:IsLoaded()` keeps meaning *"is there a window"*.
+
+### Before the library exists: `ui/screen.lua`
+
+The same page is built a second time as a standalone artifact with **no
+dependency on the rest of the library** — for code that has to explain itself
+*before* `coreui.bundle.lua` is ever fetched, which is exactly the case a
+delivery server refusing a client is in. The chunk's value is the function:
+
+```lua
+local ok, show = pcall(function() return (function(...)
+    -- contents of ui/screen.lua
+end)() end)
+if ok and type(show) == "function" and pcall(show, {
+    Title = "Outdated loader",
+    Text  = "This loadstring is from an older release. Grab a fresh one.",
+    Code  = "OUTDATED",
+    Icon  = "download",
+    Tone  = "warning",
+    Discord = "discord.gg/uranium",
+}) then
+    return
+end
+warn("[Uranium] outdated loader") -- fall back if the page couldn't be shown
+```
+
+It takes the same options minus `Detail`, parents its own `ScreenGui`
+(`gethui` → `CoreGui` → `PlayerGui`, each guarded), fetches nothing over the
+network, and is generated by `bundle.py` from the *same source* as
+`Uranium:Screen` — see CLAUDE.md for how the two builds share one body.
 
 ---
 
