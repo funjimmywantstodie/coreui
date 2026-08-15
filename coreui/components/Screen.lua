@@ -591,24 +591,40 @@ return function(opts: any): any
 			AutomaticSize = Enum.AutomaticSize.X,
 			Size = UDim2.fromOffset(0, 34),
 			BackgroundColor3 = base,
-			Text = label,
-			TextColor3 = primary and C.knockout or C.text,
-			TextSize = 13,
-			FontFace = F.Medium,
+			Text = "",
 			Parent = actions,
 		}, {
 			corner(8),
-			-- Extra left padding when there's an icon: the glyph is positioned
-			-- into that gutter, so the label still centres in what's left.
-			pad(0, 14, 0, icon and 32 or 14),
+			pad(0, 14, 0, 14),
+			-- Icon + label are laid out as a row rather than the icon being
+			-- absolutely positioned into a wider left padding: a UIPadding shifts
+			-- the button's CHILDREN too, so that gutter moved the glyph *and* the
+			-- text by the same amount and the two drew on top of each other.
+			list({
+				FillDirection = Enum.FillDirection.Horizontal,
+				HorizontalAlignment = Enum.HorizontalAlignment.Center,
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				Padding = UDim.new(0, 8),
+			}),
 			new("UISizeConstraint", { MinSize = Vector2.new(76, 34) }),
 		})
 		if icon then
 			local bi: any = newIcon(icon, 14, primary and C.knockout or C.text_muted)
-			bi.AnchorPoint = Vector2.new(0, 0.5)
-			bi.Position = UDim2.new(0, 11, 0.5, 0)
+			bi.LayoutOrder = 1
 			bi.Parent = btn
 		end
+		new("TextLabel", {
+			Name = "Label",
+			BackgroundTransparency = 1,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 34),
+			Text = label,
+			TextColor3 = primary and C.knockout or C.text,
+			TextSize = 13,
+			FontFace = F.Medium,
+			LayoutOrder = 2,
+			Parent = btn,
+		})
 		btn.MouseEnter:Connect(function()
 			tw(btn, TW.Fast, { BackgroundColor3 = over })
 		end)
