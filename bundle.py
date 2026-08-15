@@ -305,6 +305,17 @@ def screen_colors(used):
     return ",".join(f'{name}=Color3.fromHex("{have[name]}")' for name in sorted(used))
 
 
+def screen_brand():
+    """Theme.Brand.name, for the standalone page's wordmark — same reason the
+    palette is injected rather than retyped: this build has to keep saying what
+    the library says it's called."""
+    src = _read(os.path.join(ROOT, "Theme.lua"))
+    m = re.search(r'Theme\.Brand\s*=\s*\{[^}]*?\bname\s*=\s*"([^"]+)"', src, re.S)
+    if not m:
+        sys.exit("error: couldn't read Theme.Brand.name for the standalone page")
+    return m.group(1)
+
+
 def screen_attribute():
     """util/Gui.lua's identity attribute, so the singleton sweep in a later
     library load finds and clears a stale standalone page."""
@@ -332,6 +343,7 @@ def build_screen(version):
         "COLORS": "local C = {" + screen_colors(colors) + "}",
         "ICONS": "local ICONS = {" + screen_icons(icons) + "}",
         "ATTR": f'local ATTR = "{screen_attribute()}"',
+        "BRAND": f'local BRAND = "{screen_brand()}"',
     }
     seen = set()
     lines = []

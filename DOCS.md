@@ -467,11 +467,11 @@ local page = Uranium:Screen({
 
 ```
         ┌──────────────────────────────────────────┐
-        │  ┌────┐                               ×  │
-        │  │ ⛔ │                                  │   ← chip takes the tone colour
+        │ ▣  U R A N I U M                      ×  │   ← chrome titlebar: the mark
+        ├──────────────────────────────────────────┤     + wordmark, like the window
+        │  ┌────┐  You've been banned              │
+        │  │ ⛔ │  BANNED                          │   ← chip takes the tone colour
         │  └────┘                                  │
-        │  You've been banned                      │
-        │  BANNED                                  │
         │  ────────────────────────────────────────│   ← hairline, same tone
         │  Reason: reselling builds.               │
         │  ┌──────────────────────────────────────┐│
@@ -497,9 +497,16 @@ Everything is optional and nothing here throws on junk input — a value that
 isn't usable text hides its own row and the page still comes up. That's the
 whole point: this is the code that runs when everything else already failed.
 
+**The card is a small window.** Window radius, a chrome titlebar carrying the
+brand mark and wordmark over a `bg` body, one border, a soft shadow under it —
+the same miniature-of-the-window shape the [bind HUD](#bind-hud) takes, so a
+page that appears before any window does still reads as the same product. The
+mark is the shipped logo where it can be fetched and the accent square + brand
+initial where it can't (which is always, in the standalone build below).
+
 **Tone tints, it doesn't repaint.** Only the icon chip and the hairline take the
-colour; the card stays the library's dark surface, with the same radius, accent
-and type scale as the window. `"error"` is red, `"warning"` amber, `"info"` the
+colour; the surfaces stay the library's own, with the same radius, accent and
+type scale as the window. `"error"` is red, `"warning"` amber, `"info"` the
 accent (Notify's neutral grey vanishes at this size).
 
 **`Discord` is an option, not an action you build.** Give it an invite and the

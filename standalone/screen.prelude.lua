@@ -20,9 +20,10 @@
 --   * No library, no globals from the hub, no singleton, no `require`.
 --
 -- Lines tagged `--@inject NAME` are REPLACED WHOLE by bundle.py with values
--- pulled out of the library source, so the palette, the icon slices and the
--- ScreenGui identity attribute can't drift from Theme.lua / LucideData.lua /
--- util/Gui.lua. They're written as valid Lua here so the file still parses.
+-- pulled out of the library source, so the palette, the icon slices, the brand
+-- name and the ScreenGui identity attribute can't drift from Theme.lua /
+-- LucideData.lua / util/Gui.lua. They're written as valid Lua here so the file
+-- still parses.
 
 local passed = ...
 
@@ -183,6 +184,16 @@ local function tintIcon(icon: any, color: any)
 		icon.TextColor3 = color
 	end
 end
+
+-- ── the brand mark ──────────────────────────────────────────────────────────
+-- `BRAND` is injected from Theme.lua so this build's wordmark can't drift from
+-- the library's. There is no ART here and there can't be: this page exists
+-- because our own API just refused this client, so there is no network to fetch
+-- the logo PNG over and no uploaded asset id standing in for it. The body's
+-- image layer (and the `loadLogo` the library prelude supplies for it) is
+-- therefore inside a `--@lib` region, and the accent square + brand initial
+-- drawn underneath it IS the logo on this build.
+local BRAND = "Uranium" --@inject BRAND
 
 -- ── fade (util/Fade.lua, compact) ───────────────────────────────────────────
 -- Same contract and the same reason it isn't a CanvasGroup: a group rasterizes

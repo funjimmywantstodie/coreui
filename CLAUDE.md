@@ -240,11 +240,20 @@ Five things hold it up:
   fallback: nothing in the file may touch a `Context`, the singleton record, or
   anything a `CreateWindow` would have set up. The theme is read statically, so
   the accent is the palette's rather than a live one.
-- **`Tone` tints, it doesn't repaint.** Icon chip + one hairline; the card stays
-  `card` on a dimmed `chrome` backdrop, same radius and type scale as the window.
-  `info` maps to the **accent**, not Notify's neutral grey — grey-on-grey at chip
-  size is no mark at all, and a page is the one place the product should visibly
-  be the one speaking.
+- **The card is a miniature of the window**, the same way the bind HUD is: a
+  chrome titlebar (brand mark + wordmark + ✕) over a `bg` body, one border,
+  window radius, a soft shadow, and the tone chip sitting *beside* the title
+  rather than alone on a row above it. It used to be a lone `card`-coloured box
+  — right palette, but nothing about it said Uranium, which is strange for the
+  one screen whose entire job is being the product speaking. The mark is
+  `Theme.Brand.logo` where it can be fetched and the accent square + initial
+  where it can't — which is **always** in the standalone build, so the image
+  layer and the prelude's `loadLogo` are inside a `--@lib` region.
+- **`Tone` tints, it doesn't repaint.** Icon chip + one hairline; the surfaces
+  stay the library's own on a dimmed `chrome` backdrop, same radius and type
+  scale as the window. `info` maps to the **accent**, not Notify's neutral grey
+  — grey-on-grey at chip size is no mark at all, and a page is the one place the
+  product should visibly be the one speaking.
 - **Identity is the ScreenGui attribute** (`mountGui` → `Gui.mount` stamps
   `Gui.Attribute`), which is the whole of requirement "a stale page must not
   survive". `Singleton.unloadExisting` sweeps by that attribute, so both
@@ -295,10 +304,11 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
 - `--@lib` … `--@endlib` blocks are dropped from the standalone. Today that's
   `Detail` — the refusal path never passes one, and every byte there is paid on
   every refused request rather than once per session.
-- The palette, the Lucide slices and `Gui.Attribute` are **injected** by
-  bundle.py from `Theme.lua` / `LucideData.lua` / `util/Gui.lua` into
-  `--@inject` lines, so the standalone can't drift out of the palette or stop
-  being recognised by the sweep. The colour subset is scraped from the body
+- The palette, the Lucide slices, `Theme.Brand.name` (the wordmark) and
+  `Gui.Attribute` are **injected** by bundle.py from `Theme.lua` /
+  `LucideData.lua` / `util/Gui.lua` into `--@inject` lines, so the standalone
+  can't drift out of the palette, start calling the product something else, or
+  stop being recognised by the sweep. The colour subset is scraped from the body
   (`C.foo`) rather than listed, because a hand-kept list goes stale as a nil
   index inside the page — visible only when the page is.
 - Constraints the standalone has that the library doesn't: it must parse **inside
@@ -310,9 +320,12 @@ standalone/screen.prelude.lua (inlines all of it) ─────────┴
   and their `Actions`, so no literal reaches the tree-shaker; they seed
   `EXTRA_ICONS` too).
 - Size: `bundle.py` prints it every build against a 15 KB target and a 30 KB
-  ceiling. It currently lands ~26 KB — the `Input` block is ~7 KB of that, and it
-  can't be `--@lib`'d away, because the key gate is a *standalone* caller. The
-  remaining levers are all
+  ceiling. It currently lands ~28.9 KB, which is **tight** — the titlebar and the
+  mark cost ~3 KB of that and the `Input` block ~7 KB, and neither can be
+  `--@lib`'d away (the key gate is a *standalone* caller, and the branding is
+  most load-bearing on the build that shows up before the library exists). Watch
+  the printed size on every change here; the next feature likely has to buy its
+  bytes from somewhere. The remaining levers are all
   quality-for-bytes — the shared `Fade` (~2 KB) is the big one, and dropping it
   means the card pops in at full opacity over a still-dimming backdrop.
   `compact()` in bundle.py strips whole-line comments, blank lines and
