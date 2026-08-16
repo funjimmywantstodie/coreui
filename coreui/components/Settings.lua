@@ -21,6 +21,7 @@
 
 local Theme = require(script.Parent.Parent.Theme)
 local Log = require(script.Parent.Parent.util.Log)
+local Signal = require(script.Parent.Parent.util.Signal)
 
 local Settings = {}
 
@@ -217,21 +218,18 @@ function Settings.ConfigGroup(window: any, tab: any, opts: any?): any
 	-- polling `List:Get()`: `controls` handed back the box and the dropdown but no
 	-- event. A watcher that writes the box wins over the prefill above, and what it
 	-- wrote becomes the new `filled`, so the next pick isn't mistaken for typing.
-	local watchers: { (string?) -> () } = {}
+	local watchers = Signal.new() :: any
 	local lastPick: string? = nil
 	local function fireSelect(name: string?)
-		if #watchers == 0 then
+		if watchers:Count() == 0 then
 			return
 		end
 		local before = nameBox:Get()
-		for _, fn in table.clone(watchers) do
-			local ok, err = pcall(fn, name)
-			if not ok then
-				-- A host's bookkeeping blowing up doesn't take the pick down with it,
-				-- same contract as OnFlagChanged's watchers.
-				Log.warn("Settings.OnSelect", tostring(err))
-			end
-		end
+		-- Guarded: a host's bookkeeping blowing up doesn't take the pick down with
+		-- it, same contract as OnFlagChanged's watchers.
+		watchers:FireGuarded(function(err)
+			Log.warn("Settings.OnSelect", tostring(err))
+		end, name)
 		local after = nameBox:Get()
 		if after ~= before then
 			filled = after
@@ -359,15 +357,7 @@ function Settings.ConfigGroup(window: any, tab: any, opts: any?): any
 	-- No initial call — there's nothing selected when this returns. Returns an
 	-- unsubscribe, like the window's own watchers.
 	controls.OnSelect = function(fn: (string?) -> ()): () -> ()
-		table.insert(watchers, fn)
-		return function()
-			for i = #watchers, 1, -1 do
-				if watchers[i] == fn then
-					table.remove(watchers, i)
-					break
-				end
-			end
-		end
+		return watchers:Connect(fn)
 	end
 	controls.Refresh = refresh
 	controls.Save = save

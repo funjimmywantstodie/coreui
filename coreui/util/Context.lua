@@ -12,6 +12,7 @@ local Tween = require(script.Parent.Tween)
 local Fade = require(script.Parent.Fade)
 local Log = require(script.Parent.Log)
 local Bind = require(script.Parent.Bind)
+local Signal = require(script.Parent.Signal)
 
 local Context = {}
 Context.__index = Context
@@ -28,12 +29,17 @@ export type Context = typeof(setmetatable(
 		Flags: { [string]: { handle: any, kind: string } },
 		Groups: { { key: string, handle: any } },
 		_groupKeys: { [string]: boolean },
-		_consumers: { (Color3, Color3) -> () },
-		_flagWatchers: { (string, string) -> () },
-		_valueWatchers: { (string, any, string, string) -> () },
+		-- Four watcher registries, all util/Signal.lua. Each one's contract (does
+		-- it replay? is it guarded? is it synchronous?) is on its Register/On
+		-- method below; the shared mechanics — unsubscribe, and firing over a
+		-- snapshot so a listener may unsubscribe itself mid-broadcast — are the
+		-- Signal's.
+		_consumers: Signal.Signal<Color3, Color3>,
+		_flagWatchers: Signal.Signal<string, string>,
+		_valueWatchers: Signal.Signal<string, any, string, string>,
 		_lastEncoded: { [string]: any },
 		_source: string,
-		_windowState: { () -> () },
+		_windowState: Signal.Signal<>,
 		_popover: {
 			menu: Instance,
 			catcher: Instance,
@@ -91,15 +97,15 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		-- `uranium_window` flag; nothing else reads it.
 		Groups = {},
 		_groupKeys = {},
-		_consumers = {},
-		_flagWatchers = {},
-		_valueWatchers = {},
+		_consumers = Signal.new(),
+		_flagWatchers = Signal.new(),
+		_valueWatchers = Signal.new(),
 		_lastEncoded = {},
 		-- Where the change currently being applied came from. "code" is the
 		-- resting state (a programmatic :Set); the two interesting cases push
 		-- their own over it — see WithSource.
 		_source = "code",
-		_windowState = {},
+		_windowState = Signal.new(),
 		_popover = nil,
 		_capturing = 0,
 	}, Context)
@@ -130,17 +136,9 @@ end
 -- teardown or their dead closures pile up in the registry and fire on every
 -- SetAccent forever.
 function Context:RegisterAccent(fn: (Color3, Color3) -> ()): () -> ()
-	table.insert(self._consumers, fn)
-	fn(self.Accent, self.AccentHover)
-	return function()
-		local list = self._consumers
-		for i = #list, 1, -1 do
-			if list[i] == fn then
-				table.remove(list, i)
-				break
-			end
-		end
-	end
+	local unsubscribe = self._consumers:Connect(fn)
+	fn(self.Accent, self.AccentHover) -- the initial paint; Signal never replays
+	return unsubscribe
 end
 
 -- The three derived weights for an ARBITRARY colour, in the same order the live
@@ -158,13 +156,11 @@ function Context:SetAccent(color: Color3)
 	self.AccentHover = hover(color)
 	self.AccentFill = fill(color)
 	self.AccentSoft = soft(self.Theme, color)
-	-- Walk a snapshot: RegisterAccent's unsubscriber does a table.remove, and a
-	-- consumer that drops (or adds) one mid-broadcast would shift the array out
-	-- from under the loop and skip the next control's re-theme. Same reason
-	-- util/Bind.lua clones before notifying its observers.
-	for _, fn in table.clone(self._consumers) do
-		fn(self.Accent, self.AccentHover)
-	end
+	-- Unguarded on purpose: these are the library's own re-theme callbacks, not a
+	-- host's, so one throwing is our bug and should surface rather than be logged
+	-- and stepped over. (Firing over a snapshot — so a consumer may unsubscribe
+	-- itself mid-broadcast without skipping the next control — is Signal's job.)
+	self._consumers:Fire(self.Accent, self.AccentHover)
 end
 
 -- ── Flags / config ──────────────────────────────────────────────────────────
@@ -451,16 +447,7 @@ end
 -- on the one that caused the change — fine to yield in, never a reason to
 -- assume you're still inside the click handler.
 function Context:OnFlagChanged(fn: (string, any, string, string) -> ()): () -> ()
-	table.insert(self._valueWatchers, fn)
-	return function()
-		local list = self._valueWatchers
-		for i = #list, 1, -1 do
-			if list[i] == fn then
-				table.remove(list, i)
-				break
-			end
-		end
-	end
+	return self._valueWatchers:Connect(fn)
 end
 
 -- Run `fn` with changes attributed to `source`. The tag is dynamically scoped
@@ -507,7 +494,7 @@ function Context:NotifyFlag(name: string, source: string?)
 	-- is harmless — it holds the last value we *reported*, so the first
 	-- notification after a watcher appears compares against that and fires iff
 	-- something really did change in between, which is the honest answer.
-	if #self._valueWatchers == 0 then
+	if self._valueWatchers:Count() == 0 then
 		return
 	end
 	local ok, encoded = encodeFlag(name, entry, "OnFlagChanged")
@@ -519,15 +506,13 @@ function Context:NotifyFlag(name: string, source: string?)
 	end
 	self._lastEncoded[name] = freeze(encoded)
 	local from = source or self._source
-	for _, fn in table.clone(self._valueWatchers) do
-		local okWatcher, err = pcall(fn, name, encoded, entry.kind, from)
-		if not okWatcher then
-			-- Same rule as OnFlag: a host's bookkeeping blowing up must not take the
-			-- control that moved down with it.
-			Log.warn("OnFlagChanged", ('watcher errored for flag "%s" (%s): %s')
-				:format(name, entry.kind, tostring(err)))
-		end
-	end
+	-- Guarded: same rule as OnFlag — a host's bookkeeping blowing up must not take
+	-- the control that moved down with it, nor stop the remaining watchers hearing
+	-- about it.
+	self._valueWatchers:FireGuarded(function(err)
+		Log.warn("OnFlagChanged", ('watcher errored for flag "%s" (%s): %s')
+			:format(name, entry.kind, tostring(err)))
+	end, name, encoded, entry.kind, from)
 end
 
 -- ── Group registry ──────────────────────────────────────────────────────────
@@ -554,22 +539,11 @@ end
 -- Window's business, but "a group was folded" and "a tab was selected" happen
 -- in components that have no idea the flag exists.
 function Context:OnWindowState(fn: () -> ()): () -> ()
-	table.insert(self._windowState, fn)
-	return function()
-		local list = self._windowState
-		for i = #list, 1, -1 do
-			if list[i] == fn then
-				table.remove(list, i)
-				break
-			end
-		end
-	end
+	return self._windowState:Connect(fn)
 end
 
 function Context:WindowStateChanged()
-	for _, fn in table.clone(self._windowState) do
-		fn()
-	end
+	self._windowState:Fire()
 end
 
 -- Watch flag registration. `fn(name, kind)` fires SYNCHRONOUSLY from inside
@@ -585,16 +559,7 @@ end
 -- Context:GetFlags() is there for that, and a watcher installed at CreateWindow
 -- time (the `OnFlag` option) has missed nothing.
 function Context:OnFlag(fn: (string, string) -> ()): () -> ()
-	table.insert(self._flagWatchers, fn)
-	return function()
-		local list = self._flagWatchers
-		for i = #list, 1, -1 do
-			if list[i] == fn then
-				table.remove(list, i)
-				break
-			end
-		end
-	end
+	return self._flagWatchers:Connect(fn)
 end
 
 -- Every registered flag as `{ [name] = kind }` — a copy, so a caller can't edit
@@ -640,18 +605,12 @@ function Context:RegisterFlag(name: string?, handle: any, kind: string?)
 	else
 		self._lastEncoded[name] = nil
 	end
-	-- Clone before notifying: a watcher is allowed to unsubscribe itself (or add
-	-- another) from inside the callback, and mutating the array mid-walk would
-	-- skip the next one. Same reason SetAccent and util/Bind.lua clone.
-	for _, fn in table.clone(self._flagWatchers) do
-		local ok, err = pcall(fn, name, kind)
-		if not ok then
-			-- A host's bookkeeping blowing up must not take the control down with
-			-- it — the flag is registered either way.
-			Log.warn("OnFlag", ('watcher errored for flag "%s" (%s): %s')
-				:format(name, kind, tostring(err)))
-		end
-	end
+	-- Guarded: a host's bookkeeping blowing up must not take the control down with
+	-- it — the flag is registered either way.
+	self._flagWatchers:FireGuarded(function(err)
+		Log.warn("OnFlag", ('watcher errored for flag "%s" (%s): %s')
+			:format(name, kind, tostring(err)))
+	end, name, kind)
 end
 
 -- Snapshot every flagged control into a JSON-safe table.

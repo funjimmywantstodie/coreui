@@ -10,7 +10,13 @@ require() with an in-file module registry.
 A second, much smaller artifact is produced alongside it: `ui/screen.lua`, the
 standalone status page (see build_screen below).
 
+Every build is VERIFIED before it is written anywhere anyone can reach it — see
+`verify` below. Nothing here used to parse its own output, so a syntax error in
+any of the 41 modules sailed through `push.py` into a public commit and was
+discovered in an executor console.
+
 Usage:  python3 bundle.py  ->  writes coreui.bundle.lua + ui/
+        python3 bundle.py --no-verify  ->  skip the toolchain checks
 """
 import os, re, sys, shutil, subprocess
 from datetime import datetime
@@ -214,6 +220,178 @@ def _delta(n):
     return f"{sign}{abs(n):,} B / {sign}{abs(n) / 1024:.1f} KB"
 
 
+# ── verification ─────────────────────────────────────────────────────────────
+# Two checks, both run on every build, both cheap (<1s together).
+#
+# 1. **Does it parse?** Every module is concatenated into one chunk, so a single
+#    `luau-compile` call validates all of them at once. Without this a syntax
+#    error anywhere in coreui/ reached a public commit (push.py bundles, commits
+#    and pushes in one go) and was found in an executor console.
+#
+# 2. **Does the standalone page only use names its prelude provides?** This is
+#    the contract written out at the `--@body` marker in Screen.lua: the shared
+#    body is copied verbatim into two builds, so it may only use the handful of
+#    names BOTH preludes agree on. Lua does not error on an undefined global —
+#    a body edit reaching for a library-only name compiles clean, ships, and
+#    surfaces as a nil index *on the refusal page*, which is the one moment when
+#    nothing else works either. `luau-analyze` reports exactly this as an unknown
+#    global; everything legitimately unknown is listed below, so anything else is
+#    a build failure.
+#
+# The checks are skipped (with a warning, never silently) when the Luau toolchain
+# isn't installed — `rokit add luau-lang/luau` puts both binaries on PATH.
+
+# Roblox datatypes/globals the engine provides. luau-analyze has no Roblox
+# definitions loaded, so it reports all of these; they're fine everywhere.
+ROBLOX_GLOBALS = {
+    "Color3", "Enum", "Font", "Instance", "Random", "TweenInfo",
+    "UDim", "UDim2", "Vector2", "Vector3", "game", "task", "warn",
+}
+
+# Executor globals. Every one of these is feature-detected at its use site (see
+# util/Config.lua, util/Asset.lua, util/Gui.lua and the standalone prelude) —
+# they're *expected* to be absent, which is why they're read defensively rather
+# than declared. Adding one here is a deliberate act; that's the point.
+EXEC_GLOBALS = {
+    "cloneref", "gethui", "protect_gui", "syn", "getgenv",
+    "getclipboard", "getclipboardtext", "setclipboard", "toclipboard",
+    "getcustomasset", "getsynasset", "writefile", "readfile", "isfile",
+    "makefolder", "isfolder", "delfile", "listfiles", "identifyexecutor",
+}
+
+ALLOWED_GLOBALS = ROBLOX_GLOBALS | EXEC_GLOBALS
+
+UNKNOWN_GLOBAL = re.compile(r"Unknown global '([^']+)'")
+
+
+def _tool(name):
+    """Absolute path to a Luau tool, or None when it isn't installed."""
+    return shutil.which(name)
+
+
+def check_parses(path):
+    """Fail the build unless `path` is syntactically valid Luau."""
+    tool = _tool("luau-compile")
+    if not tool:
+        print(f"warn: luau-compile not on PATH — {os.path.basename(path)} NOT parse-checked")
+        return False
+    # Bytes, not text: `--binary` writes compiled bytecode to stdout on success,
+    # which is not decodable and blew up the reader thread when it was captured
+    # as text. Only the diagnostics on failure are ever read as characters.
+    r = subprocess.run([tool, "--binary", path], capture_output=True)
+    if r.returncode != 0:
+        why = (r.stdout + r.stderr).decode("utf-8", "replace").strip()
+        sys.exit(f"error: {path} does not parse\n{why}")
+    print(f"ok: {os.path.basename(path)} parses")
+    return True
+
+
+def check_globals(path, extra=()):
+    """Fail the build on any global `path` reads that nothing provides.
+
+    luau-analyze exits non-zero on this codebase regardless (it has no Roblox
+    type definitions loaded, so every `Instance`/`Color3` annotation is an
+    'Unknown type'), so the exit code is ignored and only the unknown-GLOBAL
+    diagnostics are read."""
+    tool = _tool("luau-analyze")
+    if not tool:
+        print(f"warn: luau-analyze not on PATH — {os.path.basename(path)} NOT global-checked")
+        return False
+    # luau-analyze exits 0 and prints NOTHING for a file it can't open, so a bad
+    # path reads exactly like a clean bill of health. The whole point of these
+    # checks is that nothing passes silently, so the path is proved first.
+    if not os.path.isfile(path):
+        sys.exit(f"error: {path} does not exist — nothing was checked")
+    r = subprocess.run([tool, path], capture_output=True)
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    if not out.strip():
+        # Possible for a genuinely clean file, but on this codebase every module
+        # trips 'Unknown type Instance' (no Roblox definitions are loaded), so
+        # silence means the analyzer didn't actually read it.
+        print(f"warn: luau-analyze produced no output for {os.path.basename(path)}"
+              " — treating it as UNCHECKED")
+        return False
+    seen = set(UNKNOWN_GLOBAL.findall(out))
+    stray = sorted(seen - ALLOWED_GLOBALS - set(extra))
+    if stray:
+        sys.exit(
+            f"error: {path} reads {len(stray)} global(s) nothing provides: "
+            + ", ".join(stray)
+            + "\n       For ui/screen.lua this almost always means the shared body "
+              "(coreui/components/Screen.lua, after --@body) used a name only the\n"
+              "       library prelude defines — add it to standalone/screen.prelude.lua "
+              "too, or move the code into a --@lib block.\n"
+              "       If the name really is an engine/executor global, add it to "
+              "ROBLOX_GLOBALS / EXEC_GLOBALS in bundle.py."
+        )
+    print(f"ok: {os.path.basename(path)} reads no unprovided globals")
+    return True
+
+
+def verify(paths):
+    """Parse-check + global-check every build output. Returns False if the
+    toolchain was missing, so the caller can say so loudly at the end."""
+    complete = True
+    for path in paths:
+        complete &= check_parses(path)
+        complete &= check_globals(path)
+    return complete
+
+
+# ── the load smoke test ──────────────────────────────────────────────────────
+# Parsing proves the syntax; this proves the thing RUNS. Every module body
+# executes, every require resolves in a workable order, every load-time constant
+# is built, and the library table comes back with its API on it — the class of
+# breakage whose only previous detector was pasting a loadstring into an executor
+# and watching nothing happen.
+#
+# It is composed into ONE chunk rather than run as three modules, because the
+# luau CLI gives every `require`d module its own environment: a Roblox stub in
+# another file would set Color3/Enum/game for nobody. The bundle is spliced in
+# the way a real consumer evaluates it — `(function(...) … end)()` — so the
+# vararg plumbing util/Services.lua depends on is exercised too.
+
+TESTS_DIR = os.path.join(BASE, "tests")
+SMOKE_BUILD = os.path.join(TESTS_DIR, ".smoke.build.luau")
+
+
+def smoke():
+    stub = os.path.join(TESTS_DIR, "roblox.luau")
+    checks = os.path.join(TESTS_DIR, "smoke.luau")
+    if not (os.path.isfile(stub) and os.path.isfile(checks)):
+        print("warn: tests/ is missing — the bundle was NOT load-tested")
+        return False
+    tool = _tool("luau")
+    if not tool:
+        print("warn: luau not on PATH — the bundle was NOT load-tested")
+        return False
+
+    chunk = "\n".join([
+        "--!nocheck",
+        "-- GENERATED by bundle.py from tests/roblox.luau + the bundle +",
+        "-- tests/smoke.luau. Do not edit; it is rewritten on every build.",
+        _read(stub),
+        # pcall'd so a load failure reaches tests/smoke.luau as a message rather
+        # than a raw traceback through the middle of the generated file.
+        "local __ok, __lib = pcall(function(...)",
+        _read(OUT),
+        "end)",
+        "Uranium = __ok and __lib or nil",
+        "LOAD_ERROR = (not __ok) and __lib or nil",
+        _read(checks),
+    ])
+    with open(SMOKE_BUILD, "w", encoding="utf-8", newline="\n") as f:
+        f.write(chunk)
+
+    r = subprocess.run([tool, SMOKE_BUILD], capture_output=True)
+    out = (r.stdout + r.stderr).decode("utf-8", "replace").strip()
+    if r.returncode != 0:
+        sys.exit(f"error: the bundle does not load\n{out}")
+    print(out or "ok: smoke — bundle loads")
+    os.remove(SMOKE_BUILD)  # kept on failure, so it can be run by hand
+    return True
+
+
 # ── the standalone status page ───────────────────────────────────────────────
 # `ui/screen.lua` is the same failure page as `Uranium:Screen`, with none of the
 # library behind it: the delivery worker inlines it into a refusal reply and
@@ -318,12 +496,40 @@ def screen_colors(used):
     return ",".join(f'{name}=Color3.fromHex("{have[name]}")' for name in sorted(used))
 
 
+def brand_block():
+    """The inner text of `Theme.Brand = { ... }`, braces excluded.
+
+    Every scrape below is anchored to this rather than run over the whole of
+    Theme.lua. They used to be file-wide `re.search`es, so the first match won:
+    `\\bzoom\\s*=` picked up whichever `zoom` appeared earliest in the file, and
+    adding an unrelated one to Theme.Metrics (above Brand) would have silently
+    handed the standalone page the wrong crop for the brand mark. Every failure
+    on this path is soft by design — which is exactly why a wrong answer would
+    never announce itself."""
+    src = _read(os.path.join(ROOT, "Theme.lua"))
+    # Anchored to the ASSIGNMENT at column 0, not to the first mention of the
+    # name: the comment block above it references `Theme.Brand.assets`, and a
+    # plain `find` walked straight into the prose.
+    at = re.search(r"^Theme\.Brand\s*=", src, re.M)
+    brace = src.find("{", at.end()) if at else -1
+    if brace == -1:
+        sys.exit("error: couldn't find the Theme.Brand table in Theme.lua")
+    depth = 0
+    for i in range(brace, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[brace + 1 : i]
+    sys.exit("error: Theme.Brand's table is unterminated in Theme.lua")
+
+
 def screen_brand():
     """Theme.Brand.name, for the standalone page's wordmark — same reason the
     palette is injected rather than retyped: this build has to keep saying what
     the library says it's called."""
-    src = _read(os.path.join(ROOT, "Theme.lua"))
-    m = re.search(r'Theme\.Brand\s*=\s*\{[^}]*?\bname\s*=\s*"([^"]+)"', src, re.S)
+    m = re.search(r'\bname\s*=\s*"([^"]+)"', brand_block())
     if not m:
         sys.exit("error: couldn't read Theme.Brand.name for the standalone page")
     return m.group(1)
@@ -345,9 +551,13 @@ def screen_mark():
     """
     try:
         theme = _read(os.path.join(ROOT, "Theme.lua"))
+        # `ASSETS` is a file-level local by necessity; the other three are read
+        # out of the Brand table itself so an unrelated `logo`/`zoom` elsewhere
+        # in Theme.lua can't win the match (see brand_block).
+        brand = brand_block()
         base = re.search(r'local ASSETS\s*=\s*"([^"]+)"', theme)
-        logo = re.search(r"logo\s*=\s*\{\s*(?:ASSETS\s*\.\.\s*)?\"([^\"]+)\"", theme)
-        zoom = re.search(r"\bzoom\s*=\s*([0-9.]+)", theme)
+        logo = re.search(r"logo\s*=\s*\{\s*(?:ASSETS\s*\.\.\s*)?\"([^\"]+)\"", brand)
+        zoom = re.search(r"\bzoom\s*=\s*([0-9.]+)", brand)
         folder = re.search(r'Asset\.CacheFolder\s*=\s*"([^"]+)"',
                            _read(os.path.join(ROOT, "util", "Asset.lua")))
         if not (base and logo and folder):
@@ -441,6 +651,113 @@ def build_screen(version):
     return size
 
 
+# ── the API surface ──────────────────────────────────────────────────────────
+# The public method list exists in four places: the source, DOCS.md, CLAUDE.md's
+# "Public API surface" block, and example.loadstring.lua — which the docs call
+# "the spec" but which nothing ever ran. Four hand-synced copies of one list is
+# four copies that drift, and the one that drifts most expensively is DOCS.md,
+# because that's the one consumers read.
+#
+# There is no Roblox runtime here to execute the demo against, so this is a
+# static cross-check instead: pull the real surface out of the source, then ask
+# whether the demo calls anything that no longer exists (a hard error — the demo
+# is real code) and whether the docs name anything that no longer exists, or miss
+# anything that does (warnings — prose matching is fuzzier than code).
+
+# Method names in these files belong to Roblox, not to us.
+ENGINE_METHODS = {
+    "Connect", "Disconnect", "Wait", "Once", "Destroy", "Clone", "IsA",
+    "GetService", "HttpGet", "HttpGetAsync", "JSONDecode", "JSONEncode",
+    "FindFirstChild", "FindFirstChildOfClass", "FindFirstChildWhichIsA",
+    "WaitForChild", "GetChildren", "GetDescendants", "GetPlayers",
+    "GetAttribute", "SetAttribute", "GetPropertyChangedSignal",
+    "GetUserThumbnailAsync", "CaptureFocus", "ReleaseFocus", "TweenSize",
+    "Play", "Pause", "Stop", "Resume", "Lerp", "ToHex", "ToHSV", "Magnitude",
+}
+
+# Receivers whose methods are ours, as written in prose.
+DOC_RECEIVERS = r"(?:Uranium|Window|window|Tab|tab|Group|Section|Hud|hud|Binding)"
+
+# Stand-ins the docs use when the *shape* of a call is the point rather than any
+# particular method ("every `Uranium:Method(...)` call throws…").
+DOC_PLACEHOLDERS = {"Method", "Foo", "Something", "Whatever"}
+
+
+def api_surface(mods):
+    """Every method the library defines, as a flat set of names.
+
+    Deliberately over-broad: this is used to answer "does this name exist at
+    all", so a private helper sharing a name with a public method is a
+    false negative (we say nothing) rather than a false alarm."""
+    names = set()
+    for src in mods.values():
+        names |= set(re.findall(r"function\s+[\w.]+[:.](\w+)\s*\(", src))
+        names |= set(re.findall(r"(\w+)\s*=\s*function\s*\(", src))
+        names |= set(re.findall(r'\["(\w+)"\]\s*=\s*function\s*\(', src))
+    return names
+
+
+def api_check():
+    """Cross-check the demo and the docs against the real surface."""
+    demo_path = os.path.join(BASE, "example.loadstring.lua")
+    docs_path = os.path.join(BASE, "DOCS.md")
+    if not os.path.exists(demo_path):
+        return
+
+    # Read the tree from disk rather than reusing main()'s `mods`: LucideData has
+    # been rewritten in that dict by now, and this wants the sources as written.
+    mods = {}
+    for dirpath, _, files in os.walk(ROOT):
+        for f in files:
+            if f.endswith(".lua"):
+                mods[os.path.join(dirpath, f)] = _read(os.path.join(dirpath, f))
+    surface = api_surface(mods)
+
+    # 1. The demo is real code, so a call into a method that no longer exists is
+    #    a genuine break — it would fail in the executor on the line it's on.
+    demo = _read(demo_path)
+    called = set(re.findall(r":([A-Z]\w+)\s*\(", demo)) - ENGINE_METHODS
+    gone = sorted(called - surface)
+    if gone:
+        sys.exit(
+            "error: example.loadstring.lua calls "
+            + ", ".join(f":{n}()" for n in gone)
+            + " — nothing in coreui/ defines "
+            + ("them" if len(gone) > 1 else "it")
+            + ".\n       The demo is the API's worked example; fix the call or "
+              "restore the method."
+        )
+    print(f"ok: example.loadstring.lua — all {len(called)} API calls exist")
+
+    # 2. The docs are prose, so both directions are advisory. Documented-but-gone
+    #    is the one that actually misleads someone.
+    if not os.path.exists(docs_path):
+        return
+    docs = _read(docs_path)
+    documented = (set(re.findall(DOC_RECEIVERS + r":(\w+)", docs))
+                  - ENGINE_METHODS - DOC_PLACEHOLDERS)
+    stale = sorted(documented - surface)
+    if stale:
+        print("warn: DOCS.md documents "
+              + ", ".join(f":{n}()" for n in stale)
+              + " — no such method in coreui/")
+
+    # Undocumented window methods, which is the list a consumer can't discover.
+    # Matched as a bare `:Name`, not `Window:Name` — the reference tables pair
+    # related methods on one row (`Window:GetAutoload()` / `:SetAutoload(name?)`)
+    # and the second half of every one of those is written without a receiver.
+    window_methods = set()
+    for src in mods.values():
+        window_methods |= set(re.findall(r"function\s+window:(\w+)\s*\(", src))
+    undocumented = sorted(n for n in window_methods
+                          if not re.search(r":" + n + r"\b", docs))
+    if undocumented:
+        print("warn: DOCS.md never mentions Window:"
+              + ", Window:".join(undocumented))
+    if not stale and not undocumented:
+        print(f"ok: DOCS.md — {len(window_methods)} window methods all documented")
+
+
 def collect():
     mods = {}
     for dirpath, _, files in os.walk(ROOT):
@@ -457,6 +774,13 @@ def collect():
 
 def main():
     shake = "--shake" in sys.argv
+    if "--no-verify" in sys.argv:
+        # An escape hatch for working without the toolchain, deliberately loud:
+        # the whole point of the checks is that nothing reaches a commit unparsed.
+        global verify, api_check, smoke
+        verify = lambda _paths: (print("warn: --no-verify — build outputs NOT checked"), True)[1]
+        api_check = lambda: None
+        smoke = lambda: True
     mods = collect()
 
     if "LucideData" in mods:
@@ -516,8 +840,23 @@ def main():
 
     # Build outputs, mirrored where the delivery worker picks them up.
     build_screen(version)
+
+    # Verified BEFORE the mirror is written: ui/uibundle.lua is what the delivery
+    # worker serves, so a bundle that doesn't parse must not reach it. The
+    # canonical coreui.bundle.lua is already on disk at this point (nothing reads
+    # it until it's committed, and push.py runs this script first), so a failure
+    # here stops the push rather than shipping.
+    complete = verify([OUT, UI_SCREEN])
+    complete &= smoke()
+
     shutil.copyfile(OUT, UI_BUNDLE)
     print(f"wrote {UI_BUNDLE}  (mirror of coreui.bundle.lua)")
+
+    api_check()
+
+    if not complete:
+        print("\n** build NOT fully verified — install the Luau toolchain "
+              "(`rokit add luau-lang/luau`) before pushing. **")
 
 
 if __name__ == "__main__":

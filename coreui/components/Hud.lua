@@ -76,18 +76,22 @@ local function escape(s: string): string
 	return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
 end
 
+local SCHEMA: Log.Schema = {
+	{ "Title", "string" },
+	{ "X", "number" },
+	{ "Y", "number" },
+	{ "MaxRows", "number" },
+	{ "Visible", "boolean" },
+	{ "Collapsed", "boolean" },
+	{ "Stats", "boolean" },
+	{ "Fps", "boolean" },
+	{ "Ping", "boolean" },
+}
+
 return function(ctx: any, parent: Instance, opts: any): any
 	opts = opts or {}
 	local colors = Theme.Colors
-	Log.field("Hud", "Title", opts.Title, "string")
-	Log.field("Hud", "X", opts.X, "number")
-	Log.field("Hud", "Y", opts.Y, "number")
-	Log.field("Hud", "MaxRows", opts.MaxRows, "number")
-	Log.field("Hud", "Visible", opts.Visible, "boolean")
-	Log.field("Hud", "Collapsed", opts.Collapsed, "boolean")
-	Log.field("Hud", "Stats", opts.Stats, "boolean")
-	Log.field("Hud", "Fps", opts.Fps, "boolean")
-	Log.field("Hud", "Ping", opts.Ping, "boolean")
+	Log.check("Hud", opts, SCHEMA)
 
 	local maxRows = math.max(1, math.floor(tonumber(opts.MaxRows) or 10))
 	-- `Stats = false` drops the whole readout row; Fps/Ping drop one each. The row

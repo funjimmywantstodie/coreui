@@ -15,6 +15,9 @@
 -- Helper constructors (corner, stroke, padding, listLayout) cover the
 -- boilerplate instances used everywhere.
 
+-- util/Tween.lua only requires util/Services.lua, so there's no cycle back here.
+local Tween = require(script.Parent.Tween)
+
 local Create = setmetatable({}, {
 	__call = function(_, className: string, props: { [string]: any }?, children: { Instance }?): any
 		local inst = Instance.new(className)
@@ -63,6 +66,49 @@ function Create.padding(top: number, right: number?, bottom: number?, left: numb
 		PaddingBottom = UDim.new(0, bottom),
 		PaddingLeft = UDim.new(0, left),
 	})
+end
+
+-- The hover pair: tween `prop` to `over` on MouseEnter, back to `base` on
+-- MouseLeave, at Tween.Fast.
+--
+--   Create.hover(button, "BackgroundColor3", colors.control, colors.control_hi)
+--
+-- This was the same six lines at eight call sites — and at two of them
+-- (components/Dropdown.lua, components/PlayerSelect.lua) it was already the same
+-- private `hover` helper, copied verbatim into both files. It isn't a deep
+-- abstraction; it's the shape a hover has in this library, written once so a new
+-- control doesn't re-derive it and so `Tween.Fast` stays the single answer to
+-- "how fast is a hover" rather than whatever got pasted alongside it.
+--
+-- Returns the instance (so it can be chained) and `set(base, over)`, which
+-- re-points both ends AND repaints immediately if the pointer is currently
+-- inside. That second part is what an accent-coloured control needs:
+-- `Window:SetAccent` can move the colour out from under a button the cursor is
+-- already sitting on, and every call site that handled this before had to track
+-- its own `hovering` boolean to do it.
+--
+-- Deliberately not for every MouseEnter in the library — a hover that runs a
+-- state machine (components/BindChip.lua), tints an icon (components/Hud.lua) or
+-- animates a different instance than the one under the pointer
+-- (components/Colorpicker.lua) is a different shape and stays hand-written.
+function Create.hover<T>(inst: GuiObject, prop: string, base: T, over: T): (GuiObject, (T, T) -> ())
+	local restingValue, hoverValue = base, over
+	local inside = false
+	inst.MouseEnter:Connect(function()
+		inside = true
+		Tween.play(inst, Tween.Fast, { [prop] = hoverValue })
+	end)
+	inst.MouseLeave:Connect(function()
+		inside = false
+		Tween.play(inst, Tween.Fast, { [prop] = restingValue })
+	end)
+	return inst, function(newBase: T, newOver: T)
+		restingValue, hoverValue = newBase, newOver;
+		-- Snapped, not tweened: this is a re-theme landing, not an interaction.
+		-- (The `;` above is load-bearing — without it Lua reads the `(` as a call
+		-- on the previous line's last value.)
+		(inst :: any)[prop] = inside and hoverValue or restingValue
+	end
 end
 
 function Create.listLayout(props: { [string]: any }?): UIListLayout

@@ -38,6 +38,34 @@ local M = Theme.Metrics
 local PINS: { [string]: boolean } = { top = true, bottom = true }
 local STYLES: { [string]: boolean } = { tile = true, solid = true, plain = true }
 
+-- Everything `CreateTab` accepts, declared where it's read.
+--
+-- This list used to live in components/Window.lua as fifteen consecutive
+-- `Log.field` calls, while the two normalizers below sat here — so one option's
+-- contract was spread across two files and adding a knob meant editing both,
+-- with nothing to notice if you only did one. Window forwards its options and
+-- says nothing about their shape now.
+--
+-- `Pin`/`Style` are typed `string` here and *valued* by the normalizers, which
+-- warn-and-default rather than fail: a wrong type is a mistake about the API, a
+-- wrong string is a typo, and only the first is worth refusing to build over.
+local SCHEMA: Log.Schema = {
+	{ "Name", "string" },
+	{ "Id", "string" },
+	{ "Icon", "string" },
+	{ "Desc", "string" },
+	{ "Badge", "string" },
+	{ "Pin", "string" },
+	{ "Style", "string" },
+	{ "Color", "Color3" },
+	{ "Dot", { "boolean", "Color3" } },
+	{ "Rail", "boolean" },
+	{ "Separator", "boolean" },
+	{ "Order", "number" },
+	{ "Visible", "boolean" },
+	{ "Callback", "function" },
+}
+
 -- Both of these are spelling-tolerant on case only ("Bottom" is a reasonable
 -- thing to type) and warn-and-default on anything else, like Group's Column.
 local function normalizePin(value: any, where: string): string
@@ -82,6 +110,7 @@ end
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local where = Log.where("CreateTab", opts.Name)
+	Log.check(where, opts, SCHEMA)
 
 	local label: string = opts.Name or "Tab"
 	local desc: string? = opts.Desc
@@ -477,7 +506,12 @@ return function(ctx: any, opts: any)
 		end
 	end)
 
-	local tab = {
+	-- Every group on this page, in build order, so the titlebar search can filter
+	-- them from direct references instead of re-deriving the page's shape from
+	-- instance names (see tab:Filter).
+	local groups: { any } = {}
+
+	local tab: any = {
 		button = button,
 		page = page,
 		separator = separator,
@@ -699,7 +733,105 @@ return function(ctx: any, opts: any)
 				("Column must be 1 (left) or 2 (right), got %s — using column 1."):format(tostring(column)))
 		end
 		local target = (column == 2) and col2 or col1
-		return Group(ctx, target, groupOpts or {}, scope)
+		local handle = Group(ctx, target, groupOpts or {}, scope)
+		table.insert(groups, handle)
+		return handle
+	end
+
+	-- ── titlebar search ───────────────────────────────────────────────────────
+	-- Show a group if its title matches; otherwise show only the fields whose text
+	-- matches, and hide a group left with nothing. An empty query restores
+	-- everything.
+	--
+	-- This lives here rather than in components/Window.lua, where it used to, for
+	-- the reason spelled out on `handle._search` in Group.lua: it is entirely a
+	-- statement about the page's layout, and the page is this file's. Window now
+	-- asks the active tab to filter itself and knows none of it.
+	--
+	-- The per-field text is collected once per search SESSION, not per keystroke —
+	-- `ResetFilter` is the invalidation, called when the search box is opened,
+	-- which is the only moment the menu can have grown or lost controls since the
+	-- last one. Caching also means the filter matches the labels a field was BUILT
+	-- with rather than whatever a live value reads at this instant, which is what
+	-- people are typing at. Weak keys, so a destroyed control doesn't pin its
+	-- strings until the next reset.
+	local searchText: { [Instance]: string } = setmetatable({}, { __mode = "k" }) :: any
+
+	local function collectText(inst: Instance): string
+		local hit = searchText[inst]
+		if hit then
+			return hit
+		end
+		local parts = {}
+		for _, d in inst:GetDescendants() do
+			if (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.Text ~= "" then
+				table.insert(parts, d.Text)
+			end
+		end
+		local text = string.lower(table.concat(parts, " "))
+		searchText[inst] = text
+		return text
+	end
+
+	function tab:ResetFilter()
+		table.clear(searchText)
+	end
+
+	function tab:Filter(query: string?)
+		local q = string.lower(query or "")
+		for _, handle in groups do
+			local entry = handle._search
+			if entry then
+				local groupMatch = q == "" or string.find(entry.title, q, 1, true) ~= nil
+				local anyVisible = false
+
+				-- Fields and their trailing hairlines are siblings ordered field,
+				-- separator, field, separator… so filter the fields first, then
+				-- re-derive each separator: visible only when the field above it
+				-- survived AND some field still follows it. (Leaving separators alone
+				-- stranded hairlines wherever a field was hidden; showing them all put
+				-- one under the last row.)
+				local ordered: { GuiObject } = {}
+				for _, child in entry.card:GetChildren() do
+					if child:IsA("GuiObject") then -- skip UICorner/UIStroke/UIPadding/UIListLayout
+						table.insert(ordered, child)
+					end
+				end
+				table.sort(ordered, function(a, b)
+					return a.LayoutOrder < b.LayoutOrder
+				end)
+				for _, item in ordered do
+					if item.Name ~= "Separator" then
+						local matches = groupMatch
+							or string.find(collectText(item), q, 1, true) ~= nil
+						item.Visible = matches
+						if matches then
+							anyVisible = true
+						end
+					end
+				end
+				local previousVisible = false
+				local lastSeparator: GuiObject? = nil
+				for _, item in ordered do
+					if item.Name == "Separator" then
+						item.Visible = previousVisible
+						if previousVisible then
+							lastSeparator = item
+						end
+					else
+						if item.Visible and lastSeparator then
+							lastSeparator = nil -- a field follows it, so it stays
+						end
+						previousVisible = item.Visible
+					end
+				end
+				if lastSeparator then
+					lastSeparator.Visible = false -- trailing hairline, nothing below
+				end
+
+				entry.group.Visible = q == "" or groupMatch or anyVisible
+			end
+		end
 	end
 
 	paint(false)

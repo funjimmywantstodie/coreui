@@ -23,15 +23,19 @@ local Bind = require(script.Parent.Parent.util.Bind)
 local Field = require(script.Parent.Field)
 local BindChip = require(script.Parent.BindChip)
 
+local SCHEMA: Log.Schema = {
+	{ "Default", "EnumItem" },
+	{ "Mode", "string" },
+	{ "Modes", "table" },
+	{ "OnChanged", "function" },
+	{ "Hud", "boolean" },
+	{ "Parent", { "string", "table" } },
+}
+
 return function(ctx: any, opts: any)
 	opts = opts or {}
 	local where = Log.where("Keybind", opts.Name)
-	Log.field(where, "Default", opts.Default, "EnumItem")
-	Log.field(where, "Mode", opts.Mode, "string")
-	Log.field(where, "Modes", opts.Modes, "table")
-	Log.field(where, "OnChanged", opts.OnChanged, "function")
-	Log.field(where, "Hud", opts.Hud, "boolean")
-	Log.field(where, "Parent", opts.Parent, { "string", "table" })
+	Log.check(where, opts, SCHEMA)
 
 	local f = Field.new(ctx, opts)
 	local mode = Bind.mode(opts.Mode, where, "None")

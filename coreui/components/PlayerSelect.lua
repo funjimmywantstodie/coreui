@@ -66,15 +66,6 @@ local function requestThumb(userId: number, apply: (string) -> ())
 	end)
 end
 
-local function hover(button: GuiButton, base: Color3, over: Color3)
-	button.MouseEnter:Connect(function()
-		Tween.play(button, Tween.Fast, { BackgroundColor3 = over })
-	end)
-	button.MouseLeave:Connect(function()
-		Tween.play(button, Tween.Fast, { BackgroundColor3 = base })
-	end)
-end
-
 local function displayName(p: Player): string
 	if p.DisplayName ~= "" and p.DisplayName ~= p.Name then
 		return p.DisplayName
@@ -422,12 +413,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			rows[userId] = { tick = tick, name = nameLabel }
 			paintRow(userId)
 
-			row.MouseEnter:Connect(function()
-				Tween.play(row, Tween.Fast, { BackgroundTransparency = 0 })
-			end)
-			row.MouseLeave:Connect(function()
-				Tween.play(row, Tween.Fast, { BackgroundTransparency = 1 })
-			end)
+			Create.hover(row, "BackgroundTransparency", 1, 0)
 			-- Tagged as user-driven for Context:OnFlagChanged; `handle:Set` reaches
 			-- the same state through its own path and keeps its ambient tag.
 			row.Activated:Connect(function()
@@ -476,7 +462,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			setOpenVisual(false)
 		end)
 	end)
-	hover(box, colors.control, colors.control_hi)
+	Create.hover(box, "BackgroundColor3", colors.control, colors.control_hi)
 
 	-- The box label resolves UserIds to live players, so it has to be redrawn when
 	-- someone selected leaves (or rejoins) — otherwise it keeps naming a player

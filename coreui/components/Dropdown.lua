@@ -14,15 +14,6 @@ local Field = require(script.Parent.Field)
 local MENU_MAX_H = 232 -- popover height cap; options scroll past it
 local MENU_MIN_W = 150
 
-local function hover(button: GuiButton, base: Color3, over: Color3)
-	button.MouseEnter:Connect(function()
-		Tween.play(button, Tween.Fast, { BackgroundColor3 = over })
-	end)
-	button.MouseLeave:Connect(function()
-		Tween.play(button, Tween.Fast, { BackgroundColor3 = base })
-	end)
-end
-
 local function build(ctx: any, opts: any, multi: boolean)
 	local colors = Theme.Colors
 	local where = Log.where(multi and "MultiDropdown" or "Dropdown", opts.Name)
@@ -244,12 +235,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			rows[opt] = { tick = tick, label = label }
 			paintRow(opt)
 
-			optBtn.MouseEnter:Connect(function()
-				Tween.play(optBtn, Tween.Fast, { BackgroundTransparency = 0 })
-			end)
-			optBtn.MouseLeave:Connect(function()
-				Tween.play(optBtn, Tween.Fast, { BackgroundTransparency = 1 })
-			end)
+			Create.hover(optBtn, "BackgroundTransparency", 1, 0)
 			-- Picking an option is user-driven, so it's tagged for
 			-- Context:OnFlagChanged (a `:Set` and a config load take the same paths
 			-- below but keep the ambient tag they came in under).
@@ -297,7 +283,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 			setOpenVisual(false)
 		end)
 	end)
-	hover(box, colors.control, colors.control_hi)
+	Create.hover(box, "BackgroundColor3", colors.control, colors.control_hi)
 
 	-- No accent subscription on purpose, and this is why: everything accent-tinted
 	-- here is created or written at OPEN time — the option ticks are built by

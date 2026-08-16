@@ -51,6 +51,50 @@ After any change to `coreui/`, rebuild with `bundle.py` (or `push.py` to ship).
 The bundle prints `[coreui] build <timestamp> <sha>[-dirty]` on load so you can
 confirm the executor is running the fresh build.
 
+**Every build is verified, and a failure stops the push.** Nothing used to check
+its own output, so a syntax error anywhere in `coreui/` went straight through
+`push.py` into a public commit and was found in an executor console. Four checks
+now run on every `bundle.py`, all of them together under a second:
+
+1. **It parses.** `luau-compile` on the bundle — every module is in one chunk, so
+   one call validates all 50 at once — and on `ui/screen.lua`.
+2. **It loads.** `tests/` is composed into a single chunk (Roblox stub + the
+   bundle, evaluated as a real consumer does + assertions) and run under `luau`.
+   Every module body executes, every require resolves, every load-time constant
+   is built, and the library table comes back with its API on it. See
+   **Testing** below for what the stub deliberately can't do.
+3. **No unprovided globals**, via `luau-analyze`. On `ui/screen.lua` this is the
+   `--@body` contract enforced: Lua doesn't error on an undefined global, so a
+   body edit reaching for a library-only name compiled clean, shipped, and
+   surfaced as a nil index *on the refusal page* — the one moment nothing else
+   works either. `ROBLOX_GLOBALS` / `EXEC_GLOBALS` in bundle.py are the allowlist;
+   adding a name to it is meant to be a deliberate act.
+4. **The API surface hasn't drifted.** `example.loadstring.lua` calling a method
+   nothing defines is a hard error (it's real code); a `Window:` method DOCS.md
+   never mentions, or a method DOCS.md documents that no longer exists, is a
+   warning.
+
+`python3 bundle.py --no-verify` skips all four, loudly. Everything needs the Luau
+toolchain (`rokit add luau-lang/luau` → `luau`, `luau-compile`, `luau-analyze`);
+without it each check says so and the build prints a "NOT fully verified" banner
+rather than pretending.
+
+## Testing
+
+`tests/roblox.luau` is a Roblox stub, `tests/smoke.luau` the assertions, and
+bundle.py composes them **into one chunk** with the bundle — the luau CLI gives
+every `require`d module its own environment, so a stub in a separate file sets
+`Color3`/`Enum`/`game` for nobody. The composed file is written to
+`tests/.smoke.build.luau`, deleted on success and **kept on failure** so it can
+be run by hand (`luau tests/.smoke.build.luau`) with real line numbers.
+
+It is a **load** test and nothing more. `Instance.new` returns a permissive table
+that accepts any property and answers any event with a stub signal, so nothing
+here can tell you a frame is the wrong size or a tween looks wrong. Don't grow it
+into a fake renderer: the moment the stub has opinions about layout, it starts
+failing for reasons that aren't the library's. Visual behaviour is still checked
+by loading the bundle in an executor.
+
 **How the bundle works:** `loadstring` runs one chunk, so bundle.py wraps each
 module in `__modules[key] = function() … end`, rewrites every
 `require(script.Parent.X)` → `__require("resolved.key")`, and returns
@@ -79,18 +123,53 @@ coreui/
   Icons.lua           short-name → Lucide sprite (Unicode glyph fallback)
   LucideData.lua      icon spritesheet data (48px set kept, 256px dropped)
   util/
-    Create.lua        instance factory + corner/stroke/padding/listLayout helpers
+    Create.lua        instance factory + corner/stroke/padding/listLayout/hover
     Tween.lua         shared TweenInfo presets + Tween.play
     Context.lua       per-window object threaded into EVERY component
     Collapse.lua      height-animate a frame open/closed
     Fade.lua          fade a whole subtree — the CanvasGroup replacement
     Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
+    Signal.lua        the subscribe/notify registry EVERY watcher list is built on
   components/         one file per control
+    Window.lua        the window shell — chrome, geometry, lifecycle, tabs
+    WindowConfig.lua  ...its flag + config surface (installed onto the handle)
+    WindowHud.lua     ...its bind-HUD ownership (same)
+    WindowState.lua   ...the `uranium_window` flag, via an explicit deps table
     Settings.lua      the built-in settings panel, as composable group builders
     Screen.lua        the full-screen status page — ALSO the source of ui/screen.lua
 standalone/
   screen.prelude.lua  the dependency-free prelude ui/screen.lua is built with
+tests/
+  roblox.luau         Roblox stub — enough to LOAD the bundle, nothing more
+  smoke.luau          the assertions run against it
 ```
+
+**The window is four files, not one.** `Window.lua` was 2178 lines doing eight
+jobs. Three came out cleanly, each installing its own methods onto the same
+`window` table so the public API is unchanged:
+
+- `WindowConfig.lua` — every flag/config method. Not one line of it touches an
+  Instance, which is what made it ~240 lines of the window *shell* that had
+  nothing to do with the shell.
+- `WindowHud.lua` — `CreateHud`/`GetHud`/`SetHudVisible`/`OnHudVisible`/
+  `OnHudChanged`, and returns a teardown `Window:Destroy` calls.
+- `WindowState.lua` — the `uranium_window` flag. The one extraction that
+  genuinely reaches back into the window (a restore moves real geometry), so it
+  takes a **`deps` table of behaviour, never state** — it can't read a field it
+  wasn't handed. Two traps live there: the persisted size is the window's
+  unclamped *wish* (`wantedSize`), never the drawn size, or a session on a laptop
+  permanently shrinks a size set on a big monitor; and `deps.select` is the plain
+  one, not `chooseTab`, because restoring a record is not a run of tab clicks.
+
+The fourth job that moved didn't become a Window file at all: **the titlebar
+search is `tab:Filter(query)`** in `Tab.lua` now. It used to re-derive the page's
+entire shape from instance names on every keystroke *from Window* — which put
+Tab's and Group's layout in a file with no other reason to know it, where a
+rename over there would have silently filtered nothing. `Group.lua` hands over
+`handle._search` (`group` / `card` / lowercased `title`) as direct references,
+`Tab` keeps the list, and Window only knows which tab is showing.
+`tab:ResetFilter()` drops the per-field text cache; Window calls it on every tab
+when the search box is opened, which is the one moment the menu can have changed.
 
 **Component signature:** each `components/*.lua` returns
 `function(ctx, parent, opts)` (Window is the exception — `coreui:CreateWindow`
@@ -684,10 +763,51 @@ now blinks `state` true→false (0.12s) instead of only poking the chip's `onSta
 
 ## Key utilities
 
+**Signal** (`util/Signal.lua`): `Signal.new()` → `:Connect(fn) -> unsub` ·
+`:Fire(...)` · `:FireGuarded(onError, ...)` · `:Count()` · `:Clear()`. **Every
+watcher list in the library goes through this** — it existed eight times before
+it existed once (Context ×4, Window ×3, Settings ×1, Bind ×1), each a copy of the
+same fifteen lines. The reason it's a module rather than a comment: a listener may
+unsubscribe itself from inside its own callback, and mutating the array mid-walk
+silently skips the *next* listener — so `Fire` walks a `table.clone`, and that
+rule now lives somewhere it can't be forgotten. `FireGuarded` is the shape for
+anything a **host** subscribes to (their bookkeeping blowing up must not take down
+the control that moved); the library's own callbacks use plain `Fire`, so a bug in
+one of ours surfaces instead of being logged and stepped over. It never replays to
+a late subscriber — callers that want that (`RegisterAccent`, `OnConfigFolder`,
+`OnHudVisible`) call `fn` themselves right after connecting. Not a BindableEvent:
+those are deferred, and `Context:OnFlag` exists precisely to land synchronously.
+
+**Log.check** (`util/Log.lua`): `Log.check(where, opts, SCHEMA)` against a
+declared shape, where `SCHEMA` is an **array of `{ field, type-or-types }`
+pairs** — an array, not a map, because Luau table iteration is a hash order and a
+map would report an arbitrary one of several bad fields, differently each run.
+This replaced 83 hand-written `Log.field` calls. The point isn't brevity: the
+shape becomes a value the component **owns**, next to the code that reads it.
+`CreateTab` used to validate fifteen fields inside `Window.lua` while `Tab.lua`
+separately normalized `Pin`/`Style` — one option's contract across two files, so
+adding a knob meant editing both with nothing to notice if you only did one.
+**A new option goes in its component's `SCHEMA`, never at the call site.**
+`Controls.lua`'s `COMMON_SCHEMA` covers `Name`/`Callback`/`Flag` for every
+control, so components declare only what they add.
+
 **Create** (`util/Create.lua`): `Create(className, props, children)`. Props
 assigned in order, `Parent` applied LAST (children exist first). Helpers:
 `Create.corner(r)`, `Create.stroke(color, thickness?)` (round joins — avoids
 jagged corners), `Create.padding(t,r?,b?,l?)`, `Create.listLayout(props?)`.
+
+`Create.hover(inst, prop, base, over)` → `(inst, set(base, over))` is the hover
+pair: tween `prop` to `over` on MouseEnter, back on MouseLeave, at `Tween.Fast`.
+It was the same six lines at eight call sites — and at two of them
+(`Dropdown.lua`, `PlayerSelect.lua`) already the same private helper copied
+verbatim into both files. The returned `set` re-points both ends **and repaints
+if the pointer is currently inside**, which is what an accent-coloured control
+needs (`SetAccent` can move the colour out from under a hovered button); every
+call site that handled this before kept its own `hovering` boolean to do it. Not
+for every `MouseEnter` in the library — a hover that runs a state machine
+(`BindChip`), tints an icon (`Hud`) or animates a *different* instance than the
+one under the pointer (`Colorpicker`) is a different shape and stays hand-written.
+`Screen.lua` can't use it at all: the shared body may only use prelude names.
 
 **Context** (`util/Context.lua`): carries live `Accent`/`AccentHover`, an accent
 subscription registry, and the single-popover manager.
@@ -828,10 +948,16 @@ for display-only controls; stateful ones expose at least `:Get()`/`:Set(v)`.
      `foo = { encode = ..., decode = ... }` entry if the control's value
      should round-trip through config Flags. Skip this (pass `kind = nil` to
      `mount`) for transient/caller-owned content — see `Custom`/`DataGrid`.
+- **Options**: declare a `local SCHEMA: Log.Schema = { { "Field", "type" }, … }`
+  at the top of the file and `Log.check(where, opts, SCHEMA)` once inside the
+  builder. Only what the control adds — `Name`/`Callback`/`Flag` are already
+  checked for every control by `Controls.lua`'s `COMMON_SCHEMA`. Never validate
+  a component's options from its caller; see **Log.check** above for why.
 - `bundle.py` needs **no edit** for a new file — it walks the whole `coreui/`
   tree and picks up any `.lua` module automatically. Any Lucide icon name is
   already bundled, so a new control can reach for one freely (`EXTRA_ICONS`
-  only matters under `--shake`).
+  only matters under `--shake`). Nor does `tests/` — the smoke test loads the
+  whole bundle, so a new module is exercised the moment it's required.
 
 **`Group:Custom(builder)` / `Section:Custom(builder)`** (`components/Custom.lua`)
 is the escape hatch for parenting arbitrary Instances — `builder(ctx, frame)`

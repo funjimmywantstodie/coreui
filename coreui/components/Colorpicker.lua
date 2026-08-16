@@ -21,11 +21,15 @@ local function toHex(color: Color3): string
 	)
 end
 
+local SCHEMA: Log.Schema = {
+	{ "Default", "Color3" },
+	{ "Presets", "table" },
+}
+
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local where = Log.where("Colorpicker", opts.Name)
-	Log.field(where, "Default", opts.Default, "Color3")
-	Log.field(where, "Presets", opts.Presets, "table")
+	Log.check(where, opts, SCHEMA)
 	local f = Field.new(ctx, opts)
 	-- ctx.Accent, not the static theme accent: a window built with a custom accent
 	-- would otherwise hand an un-defaulted picker theme green as its swatch and as

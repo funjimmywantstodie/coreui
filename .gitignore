@@ -1,0 +1,9 @@
+# Build/test scratch. `.smoke.build.luau` is the composed load-test chunk
+# bundle.py writes — it's deleted when the test passes and DELIBERATELY left
+# behind when it fails, so you can run `luau tests/.smoke.build.luau` yourself
+# and read the traceback with real line numbers.
+tests/.smoke.build.luau
+
+__pycache__/
+*.pyc
+.DS_Store

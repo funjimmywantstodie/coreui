@@ -27,14 +27,52 @@ local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Notify = require(script.Parent.Notify)
 local Splash = require(script.Parent.Splash)
-local Hud = require(script.Parent.Hud)
 local SettingsPanel = require(script.Parent.Settings)
+-- Three slices of the window's API that have nothing to do with its chrome, each
+-- installing its own methods onto the `window` table below. This file was 2178
+-- lines and eight jobs; these were the three that came out cleanly.
+local WindowConfig = require(script.Parent.WindowConfig)
+local WindowHud = require(script.Parent.WindowHud)
+local WindowState = require(script.Parent.WindowState)
 
 local M = Theme.Metrics
 
--- Options for ApplyConfig / LoadConfig. `Filter(name, kind) -> boolean` decides
--- per flag whether it's applied; see Context:LoadConfig for the contract.
-type LoadOpts = { Filter: ((string, string) -> boolean)? }
+-- Everything `CreateWindow` accepts. Options belonging to a piece that was split
+-- out are still declared here, because this is the entry point that receives
+-- them: `ConfigFolder` is read by components/WindowConfig.lua, `Hud` by
+-- components/WindowHud.lua, `PersistWindow`/`WindowFlag` by
+-- components/WindowState.lua. Every option a TAB takes is declared in
+-- components/Tab.lua instead — that one Window only forwards.
+local WINDOW_SCHEMA: Log.Schema = {
+	{ "Title", "string" },
+	{ "ToggleKey", "EnumItem" },
+	{ "Accent", "Color3" },
+	{ "ConfigFolder", "string" },
+	{ "LogoRadius", "number" },
+	{ "LogoZoom", "number" },
+	{ "AllowMultiple", "boolean" },
+	{ "Splash", { "boolean", "table" } },
+	{ "Hud", { "boolean", "table" } },
+	{ "Keybinds", "boolean" },
+	{ "OnFlag", "function" },
+	{ "OnFlagChanged", "function" },
+	{ "PersistWindow", "boolean" },
+	{ "WindowFlag", "string" },
+	{ "Parent", "Instance" },
+	{ "GuiName", "string" },
+	{ "Verbose", "boolean" },
+}
+
+-- `Window:Bind` — a headless keybind, no control attached.
+local BIND_SCHEMA: Log.Schema = {
+	{ "Key", "EnumItem" },
+	{ "Callback", "function" },
+	{ "Mode", "string" },
+	{ "Label", "string" },
+	{ "Id", "string" },
+	{ "Parent", { "string", "table" } },
+	{ "Hud", "boolean" },
+}
 
 return function(opts: any)
 	opts = opts or {}
@@ -42,23 +80,7 @@ return function(opts: any)
 
 	-- Validate the window options up front so a wrong type surfaces here (naming
 	-- the field) rather than as a mystery error much later when it's first used.
-	Log.field("CreateWindow", "Title", opts.Title, "string")
-	Log.field("CreateWindow", "ToggleKey", opts.ToggleKey, "EnumItem")
-	Log.field("CreateWindow", "Accent", opts.Accent, "Color3")
-	Log.field("CreateWindow", "ConfigFolder", opts.ConfigFolder, "string")
-	Log.field("CreateWindow", "LogoRadius", opts.LogoRadius, "number")
-	Log.field("CreateWindow", "LogoZoom", opts.LogoZoom, "number")
-	Log.field("CreateWindow", "AllowMultiple", opts.AllowMultiple, "boolean")
-	Log.field("CreateWindow", "Splash", opts.Splash, { "boolean", "table" })
-	Log.field("CreateWindow", "Hud", opts.Hud, { "boolean", "table" })
-	Log.field("CreateWindow", "Keybinds", opts.Keybinds, "boolean")
-	Log.field("CreateWindow", "OnFlag", opts.OnFlag, "function")
-	Log.field("CreateWindow", "OnFlagChanged", opts.OnFlagChanged, "function")
-	Log.field("CreateWindow", "PersistWindow", opts.PersistWindow, "boolean")
-	Log.field("CreateWindow", "WindowFlag", opts.WindowFlag, "string")
-	Log.field("CreateWindow", "Parent", opts.Parent, "Instance")
-	Log.field("CreateWindow", "GuiName", opts.GuiName, "string")
-	Log.field("CreateWindow", "Verbose", opts.Verbose, "boolean")
+	Log.check("CreateWindow", opts, WINDOW_SCHEMA)
 
 	-- Console output is off by default (see util/Log.lua): a game scraping
 	-- LogService gets a free fingerprint out of every branded line we print. This
@@ -70,8 +92,7 @@ return function(opts: any)
 	Log.banner()
 	Log.info(Config.report)
 
-	-- where configs are saved on disk + which key shows/hides the window
-	local configFolder = opts.ConfigFolder or "uranium"
+	-- which key shows/hides the window (where configs live is WindowConfig's)
 	local toggleKey: Enum.KeyCode = opts.ToggleKey or Enum.KeyCode.RightShift
 	local notificationsEnabled = true
 	-- UserInputService connections live past the ScreenGui's lifetime, so they're
@@ -830,21 +851,18 @@ return function(opts: any)
 	window.ScreenGui = screenGui
 	local applySearch -- forward declaration (used by select)
 	local splash: any = nil -- the boot screen, while it's playing (see the mount)
-	-- The bind HUD, once something asks for one (components/Hud.lua). It's a
-	-- sibling of `main` in the ScreenGui, not a child, so minimize leaves it up.
-	local hud: any = nil
-	-- Anything mirroring the HUD's visibility — the Settings tab's switch is one,
-	-- but a host that builds its own settings UI needs the same signal, so it's a
-	-- list behind `window:OnHudVisible` rather than the panel's private hook it
-	-- used to be.
-	local hudWatchers: { (boolean) -> () } = {}
-	-- ...and the same for anything else the HUD persists (its position, whether
-	-- it's collapsed), which no visibility signal covers — see Window:OnHudChanged.
-	local hudChangeWatchers: { () -> () } = {}
-	-- ...and the same for the config folder, which is no longer fixed at
-	-- CreateWindow (see window:SetConfigFolder): anything showing a config list
-	-- has to know the list it's showing just became a different folder's.
-	local folderWatchers: { (string) -> () } = {}
+
+	-- ── the installed halves ──────────────────────────────────────────────────
+	-- `CreateHud` / `GetHud` / `SetHudVisible` / `OnHudVisible` / `OnHudChanged`
+	-- (components/WindowHud.lua) and the whole flag + config surface
+	-- (components/WindowConfig.lua) are installed onto `window` here. Both are
+	-- built before a single tab exists: `CreateWindow{ OnFlag }` has to see every
+	-- flag the menu ever registers, and `Hud = true` builds one below.
+	--
+	-- The window-state flag (components/WindowState.lua) is registered further
+	-- down instead, once the geometry helpers it depends on exist.
+	local hudApi = WindowHud(window, ctx, screenGui, opts)
+	local configApi = WindowConfig(window, ctx, opts)
 
 	local searchOpen = false
 	local function currentQuery(): string
@@ -874,135 +892,15 @@ return function(opts: any)
 	end
 
 	-- ── search ────────────────────────────────────────────────────────────────
-	-- This used to derive everything it needed from scratch on every keystroke:
-	-- `page:GetDescendants()` to find the groups, a recursive `FindFirstChild`
-	-- per group to find its card (which searches the card's ENTIRE subtree — every
-	-- control in it — before it gets there), and a `GetDescendants()` + concat +
-	-- lower per field to collect its text. On a few hundred controls that's tens
-	-- of thousands of instance visits and hundreds of fresh strings per character
-	-- typed, on the thread the user is typing on.
-	--
-	-- The layout is fixed by components/Tab.lua and util/Collapse.lua, so both
-	-- walks can be exact instead of exhaustive, and the text can be collected once
-	-- per search session instead of once per keystroke.
-
-	-- page → Columns → Column → Group. Groups never nest, so this is the same set
-	-- the old `GetDescendants()` filter produced, minus the whole subtree.
-	local function pageGroups(page: Instance): { Frame }
-		local out: { Frame } = {}
-		local columns = page:FindFirstChild("Columns")
-		if not columns then
-			return out
-		end
-		for _, column in columns:GetChildren() do
-			if column.Name == "Column" then
-				for _, group in column:GetChildren() do
-					if group:IsA("Frame") and group.Name == "Group" then
-						table.insert(out, group)
-					end
-				end
-			end
-		end
-		return out
-	end
-
-	-- group → Collapse (util/Collapse.lua's clipping holder) → Card. The recursive
-	-- lookup is kept as a fallback so a future change to that nesting degrades to
-	-- the old behaviour rather than silently filtering nothing.
-	local function groupCard(group: Instance): Instance?
-		local holder = group:FindFirstChild("Collapse")
-		local card = holder and holder:FindFirstChild("Card")
-		return card or group:FindFirstChild("Card", true)
-	end
-
-	-- Every bit of text under a field, lowercased, cached for the life of one
-	-- search session (`searchText` is cleared whenever the box is opened, which is
-	-- the only moment the menu can have been rebuilt since the last one).
-	--
-	-- Caching means the filter matches the labels a field was BUILT with rather
-	-- than whatever a live value reads at this instant — which is what the box is
-	-- for, and what people type into it. Weak keys so a destroyed control doesn't
-	-- pin its strings until the next clear.
-	local searchText: { [Instance]: string } = setmetatable({}, { __mode = "k" }) :: any
-	local function collectText(inst: Instance): string
-		local hit = searchText[inst]
-		if hit then
-			return hit
-		end
-		local parts = {}
-		for _, d in inst:GetDescendants() do
-			if (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.Text ~= "" then
-				table.insert(parts, d.Text)
-			end
-		end
-		local text = string.lower(table.concat(parts, " "))
-		searchText[inst] = text
-		return text
-	end
-
-	-- Filter the active tab: show a group if its title matches, otherwise show
-	-- only the fields whose text matches (hiding groups left with nothing).
+	-- The filtering itself is `tab:Filter(query)` (components/Tab.lua). It used to
+	-- live here and re-derive the page's entire shape from instance names on every
+	-- keystroke — which put Tab's and Group's layout into this file, where a
+	-- rename over there would have silently filtered nothing. All that's left here
+	-- is the box and which tab is showing.
 	applySearch = function(query: string)
-		query = string.lower(query or "")
 		local tab = tabs[activeIndex]
-		if not tab then
-			return
-		end
-		for _, group in pageGroups(tab.page) do
-			local head = group:FindFirstChild("Head")
-			local card = groupCard(group)
-			local titleLabel = head and head:FindFirstChild("Title")
-			local titleText = (titleLabel and titleLabel:IsA("TextLabel"))
-				and string.lower(titleLabel.Text) or ""
-			local groupMatch = query == "" or string.find(titleText, query, 1, true) ~= nil
-
-			local anyVisible = false
-			if card then
-				-- Fields and their trailing hairlines are siblings ordered
-				-- field, separator, field, separator… so filter the fields first,
-				-- then re-derive each separator: visible only when the field
-				-- above it survived AND some field still follows it. (Leaving
-				-- separators alone stranded hairlines wherever a field was
-				-- hidden; showing them all put one under the last row.)
-				local ordered: { GuiObject } = {}
-				for _, child in card:GetChildren() do
-					if child:IsA("GuiObject") then -- skip UICorner/UIStroke/UIPadding/UIListLayout
-						table.insert(ordered, child)
-					end
-				end
-				table.sort(ordered, function(a, b)
-					return a.LayoutOrder < b.LayoutOrder
-				end)
-				for _, item in ordered do
-					if item.Name ~= "Separator" then
-						local matches = groupMatch
-							or string.find(collectText(item), query, 1, true) ~= nil
-						item.Visible = matches
-						if matches then
-							anyVisible = true
-						end
-					end
-				end
-				local previousVisible = false
-				local lastSeparator: GuiObject? = nil
-				for _, item in ordered do
-					if item.Name == "Separator" then
-						item.Visible = previousVisible
-						if previousVisible then
-							lastSeparator = item
-						end
-					else
-						if item.Visible and lastSeparator then
-							lastSeparator = nil -- a field follows it, so it stays
-						end
-						previousVisible = item.Visible
-					end
-				end
-				if lastSeparator then
-					lastSeparator.Visible = false -- trailing hairline, nothing below
-				end
-			end
-			group.Visible = query == "" or groupMatch or anyVisible
+		if tab then
+			tab:Filter(query)
 		end
 	end
 
@@ -1012,11 +910,14 @@ return function(opts: any)
 	winBtns.search.Activated:Connect(function()
 		searchOpen = not searchOpen
 		if searchOpen then
-			-- Drop the collected-text cache: opening the box is the one moment the
-			-- menu can have grown or lost controls since the last search, and it's
-			-- the cheapest possible invalidation point (one table, once, off the
-			-- typing path).
-			table.clear(searchText)
+			-- Drop every tab's collected-text cache: opening the box is the one
+			-- moment the menu can have grown or lost controls since the last search,
+			-- and it's the cheapest possible invalidation point (once, off the typing
+			-- path). All tabs, not just the active one — switching tabs mid-search
+			-- filters the new page without reopening the box.
+			for _, tab in tabs do
+				tab:ResetFilter()
+			end
 			-- slide + fade open from a zero-width sliver, then focus the box
 			searchField.Visible = true
 			searchField.Size = UDim2.fromOffset(0, 30)
@@ -1204,20 +1105,11 @@ return function(opts: any)
 				.. " — if you meant a title, write CreateTab({ Name = %s })")
 				:format(typeof(tabOpts), type(tabOpts) == "string" and ('"%s"'):format(tabOpts) or "..."))
 		end
-		Log.field("CreateTab", "Name", tabOpts and tabOpts.Name, "string")
-		Log.field("CreateTab", "Id", tabOpts and tabOpts.Id, "string")
-		Log.field("CreateTab", "Icon", tabOpts and tabOpts.Icon, "string")
-		Log.field("CreateTab", "Desc", tabOpts and tabOpts.Desc, "string")
-		Log.field("CreateTab", "Badge", tabOpts and tabOpts.Badge, "string")
-		Log.field("CreateTab", "Pin", tabOpts and tabOpts.Pin, "string")
-		Log.field("CreateTab", "Style", tabOpts and tabOpts.Style, "string")
-		Log.field("CreateTab", "Color", tabOpts and tabOpts.Color, "Color3")
-		Log.field("CreateTab", "Dot", tabOpts and tabOpts.Dot, { "boolean", "Color3" })
-		Log.field("CreateTab", "Rail", tabOpts and tabOpts.Rail, "boolean")
-		Log.field("CreateTab", "Separator", tabOpts and tabOpts.Separator, "boolean")
-		Log.field("CreateTab", "Order", tabOpts and tabOpts.Order, "number")
-		Log.field("CreateTab", "Callback", tabOpts and tabOpts.Callback, "function")
-		Log.field("CreateTab", "Visible", tabOpts and tabOpts.Visible, "boolean")
+		-- The option SHAPE is components/Tab.lua's to declare and check (its
+		-- `SCHEMA`), since it's the file that reads every one of them. Only the
+		-- "you passed something that isn't an options table at all" case is caught
+		-- here, because that one has to be caught before the table is indexed.
+		--
 		-- `any`: the handle grows a Select method below, and the hooks the tab
 		-- exposes for us are deliberately untyped.
 		local tab: any = Tab(ctx, tabOpts or {})
@@ -1388,129 +1280,6 @@ return function(opts: any)
 		return notificationsEnabled
 	end
 
-	-- ── settings: the bind HUD ────────────────────────────────────────────────
-	-- A small draggable overlay listing every named bind, lit while it's live,
-	-- plus FPS / ping — the answer to "what's on right now?" with the menu closed.
-	-- It reads util/Bind.lua's registry, so it needs nothing declared twice; a
-	-- bind appears as soon as it has a `Label` (the controls pass their `Name`).
-	--
-	-- Built on demand and only once: `CreateWindow{ Hud = true }`, the Settings
-	-- tab's switch and a loaded config all land here.
-	function window:CreateHud(hudOpts: any?): any
-		if hudOpts ~= nil and type(hudOpts) ~= "table" then
-			Log.fail("CreateHud", ("options must be a table like { Title = ... }, got %s")
-				:format(typeof(hudOpts)))
-		end
-		if hud then
-			-- Already built — which is the common case, since `CreateWindow{ Hud = true }`
-			-- builds one before the caller has run a line of their own code, and
-			-- SetHudVisible routes through here too. Returning early swallowed the
-			-- options entirely; apply the ones the handle can move at runtime and say
-			-- so for the rest, rather than silently ignoring the whole table.
-			if type(hudOpts) == "table" then
-				local o: any = hudOpts
-				if type(o.Title) == "string" then
-					hud:SetTitle(o.Title)
-				end
-				if tonumber(o.X) and tonumber(o.Y) then
-					hud:SetPosition(tonumber(o.X) :: number, tonumber(o.Y) :: number)
-				end
-				if o.Collapsed ~= nil then
-					hud:SetCollapsed(o.Collapsed == true)
-				end
-				if o.Visible ~= nil then
-					hud:SetVisible(o.Visible ~= false)
-				end
-				for _, key in { "MaxRows", "Stats", "Fps", "Ping" } do
-					if o[key] ~= nil then
-						Log.warn("CreateHud", ("%s is only read when the HUD is first built — the existing HUD keeps its own.")
-							:format(key))
-					end
-				end
-			end
-			return hud
-		end
-		-- CreateWindow{ Hud = {...} } is the baseline; a later CreateHud{...} (or the
-		-- Settings switch, which passes nothing) overrides field by field.
-		local merged: any = {}
-		if type(opts.Hud) == "table" then
-			for key, value in opts.Hud :: any do
-				merged[key] = value
-			end
-		end
-		if type(hudOpts) == "table" then
-			for key, value in hudOpts :: any do
-				merged[key] = value
-			end
-		end
-		hud = Hud(ctx, screenGui, merged)
-		-- Keep the Settings tab's switch in step with the HUD however it moved
-		-- (its own :SetVisible, a loaded config, the panel being dismissed).
-		hud.OnVisible = function(value: boolean)
-			for _, fn in table.clone(hudWatchers) do
-				fn(value)
-			end
-		end
-		-- Everything the HUD persists — where it sits, whether it's folded, whether
-		-- it's up — is moved with the mouse, not through a control, so there's no
-		-- callback anywhere for a change notification to hang off. This is that
-		-- callback; components/Settings.lua turns it into one for the HUD's flag.
-		hud.OnChange = function()
-			for _, fn in table.clone(hudChangeWatchers) do
-				fn()
-			end
-		end
-		return hud
-	end
-
-	-- Mirror the HUD's visibility however it moved (its own :SetVisible, a loaded
-	-- config, the panel being dismissed). Fires immediately with the current
-	-- state, like ctx:RegisterAccent, so a switch built from it starts in step;
-	-- returns an unsubscribe.
-	function window:OnHudVisible(fn: (boolean) -> ()): () -> ()
-		table.insert(hudWatchers, fn)
-		fn(hud ~= nil and hud:IsVisible())
-		return function()
-			for i = #hudWatchers, 1, -1 do
-				if hudWatchers[i] == fn then
-					table.remove(hudWatchers, i)
-					break
-				end
-			end
-		end
-	end
-
-	-- Fires whenever anything the HUD *persists* moves — dragged to a new spot,
-	-- folded, shown or hidden. Unlike `OnHudVisible` it doesn't fire immediately
-	-- (there's no single value to hand you) and it takes no argument: read the
-	-- HUD, or just re-save. The built-in Settings tab uses it to keep the HUD's
-	-- flag in the change stream, which is the only reason a dragged HUD shows up
-	-- in `OnFlagChanged` at all. Returns an unsubscribe.
-	function window:OnHudChanged(fn: () -> ()): () -> ()
-		table.insert(hudChangeWatchers, fn)
-		return function()
-			for i = #hudChangeWatchers, 1, -1 do
-				if hudChangeWatchers[i] == fn then
-					table.remove(hudChangeWatchers, i)
-					break
-				end
-			end
-		end
-	end
-
-	function window:GetHud(): any
-		return hud
-	end
-
-	-- Show/hide the HUD, building it the first time it's asked for. Hiding one
-	-- that was never built is a no-op rather than a pointless build.
-	function window:SetHudVisible(value: boolean)
-		if not hud and value == false then
-			return
-		end
-		window:CreateHud():SetVisible(value ~= false)
-	end
-
 	-- ── settings: headless keybinds ───────────────────────────────────────────
 	-- A bind with no control attached, for logic the menu doesn't expose:
 	--   Window:Bind(Enum.KeyCode.B, function(on) ... end, "Hold")
@@ -1531,112 +1300,8 @@ return function(opts: any)
 			Log.fail("Bind", ("expects a key or an options table, got %s (try Window:Bind(Enum.KeyCode.B, fn, \"Hold\"))")
 				:format(typeof(keyOrOpts)))
 		end
-		Log.field("Bind", "Key", o.Key, "EnumItem")
-		Log.field("Bind", "Callback", o.Callback, "function")
-		Log.field("Bind", "Mode", o.Mode, "string")
-		Log.field("Bind", "Label", o.Label, "string")
-		Log.field("Bind", "Id", o.Id, "string")
-		Log.field("Bind", "Parent", o.Parent, { "string", "table" })
-		Log.field("Bind", "Hud", o.Hud, "boolean")
+		Log.check("Bind", o, BIND_SCHEMA)
 		return binds:Register(o)
-	end
-
-	-- ── settings: the flag registry ───────────────────────────────────────────
-	-- The two primitives everything else here is built on. The named-file methods
-	-- below are just these plus util/Config.lua — which is the point: a host that
-	-- wants its own layout on disk, remote or shared configs, in-memory profiles
-	-- or a "reset to defaults" button needs the snapshot/apply pair WITHOUT the
-	-- library's file path in the middle, and previously the only way to apply a
-	-- table of flags was to write it to <ConfigFolder>/configs/<name>.json first.
-	--
-	--   local snapshot = Window:GetConfig()      -- exactly what SaveConfig serializes
-	--   Window:ApplyConfig(snapshot)             -- exactly what LoadConfig applies
-	--
-	-- GetConfig returns flags only — no `Config.MetaKey` stamp; that's SaveConfig's
-	-- doing, and a host composing its own file adds whatever metadata it wants.
-	function window:GetConfig(): { [string]: any }
-		return ctx:GetConfig()
-	end
-
-	-- Apply a table of flags. Returns how many were applied and how many keys were
-	-- skipped (unknown flag, failed decode, control refused the value, or filtered
-	-- out). Keys with no registered flag are skipped rather than erroring — see
-	-- Context:LoadConfig, where that promise is spelled out.
-	--
-	-- `opts.Filter = function(name, kind) -> boolean` applies only the flags it
-	-- says yes to, for a host whose registry is split (a portable half, a per-place
-	-- half). One predicate rather than a list of names, because that split is
-	-- computed, not enumerable; `Config.MetaKey` and every other unregistered key
-	-- is skipped before the filter is consulted, so it never sees one.
-	function window:ApplyConfig(data: { [string]: any }, loadOpts: LoadOpts?): (number, number)
-		if type(data) ~= "table" then
-			Log.warn("ApplyConfig", ("expects a table of flags, got %s — ignoring.")
-				:format(typeof(data)))
-			return 0, 0
-		end
-		return ctx:LoadConfig(data, loadOpts)
-	end
-
-	-- Every registered flag as `{ [name] = kind }`. Snapshot it at two moments —
-	-- before and after a per-place module builds its controls — and the difference
-	-- is that module's flags, which is how a config gets scoped (apply the portable
-	-- half anywhere, the game-specific half only in the right game) instead of
-	-- being all-or-nothing.
-	function window:GetFlags(): { [string]: string }
-		return ctx:GetFlags()
-	end
-
-	-- Register a flag by hand. `handle` needs `:Get()`/`:Set(v)` (or `:GetFlag()`/
-	-- `:SetFlag(v)` when the persisted value isn't the primary one), `kind` names
-	-- the codec — the same contract every control satisfies. This is how the
-	-- built-in Settings tab persists the bind HUD, which isn't a control at all,
-	-- and it's how a host puts its own non-control state in the same config file.
-	function window:RegisterFlag(name: string, handle: any, kind: string)
-		ctx:RegisterFlag(name, handle, kind)
-	end
-
-	-- Watch flags as they're registered — `fn(name, kind)`, synchronously, so the
-	-- callback can attribute the flag to whatever is being built at that instant.
-	-- Returns an unsubscribe. `CreateWindow{ OnFlag = fn }` is the same hook,
-	-- installed early enough to catch every flag in the menu.
-	function window:OnFlag(fn: (string, string) -> ()): () -> ()
-		return ctx:OnFlag(fn)
-	end
-
-	-- Watch flag VALUES as they move — `fn(name, value, kind, source)`, where
-	-- `value` is the encoded value (what `GetConfig()` would file under that name)
-	-- and `source` is `"user"` / `"code"` / `"config"`. Fires synchronously, and
-	-- never for a control taking its default or for a `:Set` that lands on the
-	-- value already held. Returns an unsubscribe.
-	--
-	-- This is what a host persisting continuously hangs off: without it the only
-	-- way to notice a change is to poll `GetConfig()` and diff it, which loses
-	-- everything since the last poll whenever the client script dies without a
-	-- clean unload. `source` is what keeps a config landing 40 flags from looking
-	-- like 40 edits worth writing back.
-	function window:OnFlagChanged(fn: (string, any, string, string) -> ()): () -> ()
-		if type(fn) ~= "function" then
-			Log.fail("OnFlagChanged", ("expects a function fn(name, value, kind, source), got %s")
-				:format(typeof(fn)))
-		end
-		return ctx:OnFlagChanged(fn)
-	end
-
-	-- Tell the watchers a flag's value moved. Only needed for state YOU registered
-	-- with `RegisterFlag` — every control notifies for itself. Re-reads and
-	-- re-encodes the flag and stays silent unless the value actually differs from
-	-- the last one reported, so it's safe to call on any suspicion of a change.
-	function window:NotifyFlag(name: string, source: string?)
-		if type(name) ~= "string" or name == "" then
-			Log.warn("NotifyFlag", ("expects a flag name, got %s — ignoring.")
-				:format(name == "" and '""' or typeof(name)))
-			return
-		end
-		if not ctx.Flags[name] then
-			Log.warn("NotifyFlag", ('no flag named "%s" is registered — ignoring.'):format(name))
-			return
-		end
-		ctx:NotifyFlag(name, source)
 	end
 
 	-- ── settings: window geometry + UI state ──────────────────────────────────
@@ -1692,285 +1357,40 @@ return function(opts: any)
 	end
 
 	-- ── the window-state flag ─────────────────────────────────────────────────
-	-- Registered by the library itself, on the same terms as the bind HUD's flag:
-	-- every host wants the menu to come back where it was left, and asking each of
-	-- them to reimplement the clamping and the "that tab doesn't exist any more"
-	-- fallbacks is how those get written four different ways and wrong three of
-	-- them. `CreateWindow{ PersistWindow = false }` opts out; `WindowFlag` renames
-	-- it, exactly like `HudFlag`.
-	local windowFlagName = opts.WindowFlag or "uranium_window"
-	local persistWindow = opts.PersistWindow ~= false
-	local applyingWindowState = false
-
-	local function windowState(): any
-		local groups: { [string]: boolean } = {}
-		for _, entry in ctx.Groups do
-			groups[entry.key] = entry.handle:IsCollapsed() == true
-		end
-		local record: any = {
-			Width = baseWidth,
-			Height = baseHeight,
-			Maximized = maximized,
-			Tab = activeIndex,
-			Groups = groups,
-		}
-		-- Position only once the viewport has actually been measured. A snapshot
-		-- taken on the frame the window is built (a host that saves immediately)
-		-- would otherwise resolve the scale half of the Position against a zero
-		-- viewport and record the window as sitting off the top-left corner — a
-		-- coordinate that means nothing, written down as if the user had chosen it.
-		-- Omitted, the restore just leaves the window where it opens.
-		if screenGui.AbsoluteSize.X > 0 then
-			local origin = topLeft()
-			record.X = origin.X
-			record.Y = origin.Y
-		end
-		return record
-	end
-
-	-- Every field is optional and every one of them is allowed to be wrong: a
-	-- record is written by one session and applied by another, with a different
-	-- viewport, a different set of tabs (a game script that isn't loaded this
-	-- time) and possibly a different build of the menu. Nothing in here errors on
-	-- a mismatch — it restores what still makes sense and drops the rest.
+	-- `uranium_window` — position, size, maximize, the open tab and every folded
+	-- group, in one flag. It lives in components/WindowState.lua and reaches back
+	-- in here through this table: a restore has to move real geometry, and that's
+	-- the one thing about the window a config can drive. Everything it's handed is
+	-- behaviour, never state, so it can't read a field it wasn't given.
 	--
-	-- Split out from `applyWindowState` below so the suppression flag that call
-	-- runs under can be cleared even if something in here does throw.
-	local function restoreWindowState(value: any)
-		-- Size first (the position clamp is computed against it), then maximize
-		-- (which overrides the size), then the position it's clamped into.
-		if value.Width and value.Height then
-			baseWidth = math.max(MIN_W, math.floor(value.Width))
-			baseHeight = math.max(MIN_H, math.floor(value.Height))
-			fitWindow()
-		end
-		if value.Maximized ~= nil then
-			setMaximized(value.Maximized == true, false)
-		end
-		if value.X and value.Y then
-			moveTo(value.X, value.Y)
-		end
+	-- `select` is the PLAIN one, not `chooseTab`: restoring a saved record is not
+	-- a run of deliberate tab clicks, and announcing it as one would report the
+	-- restore back as a fresh change worth persisting.
+	WindowState(ctx, opts, {
+		topLeft = topLeft,
+		wantedSize = function(): Vector2
+			return Vector2.new(baseWidth, baseHeight)
+		end,
+		setSize = function(w: number, h: number)
+			window:SetSize(w, h)
+		end,
+		moveTo = moveTo,
+		setMaximized = setMaximized,
+		isMaximized = function(): boolean
+			return maximized
+		end,
+		viewportWidth = function(): number
+			return screenGui.AbsoluteSize.X
+		end,
+		tabs = function(): { any }
+			return tabs
+		end,
+		selected = function(): number
+			return activeIndex
+		end,
+		select = select,
+	})
 
-		if value.Tab then
-			local index = math.floor(value.Tab)
-			local target = tabs[index]
-			if target and target:IsVisible() then
-				select(index)
-			else
-				-- The saved tab is gone (or hidden) — a config written with a
-				-- game-specific tab loaded, restored without it. Fall through to the
-				-- first tab that's actually there rather than erroring or leaving the
-				-- window on a page nobody can navigate back to.
-				for i, other in tabs do
-					if other:IsVisible() then
-						select(i)
-						break
-					end
-				end
-			end
-		end
-
-		-- Only groups that still exist under the same key. Anything built after
-		-- this runs isn't in the registry yet and keeps its own `Collapsed` option,
-		-- which is the same ordering rule as every other flag: state is restored
-		-- for the controls that exist when the config is applied.
-		if type(value.Groups) == "table" then
-			for _, entry in ctx.Groups do
-				local collapsed = value.Groups[entry.key]
-				if collapsed ~= nil then
-					entry.handle:SetCollapsed(collapsed == true, false)
-				end
-			end
-		end
-	end
-
-	-- `restoreWindowState` under the notification-suppression flag, which has to
-	-- come back down whatever happens in there.
-	--
-	-- It used to be a bare `flag = true … flag = false` around the body, and the
-	-- body is called from inside Context:LoadConfig's pcall — so anything that
-	-- threw mid-restore was swallowed upstream and left the flag stuck ON for the
-	-- rest of the session. From then on every drag, maximize, tab click and folded
-	-- group stopped notifying `uranium_window`: the window silently stopped
-	-- persisting, with no error and nothing on screen to say so.
-	local function applyWindowState(value: any)
-		if type(value) ~= "table" then
-			return
-		end
-		applyingWindowState = true
-		local ok, err = pcall(restoreWindowState, value)
-		applyingWindowState = false
-		if not ok then
-			error(err, 0) -- re-raised untouched; LoadConfig names the flag that failed
-		end
-	end
-
-	if persistWindow then
-		ctx:RegisterFlag(windowFlagName, {
-			GetFlag = function(): any
-				return windowState()
-			end,
-			SetFlag = function(_, value: any)
-				applyWindowState(value)
-			end,
-		}, "window")
-		-- One funnel for everything that moves the record — a drag landing, a
-		-- maximize, a tab click, a group folded three components away. Suppressed
-		-- while a restore is in flight: applying one record would otherwise report
-		-- a change per field, each with a half-applied value, and Context:LoadConfig
-		-- announces the finished result once anyway.
-		ctx:OnWindowState(function()
-			if not applyingWindowState then
-				ctx:NotifyFlag(windowFlagName)
-			end
-		end)
-	end
-
-	-- ── settings: config persistence ──────────────────────────────────────────
-	-- These are the flag registry (above) plus a file on disk. Every one of them
-	-- returns `(result, reason)`: the library always knew whether it was a missing
-	-- file, corrupt JSON or an executor with no file access, and a bare `false`
-	-- threw that away — leaving a host with nothing to say but "Couldn't load".
-	window.ConfigSupported = Config.supported
-
-	local function badConfigName(where: string, name: any): boolean
-		if type(name) ~= "string" or name == "" then
-			Log.warn(where, ("config name must be a non-empty string, got %s — ignoring.")
-				:format(name == "" and '""' or typeof(name)))
-			return true
-		end
-		return false
-	end
-
-	-- `meta` is stamped into the file under `Config.MetaKey` alongside the flags,
-	-- and read back by ConfigInfo without applying anything — provenance
-	-- ("which game / profile / build wrote this?") without a second file to keep
-	-- in sync. It's skipped on load like any unregistered key.
-	function window:SaveConfig(name: string, meta: any?): (boolean, string?)
-		if badConfigName("SaveConfig", name) then
-			return false, "invalid name"
-		end
-		if meta ~= nil and type(meta) ~= "table" then
-			Log.warn("SaveConfig", ("meta must be a table, got %s — saving without it.")
-				:format(typeof(meta)))
-			meta = nil
-		end
-		local snapshot = ctx:GetConfig()
-		local n = 0
-		for _ in snapshot do
-			n += 1
-		end
-		if meta then
-			snapshot[Config.MetaKey] = meta
-		end
-		local ok, reason = Config.save(configFolder, name, snapshot)
-		Log.infof("SaveConfig(%q) -> %s  (%d flags%s)",
-			tostring(name), tostring(ok), n, ok and "" or ", " .. tostring(reason))
-		return ok, reason
-	end
-
-	-- `opts` is ApplyConfig's, and it's here for the same reason: a host that
-	-- scopes its registry — a portable half applied anywhere, a per-place half
-	-- only in the right game — could otherwise only land *part* of a file by
-	-- abandoning this method entirely and rebuilding it out of `Uranium.Config` +
-	-- ApplyConfig, losing the name validation, the log line and the (ok, reason)
-	-- shape in the process. A filtered-out flag counts as skipped, so "applied
-	-- nothing" still means what it says.
-	function window:LoadConfig(name: string, loadOpts: LoadOpts?): (boolean, string?)
-		if badConfigName("LoadConfig", name) then
-			return false, "invalid name"
-		end
-		local data, reason = Config.load(configFolder, name)
-		Log.infof("LoadConfig(%q) -> %s%s",
-			tostring(name), tostring(data ~= nil), data and "" or " (" .. tostring(reason) .. ")")
-		if not data then
-			return false, reason
-		end
-		local applied = ctx:LoadConfig(data, loadOpts)
-		if applied == 0 then
-			-- The file was fine and nothing in it matched a control we have (or the
-			-- caller's filter wanted none of what did). That's a different failure
-			-- from "no such config" and it used to read as success.
-			return false, "applied nothing"
-		end
-		return true
-	end
-
-	function window:DeleteConfig(name: string): (boolean, string?)
-		if badConfigName("DeleteConfig", name) then
-			return false, "invalid name"
-		end
-		return Config.delete(configFolder, name)
-	end
-
-	function window:ListConfigs(): { string }
-		return Config.list(configFolder)
-	end
-
-	-- The metadata a config was saved with, without touching a single control —
-	-- the read a "does this config belong to this game?" check actually wants.
-	function window:ConfigInfo(name: string): (any?, string?)
-		if badConfigName("ConfigInfo", name) then
-			return nil, "invalid name"
-		end
-		return Config.info(configFolder, name)
-	end
-
-	-- ── settings: auto-load pointer ───────────────────────────────────────────
-	-- The Settings tab used to call Config.setAutoload/getAutoload directly, which
-	-- made it the one config path a host couldn't intercept — every other one goes
-	-- through a window: method. Now it goes through these too.
-	function window:SetAutoload(name: string?)
-		if name ~= nil and type(name) ~= "string" then
-			Log.warn("SetAutoload", ("expects a config name or nil, got %s — ignoring.")
-				:format(typeof(name)))
-			return
-		end
-		Config.setAutoload(configFolder, name)
-	end
-
-	function window:GetAutoload(): string?
-		return Config.getAutoload(configFolder)
-	end
-
-	-- ── settings: where configs live ──────────────────────────────────────────
-	function window:GetConfigFolder(): string
-		return configFolder
-	end
-
-	-- Re-scope persistence at runtime — per-place config folders, user profiles,
-	-- an account switch. Anything already showing a config list is notified
-	-- (window:OnConfigFolder) because its contents just became a different
-	-- folder's; the built-in Settings tab refreshes its dropdown from that.
-	function window:SetConfigFolder(path: string)
-		if type(path) ~= "string" or path == "" then
-			Log.warn("SetConfigFolder", ("expects a non-empty path, got %s — ignoring.")
-				:format(path == "" and '""' or typeof(path)))
-			return
-		end
-		if path == configFolder then
-			return
-		end
-		configFolder = path
-		for _, fn in table.clone(folderWatchers) do
-			fn(configFolder)
-		end
-	end
-
-	-- Fires immediately with the current folder, then on every change; returns an
-	-- unsubscribe.
-	function window:OnConfigFolder(fn: (string) -> ()): () -> ()
-		table.insert(folderWatchers, fn)
-		fn(configFolder)
-		return function()
-			for i = #folderWatchers, 1, -1 do
-				if folderWatchers[i] == fn then
-					table.remove(folderWatchers, i)
-					break
-				end
-			end
-		end
-	end
 
 	-- ── teardown ───────────────────────────────────────────────────────────────
 	-- Full unload: the lingering UserInputService listeners come off, the popover
@@ -2001,10 +1421,7 @@ return function(opts: any)
 			splash = nil
 		end
 		-- The HUD's own input listeners outlive the ScreenGui, same as ours.
-		if hud then
-			hud:Destroy()
-			hud = nil
-		end
+		hudApi.Destroy()
 
 		if immediate then
 			screenGui:Destroy()

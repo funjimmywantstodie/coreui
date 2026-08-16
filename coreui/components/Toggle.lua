@@ -29,18 +29,24 @@ local BindChip = require(script.Parent.BindChip)
 local OFF_POS = UDim2.fromOffset(3, 3)
 local ON_POS = UDim2.fromOffset(22, 3) -- 3 + 19px travel
 
+-- The options this control adds on top of the ones every control takes
+-- (`Name`/`Desc`/`Default`/`Callback`/`Flag`, checked by components/Controls.lua).
+local SCHEMA: Log.Schema = {
+	-- `false` is the opt-out ("this toggle isn't bindable"), so it's a legal value
+	-- here alongside a key.
+	{ "Keybind", { "EnumItem", "boolean" } },
+	{ "KeybindMode", "string" },
+	{ "KeybindModes", "table" },
+	{ "KeybindFlag", "string" },
+	{ "Hud", "boolean" },
+	{ "Parent", { "string", "table" } },
+}
+
 return function(ctx: any, opts: any)
 	opts = opts or {}
 	local colors = Theme.Colors
 	local where = Log.where("Toggle", opts.Name)
-	-- `false` is the opt-out ("this toggle isn't bindable"), so it's a legal value
-	-- here alongside a key.
-	Log.field(where, "Keybind", opts.Keybind, { "EnumItem", "boolean" })
-	Log.field(where, "KeybindMode", opts.KeybindMode, "string")
-	Log.field(where, "KeybindModes", opts.KeybindModes, "table")
-	Log.field(where, "KeybindFlag", opts.KeybindFlag, "string")
-	Log.field(where, "Hud", opts.Hud, "boolean")
-	Log.field(where, "Parent", opts.Parent, { "string", "table" })
+	Log.check(where, opts, SCHEMA)
 
 	local f = Field.new(ctx, opts)
 	local state = opts.Default == true

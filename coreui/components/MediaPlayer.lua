@@ -152,25 +152,24 @@ local function iconButton(parent: Instance, size: number, iconSize: number, icon
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5)
 	;(icon :: any).Parent = btn
-	btn.MouseEnter:Connect(function()
-		Tween.play(btn, Tween.Fast, { BackgroundColor3 = colors.control_hi })
-	end)
-	btn.MouseLeave:Connect(function()
-		Tween.play(btn, Tween.Fast, { BackgroundColor3 = colors.control })
-	end)
+	Create.hover(btn, "BackgroundColor3", colors.control, colors.control_hi)
 	return btn, icon
 end
+
+local SCHEMA: Log.Schema = {
+	{ "Callback", "function" },
+	{ "Queue", "table" },
+	-- Cover is handed to Asset.resolve, which takes a bare decal id, an
+	-- rbxassetid/url string, a file path or a fallback-chain array — so the only
+	-- thing worth rejecting is something Asset can't read at all.
+	{ "Cover", { "string", "number", "table" } },
+}
 
 return function(ctx: any, opts: any): (Instance, any, boolean)
 	local colors = Theme.Colors
 	opts = opts or {}
 	local where = Log.where("MediaPlayer", opts.Name)
-	Log.field(where, "Callback", opts.Callback, "function")
-	Log.field(where, "Queue", opts.Queue, "table")
-	-- Cover is handed to Asset.resolve, which takes a bare decal id, an
-	-- rbxassetid/url string, a file path or a fallback-chain array — so the only
-	-- thing worth rejecting is something Asset can't read at all.
-	Log.field(where, "Cover", opts.Cover, { "string", "number", "table" })
+	Log.check(where, opts, SCHEMA)
 
 	local showVolume = opts.ShowVolume ~= false
 	local showShuffle = opts.ShowShuffle ~= false
@@ -879,12 +878,9 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 		end)
 	end
 
-	playBtn.MouseEnter:Connect(function()
-		Tween.play(playBtn, Tween.Fast, { BackgroundColor3 = ctx.AccentHover })
-	end)
-	playBtn.MouseLeave:Connect(function()
-		Tween.play(playBtn, Tween.Fast, { BackgroundColor3 = ctx.Accent })
-	end)
+	-- The setter is kept: SetAccent moves both ends of this hover, and it can land
+	-- while the pointer is already on the button (see Create.hover).
+	local _, setPlayHover = Create.hover(playBtn, "BackgroundColor3", ctx.Accent, ctx.AccentHover)
 	playBtn.Activated:Connect(function()
 		playScale.Scale = 0.92
 		Tween.play(playScale, Tween.Spring, { Scale = 1 })
@@ -934,7 +930,9 @@ return function(ctx: any, opts: any): (Instance, any, boolean)
 
 	ctx:RegisterAccent(function(accent)
 		progressFill.BackgroundColor3 = accent
-		playBtn.BackgroundColor3 = accent
+		-- Repaints playBtn itself, to whichever end applies right now — so a
+		-- re-theme under a hovered button doesn't snap it back to the resting fill.
+		setPlayHover(ctx.Accent, ctx.AccentHover)
 		if showVolume then
 			volumeFill.BackgroundColor3 = accent
 		end

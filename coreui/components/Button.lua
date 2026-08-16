@@ -31,7 +31,6 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 	end
 	local scale = btn:FindFirstChildOfClass("UIScale") :: UIScale
 
-	local hovering = false
 	local function base(): Color3
 		return accent and ctx.AccentFill or colors.control
 	end
@@ -40,14 +39,10 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 	local function over(): Color3
 		return accent and ctx.Accent or colors.control_hi
 	end
-	btn.MouseEnter:Connect(function()
-		hovering = true
-		Tween.play(btn, Tween.Fast, { BackgroundColor3 = over() })
-	end)
-	btn.MouseLeave:Connect(function()
-		hovering = false
-		Tween.play(btn, Tween.Fast, { BackgroundColor3 = base() })
-	end)
+	-- The `hovering` boolean this used to keep is Create.hover's now: its setter
+	-- repaints to whichever end applies, so a SetAccent landing while the pointer
+	-- is on the button doesn't snap it back to the resting fill.
+	local _, setHover = Create.hover(btn, "BackgroundColor3", base(), over())
 	btn.Activated:Connect(function()
 		-- quick squash-and-release so the tap feels physical
 		scale.Scale = 0.96
@@ -59,7 +54,7 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 
 	if accent then
 		ctx:RegisterAccent(function()
-			btn.BackgroundColor3 = hovering and over() or base()
+			setHover(base(), over())
 		end)
 	end
 	return btn

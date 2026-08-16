@@ -28,6 +28,15 @@ local Image = require(script.Parent.Image)
 local DataGrid = require(script.Parent.DataGrid)
 local MediaPlayer = require(script.Parent.MediaPlayer)
 
+-- The options EVERY control takes, checked here so each component only declares
+-- what it adds on top (its own `SCHEMA`). `Desc` and `Default` are deliberately
+-- absent: `Desc` is Field's, and `Default` is a different type per control.
+local COMMON_SCHEMA: Log.Schema = {
+	{ "Name", "string" },
+	{ "Callback", "function" },
+	{ "Flag", "string" },
+}
+
 local Controls = {}
 
 -- `inheritParent` is the bind-HUD parent (util/Bind.lua's tree) a Group or
@@ -86,10 +95,7 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 				:format(typeof(opts), control))
 		end
 		if opts then
-			local where = Log.where(control, opts.Name)
-			Log.field(where, "Callback", opts.Callback, "function")
-			Log.field(where, "Flag", opts.Flag, "string")
-			Log.field(where, "Name", opts.Name, "string")
+			Log.check(Log.where(control, opts.Name), opts, COMMON_SCHEMA)
 		end
 
 		-- A Group / Section built with `Parent = "<feature>"` hands that down to

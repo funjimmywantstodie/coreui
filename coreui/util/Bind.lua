@@ -39,6 +39,7 @@ local Services = require(script.Parent.Services)
 local UserInputService = Services.UserInputService
 
 local Log = require(script.Parent.Log)
+local Signal = require(script.Parent.Signal)
 
 local Bind = {}
 Bind.__index = Bind
@@ -190,7 +191,7 @@ function Bind.new(ctx: any): any
 		ctx = ctx,
 		entries = {} :: { any },
 		connections = {} :: { RBXScriptConnection },
-		observers = {} :: { () -> () },
+		observers = Signal.new(),
 		-- Bumped on every registry change — what observers (the HUD) repaint off.
 		revision = 0,
 		-- Bumped only when the bind TREE itself can have moved: a binding
@@ -240,16 +241,7 @@ end
 -- nothing (a HUD is destroyed with the window) must still call it, or its dead
 -- closure runs on every keypress forever.
 function Bind:Observe(fn: () -> ()): () -> ()
-	table.insert(self.observers, fn)
-	return function()
-		local list = self.observers
-		for i = #list, 1, -1 do
-			if list[i] == fn then
-				table.remove(list, i)
-				break
-			end
-		end
-	end
+	return self.observers:Connect(fn)
 end
 
 -- Every registered binding, in registration order. A snapshot: callers are free
@@ -274,9 +266,7 @@ end
 -- the user callback).
 function Bind:_changed()
 	self.revision += 1
-	for _, fn in table.clone(self.observers) do
-		fn()
-	end
+	self.observers:Fire()
 end
 
 -- A change that can move the parent/child graph, as opposed to one that only
@@ -446,7 +436,7 @@ function Bind:Destroy()
 		entry.onState = nil
 	end
 	table.clear(self.entries)
-	table.clear(self.observers)
+	self.observers:Clear()
 	self.structure += 1
 	self.revision += 1
 end

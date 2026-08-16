@@ -139,4 +139,39 @@ function Log.field(where: string, field: string, value: any, accepts: string | {
 	return value
 end
 
+-- A whole options table against a declared shape, in one call:
+--
+--   local SCHEMA: Log.Schema = {
+--       { "Name", "string" },
+--       { "Keybind", { "EnumItem", "boolean" } },
+--   }
+--   ...
+--   Log.check(where, opts, SCHEMA)
+--
+-- Same rules as `Log.field` per entry (nil passes; a wrong type is a hard fail
+-- naming the field). What this buys is not brevity — it's that the shape becomes
+-- a value the component OWNS, next to the code that reads it, instead of a run
+-- of imperative calls at whichever call site happened to validate first.
+--
+-- That mattered most for tabs: `CreateTab` validated fifteen fields inside
+-- components/Window.lua while components/Tab.lua separately normalized `Pin` and
+-- `Style`, so one option's contract was split across two files and adding one
+-- meant editing both. Tab now declares its own and Window just forwards.
+--
+-- An ARRAY of pairs rather than a `{ [field] = type }` map, deliberately: Luau
+-- table iteration order is a hash order, so a map would report an arbitrary one
+-- of several bad fields and a different one on the next run. This reports the
+-- first bad field in declaration order, every time.
+export type Schema = { { any } }
+
+function Log.check(where: string, opts: any, schema: Schema): any
+	if opts == nil then
+		return opts
+	end
+	for _, entry in schema do
+		Log.field(where, entry[1] :: string, opts[entry[1]], entry[2] :: any)
+	end
+	return opts
+end
+
 return Log

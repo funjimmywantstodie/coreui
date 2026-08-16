@@ -20,12 +20,16 @@ local function format(v: number, suffix: string): string
 	return ("%g"):format(v) .. suffix
 end
 
+local SCHEMA: Log.Schema = {
+	{ "Min", "number" },
+	{ "Max", "number" },
+	{ "Step", "number" },
+}
+
 return function(ctx: any, opts: any)
 	local colors = Theme.Colors
 	local where = Log.where("Slider", opts.Name)
-	Log.field(where, "Min", opts.Min, "number")
-	Log.field(where, "Max", opts.Max, "number")
-	Log.field(where, "Step", opts.Step, "number")
+	Log.check(where, opts, SCHEMA)
 
 	local min = opts.Min or 0
 	local max = opts.Max or 100

@@ -167,12 +167,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 			Create.padding(0, 8),
 		}) :: TextButton
 
-		btn.MouseEnter:Connect(function()
-			Tween.play(btn, Tween.Fast, { BackgroundColor3 = colors.control_hi })
-		end)
-		btn.MouseLeave:Connect(function()
-			Tween.play(btn, Tween.Fast, { BackgroundColor3 = colors.control })
-		end)
+		Create.hover(btn, "BackgroundColor3", colors.control, colors.control_hi)
 		return btn
 	end
 

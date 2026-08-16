@@ -53,15 +53,19 @@ local function wordmark(s: string): string
 	return table.concat(out, " ")
 end
 
+local SCHEMA: Log.Schema = {
+	{ "Title", "string" },
+	{ "Subtitle", "string" },
+	{ "Duration", "number" },
+	{ "Dim", "number" },
+	{ "Steps", "table" },
+}
+
 return function(ctx: any, parent: Instance, opts: any): any
 	opts = opts or {}
 	local colors = Theme.Colors
 
-	Log.field("Splash", "Title", opts.Title, "string")
-	Log.field("Splash", "Subtitle", opts.Subtitle, "string")
-	Log.field("Splash", "Duration", opts.Duration, "number")
-	Log.field("Splash", "Dim", opts.Dim, "number")
-	Log.field("Splash", "Steps", opts.Steps, "table")
+	Log.check("Splash", opts, SCHEMA)
 
 	local duration = math.clamp(tonumber(opts.Duration) or 2, 1, 8)
 	-- `Dim` is opacity (1 = solid chrome over the game), not transparency.
