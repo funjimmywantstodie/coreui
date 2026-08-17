@@ -53,9 +53,19 @@ local function group(tab: any, opts: any, title: string, column: number): any
 	return tab:CreateGroup({ Title = opts.Title or title, Column = opts.Column or column })
 end
 
+-- Where control descriptions are drawn, as the user picks it. Capitalized for the
+-- dropdown and handed to `SetDescriptions` unchanged — it lowercases — so the
+-- persisted value is the label the user saw rather than a second vocabulary.
+local DESCRIPTION_OPTIONS = { "Hover", "Inline", "Both" }
+local DESCRIPTION_LABELS: { [string]: string } = {
+	hover = "Hover",
+	inline = "Inline",
+	both = "Both",
+}
+
 -- ── Interface ────────────────────────────────────────────────────────────────
--- Accent colour, the toggle keybind, notifications, the bind HUD switch.
--- Returns `{ Group, Accent, ToggleKey, Notifications, Hud }`.
+-- Accent colour, the toggle keybind, descriptions, notifications, the bind HUD
+-- switch. Returns `{ Group, Accent, ToggleKey, Descriptions, Notifications, Hud }`.
 function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 	local o: any = opts or {}
 	local g = group(tab, o, "Interface", 1)
@@ -79,6 +89,27 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			window:SetToggleKey(k)
 		end,
 	})
+	-- The library moved descriptions off the row and behind a hover glyph by
+	-- default, which is a change to how the whole menu reads — so the user gets the
+	-- old look back from here rather than needing the hub author to pass an option.
+	-- Unlike the HUD switch below this IS the flag: the mode isn't persisted
+	-- anywhere else, so there's nothing for a second one to fight with on load.
+	controls.Descriptions = g:Dropdown({
+		Name = "Descriptions",
+		Desc = "Hover for a popover, inline for a line under each name.",
+		-- ...and this row is the one place `Desc` must never be hover-only: a user
+		-- who has just set the mode to "Inline" and wants to change it back can't be
+		-- asked to hover the control that explains hovering.
+		Info = false,
+		Flag = o.DescriptionsFlag or "uranium_descriptions",
+		Options = DESCRIPTION_OPTIONS,
+		Default = DESCRIPTION_LABELS[window:GetDescriptions()],
+		Width = 110,
+		Callback = function(mode)
+			window:SetDescriptions(mode)
+		end,
+	})
+
 	-- `Hud = false` on the switches below: they're preferences about the UI, not
 	-- features running in the game, and the bind HUD lists what's running. Left to
 	-- the default rule they'd all qualify — a keyless toggle that's ON is listed —

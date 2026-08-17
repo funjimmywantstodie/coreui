@@ -25,6 +25,11 @@ local Window = Uranium:CreateWindow({
 	-- point), the Settings tab has a switch for it, and a saved config remembers
 	-- where you left it.
 	Hud          = { X = 16, Y = 120 },
+	-- Where a control's `Desc` goes. "hover" (the default) puts it behind the small
+	-- info glyph after the name — a card of eight described controls is one screen
+	-- tall instead of three. "inline" is the old second-line-of-prose look, "both"
+	-- is both. `Window:SetDescriptions(mode)` switches it live.
+	Descriptions = "hover",
 	-- The ScreenGui goes to the most hidden container available — gethui(), then
 	-- CoreGui, then PlayerGui — under a random name. Pass `Parent = <container>`
 	-- to place it yourself; `Window.ScreenGui` is the instance either way.
@@ -233,6 +238,29 @@ Controls:Toggle({
 	Callback = function(on) print("feature:", on) end,
 })
 Controls:Toggle({ Name = "Auto Mode", Default = false, Flag = "auto_mode" })
+-- `Desc` alone is the whole feature: in the default "hover" mode it becomes a dim
+-- ⓘ after the name, and the row costs nothing. `Info` is there when a sentence
+-- isn't enough — a longer body than the inline line, short facts as bullets,
+-- key/value rows, and a toned note that tints the glyph itself. That tint is the
+-- point: this row *looks* like it's hiding a cost, instead of looking identical to
+-- one hiding "Skip teammates."
+Controls:Toggle({
+	Name = "Visible Only", Desc = "Skip anyone with something between you.",
+	Flag = "visible_only",
+	Info = {
+		Text    = "Casts one ray per candidate and drops the ones it can't see. "
+		       .. "Cheap in an open map, expensive indoors.",
+		Bullets = { "Ignores your own character", "Re-checks every frame" },
+		Fields  = { { "Cost", "1 ray per candidate" }, { "Updates", "each frame" } },
+		Note    = { Tone = "warn", Text = "Costs a raycast per candidate." },
+	},
+})
+-- ...and `Info = false` opts one control out: its description stays on the row in
+-- every mode, for the one line a user has to read without hovering anything.
+Controls:Toggle({
+	Name = "Anti-AFK", Desc = "Always on — nothing to configure.",
+	Flag = "anti_afk", Info = false,
+})
 -- Any toggle can carry its own key — `Keybind` binds it, `KeybindMode` says what
 -- the key does. `KeybindFlag` persists the key + mode alongside the value, so a
 -- saved config restores "hold B" as well as "on".

@@ -159,6 +159,7 @@ local Window = Uranium:CreateWindow({
     AllowMultiple = false,                   -- skip the single-instance guard (default false)
     Hud          = true,                     -- floating bind HUD (default off; see below)
     Keybinds     = true,                     -- toggles carry a bind chip (default true)
+    Descriptions = "hover",                  -- where control `Desc` is drawn (default "hover")
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
@@ -175,6 +176,10 @@ it is created — and `Window:SetConfigFolder(path)` re-scopes it later.
 `Keybinds = false` takes the bind chip off every toggle window-wide (see
 [Toggle](#toggle)). It's the default, not a ban: a control that asks for a
 keybind explicitly still gets one.
+
+`Descriptions` picks where every control's `Desc` is drawn — `"hover"` (behind an
+info glyph), `"inline"` (a second line of prose under the name) or `"both"`. See
+[Descriptions](#descriptions-desc--info).
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
@@ -245,6 +250,8 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:GetToggleKey()` → `Enum.KeyCode` | The current show/hide key. |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
 | `Window:GetNotificationsEnabled()` → `bool` | Whether toasts are on. |
+| `Window:SetDescriptions(mode)` → `string` | `"hover"` / `"inline"` / `"both"`, applied live to the fields already on screen. Returns the mode in force afterwards. |
+| `Window:GetDescriptions()` → `string` | The current description mode. |
 | `Window:CreateHud(opts?)` | Build (or fetch) the floating bind HUD. See below. |
 | `Window:GetHud()` | The HUD handle, or `nil` if there isn't one. |
 | `Window:SetHudVisible(bool)` | Show/hide it, building it on first use. |
@@ -799,8 +806,12 @@ All controls below are methods on a **Group** or **Section** surface.
 
 ### Common conventions
 
-- **`Name`** — the field label (left side). **`Desc`** — optional sub-text under it.
-  Omitting `Name` on a Button makes it a bare full-width button.
+- **`Name`** — the field label (left side). **`Desc`** — optional description; by
+  default it lives in a hover popover behind a small glyph after the name rather
+  than on the row (see [Descriptions](#descriptions-desc--info)). Omitting `Name`
+  on a Button makes it a bare full-width button.
+- **`Info`** — a richer description for that popover (title, body, bullets,
+  key/value rows, a toned note). `Info = false` keeps this control's `Desc` inline.
 - **`Callback`** — fired on every value change with the new value.
 - **`Default`** — initial value.
 - **`Flag = "id"`** — registers the control for config save/load. The value is
@@ -810,6 +821,72 @@ All controls below are methods on a **Group** or **Section** surface.
 
 Stateful controls return a **handle** with `:Get()` and `:Set(value)`. `:Set`
 fires the callback.
+
+---
+
+### Descriptions (`Desc` / `Info`)
+
+A `Desc` used to be a second line of prose under every control's name,
+unconditionally — which meant a card with eight described controls was three
+screens tall and the panel read as documentation with switches buried in it. It
+isn't printed on the row by default any more:
+
+```lua
+Uranium:CreateWindow({ Descriptions = "hover" })   -- default
+```
+
+| Mode | What a described control looks like |
+| --- | --- |
+| `"hover"` | A dim info glyph immediately after the name. The text is in a popover. **Default.** |
+| `"inline"` | The old behaviour — `Desc` as a second line under the name, no glyph. |
+| `"both"` | Glyph *and* inline line, so the popover can read longer than the row does. |
+
+`Window:SetDescriptions(mode)` switches it at runtime and re-lays out the fields
+that are already on screen, so a hub can offer it as a switch in its own settings
+panel. It returns the mode in force afterwards — an unrecognized one warns and
+changes nothing, so you can echo the result back into your control instead of
+assuming the write landed.
+
+**Reaching the popover.** Hover the glyph *or* the name and it opens after ~300ms,
+closing as soon as you leave. **Click the glyph to pin it** — it then stays up
+until you click somewhere else, which is what lets you read it while dragging the
+slider it's describing. On touch there is no hover at all, so tapping the glyph
+(a ~24px target around the 13px mark) is the only way in, and tapping anywhere
+else closes it.
+
+A control with neither `Desc` nor `Info` gets no glyph and no gap. `Info = false`
+opts one control out entirely: its `Desc` stays on the row in every mode.
+
+**`Info` — when a sentence isn't enough.** Every field is optional, and anything
+unusable is simply dropped rather than erroring:
+
+```lua
+Group:Toggle({
+    Name = "Visible Only",
+    Desc = "Skip anyone with something between you.",  -- popover body, and the
+                                                       -- inline line in "inline"/"both"
+    Info = {
+        Title   = nil,      -- default: the control's `Name`
+        Text    = nil,      -- body; default: `Desc`. Set both when the popover
+                            -- should read longer than the inline line.
+        Bullets = { "Ignores your own character", "Re-checks every frame" },
+        Fields  = { { "Cost", "1 ray per candidate" } },  -- key/value, value right-aligned
+        Note    = { Tone = "warn", Text = "Costs a raycast per candidate." },
+        Icon    = "info",   -- Lucide short-name for the glyph
+        Width   = nil,      -- px, default 260 (clamped 160–420)
+        Tone    = nil,      -- tint the glyph without a Note
+    },
+})
+```
+
+`Note.Tone` (or `Info.Tone`) **tints the glyph**: `"warn"` amber, `"danger"` red,
+`"info"` the default dim. That's the point of having tones — a row hiding a
+performance cost or a footgun advertises that it does, instead of looking
+identical to one hiding "Skip teammates." (`"warning"` and `"error"` are accepted
+as aliases, and `Note = "some text"` is shorthand for an `info`-toned one.)
+
+An `Info` table with nothing in it but a `Title` produces no glyph: the title is
+the label it would be sitting next to.
 
 ---
 
@@ -1460,6 +1537,7 @@ local tab, controls = Window:CreateSettingsTab({
 ```
 
 A drop-in panel that wires up: accent color picker, the toggle-UI keybind, a
+**Descriptions** picker (see [Descriptions](#descriptions-desc--info)), a
 notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
 **Unload** button.
@@ -1474,7 +1552,7 @@ The second return is every handle the panel built, also on `tab.Controls`:
 
 | Key | What |
 | --- | --- |
-| `Accent` `ToggleKey` `Notifications` `Hud` | The Interface controls. |
+| `Accent` `ToggleKey` `Descriptions` `Notifications` `Hud` | The Interface controls. |
 | `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
 | `OnSelect(fn)` → `unsub` | `fn(name)` whenever the selection changes. |
 | `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |
@@ -1519,7 +1597,7 @@ Each group is also public, so you can compose your own settings tab instead:
 
 ```lua
 local tab = Window:CreateTab({ Name = "Settings", Icon = "gear" })
-Uranium.Settings.InterfaceGroup(Window, tab)          -- accent / key / toasts / HUD
+Uranium.Settings.InterfaceGroup(Window, tab)          -- accent / key / descriptions / toasts / HUD
 myOwnConfigGroup(Window, tab)                         -- ...and your own persistence UI
 Uranium.Settings.DangerGroup(Window, tab)
 ```

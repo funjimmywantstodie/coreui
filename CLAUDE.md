@@ -136,6 +136,8 @@ coreui/
     WindowHud.lua     ...its bind-HUD ownership (same)
     WindowState.lua   ...the `uranium_window` flag, via an explicit deps table
     Settings.lua      the built-in settings panel, as composable group builders
+    Field.lua         the row scaffold (name | control), and which mode `Desc` is in
+    Info.lua          the description popover + the glyph that advertises one
     Screen.lua        the full-screen status page — ALSO the source of ui/screen.lua
 standalone/
   screen.prelude.lua  the dependency-free prelude ui/screen.lua is built with
@@ -178,11 +180,12 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,OnFlag?,OnFlagChanged?,PersistWindow?,WindowFlag?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,Descriptions?,OnFlag?,OnFlagChanged?,PersistWindow?,WindowFlag?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?,Sections?,Notify?}` → `tab, controls` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)`/`:GetAccent()` · `:SetLogo(source, zoom?)` ·
   `:SetToggleKey(KeyCode)`/`:GetToggleKey()` ·
   `:SetNotificationsEnabled(b)`/`:GetNotificationsEnabled()` ·
+  `:SetDescriptions(mode)`/`:GetDescriptions()` ·
   `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` · `:OnHudChanged(fn)` ·
   `:GetPosition()`/`:SetPosition(x,y)` · `:GetSize()`/`:SetSize(w,h)` ·
   `:IsMaximized()`/`:SetMaximized(b, animate?)` · `:GetSelected()` ·
@@ -218,6 +221,9 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
     `Keybind`/`KeybindMode`/`KeybindModes`/`KeybindFlag` to preset it or
     `Keybind = false` to drop it — see **Keybinds & modes** below. Both also take
     `Parent` (the feature this control is a sub-option of) — see **The bind HUD**.
+  - Every control takes `Desc` (and the richer `Info` table) — drawn as a hover
+    popover behind a glyph, NOT inline, unless the window says otherwise. See
+    **Descriptions** below.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
@@ -307,6 +313,71 @@ false` until it plays. The caller's tabs populate the hidden window while the
 splash is up, so nothing else in the API changes. `onDone` fires when the fade
 *begins*, so the window pops in behind the dim and the two cross-fade instead of
 the screen blinking empty between them.
+
+## Descriptions — `Desc` is a popover now, not a second line
+
+`components/Info.lua` is the popover a control's description lives in, and the
+glyph that advertises it; `components/Field.lua` decides which of the two forms a
+given field draws. `CreateWindow{ Descriptions = "hover" | "inline" | "both" }`
+(default **hover**), `Window:SetDescriptions(mode)` at runtime.
+
+The pressure this came out of: `Desc` was drawn unconditionally as a wrapped line
+of `text_muted` under every control's name, so a card with eight described
+controls was three screens tall and the panel read as documentation with switches
+buried in it. Deleting the prose isn't an option — it's the difference between a
+menu you can use and one you guess at — so it moved behind a glyph.
+
+- **The glyph is the entire affordance, and it costs no row height.** There's no
+  `cursor: help` in Roblox, so a row with something to say has to *look* like one
+  or the description isn't hidden, it's gone. It's 13px and dim, and it's placed
+  by hand at `Title.TextBounds.X + 5` inside a `TitleRow` frame — not by a
+  `UIListLayout`, which only knows the label's box (the full block width) and
+  would park it out at the right edge. The title reserves `Info.Size + gap` off
+  its *wrap* width so the glyph never lands on the control beside it. A control
+  with nothing to say gets no glyph and no gap.
+- **The hitbox is a 24px child of a 13×15 slot.** AutomaticSize measures a
+  container's direct children by their own size, so the slot is what the row sees
+  while the button still offers a thumb-sized target. Growing the slot instead
+  would grow the row, which is the one thing this feature must not do — and the
+  target has to be real, because on touch `MouseEnter` never fires and **the tap
+  that pins is the only way in at all**.
+- **Pinned goes through `ctx:OpenPopover`; hover deliberately does not.** That
+  manager installs a full-overlay click catcher, which is exactly right for a
+  pinned panel (click anywhere dismisses, and on touch that's the only dismiss)
+  and exactly wrong for a hover one — it would eat the click on the very control
+  the description describes. The hover half uses `ctx:AnchorTo` instead, which is
+  the clamp/flip placement **split out of `OpenPopover`** for this, so both halves
+  can't drift apart on where a popover is allowed to sit.
+- **Two Fades over one tree, so hand it over at rest.** `pin()` calls `rest()`
+  (`fade:Set(0)` + hide) before `OpenPopover`, because OpenPopover snapshots the
+  subtree it's given and a snapshot taken over a half-played hover fade becomes
+  the new baseline — a permanently washed-out panel (util/Fade.lua).
+- **`Tone` tints the glyph, and that's the point of having tones.** `warn` amber,
+  `danger` red, `info` the dim default: a row hiding a performance cost or a
+  footgun advertises that it does instead of looking identical to one hiding "Skip
+  teammates". The *glyph's* `info` is `text_dim` and not the accent (it lands on
+  half the rows in the menu; a green dot on all of them is noise), while an `info`
+  **note tile** does take the accent — same call `Screen.lua` makes, for the same
+  reason: grey on grey at that size is no mark at all.
+- **A `Desc` never silently vanishes.** `Field` asks `Info.spec(opts)` whether
+  there is anything worth a popover *before* deciding; with no glyph (mode
+  `inline`, `Info = false`, or an `Info` that resolved to nothing but a title) the
+  description stays on the row. `"inline"` is the old tree byte for byte — the
+  full-width wrapped title straight in `block`, no `TitleRow` — because that mode
+  exists to be indistinguishable from before.
+- **Live switching re-lays out what's on screen.** Everything mode-dependent is
+  built by `Field`'s `apply()` and nothing else, and every field subscribes to
+  `ctx:OnDescriptions`. The mode lives on the **Context** (like `ctx.Keybinds`),
+  not on the window: fields are built at arbitrary times and a tab created thirty
+  seconds later has to get the same answer. Its string validation lives there too
+  (util/ can't require components/), and an unrecognized mode **warns and changes
+  nothing** rather than falling back to the default — a typo in a host's settings
+  switch that silently means "hover" reads as "the switch does nothing in one
+  position", which is far harder to notice.
+- The Settings panel's Interface group carries the switch (`uranium_descriptions`,
+  a dropdown), and it's the one control in the library that passes `Info = false`
+  on purpose: a user who has just set the mode to Inline can't be asked to hover
+  the control that explains hovering.
 
 ## The status page — `Uranium:Screen`, and the second build of it
 
@@ -557,7 +628,8 @@ and a nested one ("uranium/games/12345") silently failed to save on any executor
 whose `makefolder` isn't itself recursive.
 
 `Window:CreateSettingsTab()` is a drop-in panel (accent picker, the toggle
-keybind, notifications switch, config save/load/delete + auto-load, Unload). Its
+keybind, the description mode, notifications switch, config save/load/delete +
+auto-load, Unload). Its
 controls are themselves flagged, so saving a config captures them too. **Call it
 LAST** — its deferred auto-load pass only sees flags registered before it runs
 (`Config = { AutoLoad = false }` opts out). Dropdown gained

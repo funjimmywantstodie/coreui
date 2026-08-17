@@ -25,6 +25,7 @@ export type Context = typeof(setmetatable(
 		AccentFill: Color3,
 		AccentSoft: Color3,
 		Keybinds: boolean,
+		Descriptions: string,
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		Groups: { { key: string, handle: any } },
@@ -35,6 +36,7 @@ export type Context = typeof(setmetatable(
 		-- snapshot so a listener may unsubscribe itself mid-broadcast — are the
 		-- Signal's.
 		_consumers: Signal.Signal<Color3, Color3>,
+		_descWatchers: Signal.Signal<string>,
 		_flagWatchers: Signal.Signal<string, string>,
 		_valueWatchers: Signal.Signal<string, any, string, string>,
 		_lastEncoded: { [string]: any },
@@ -43,7 +45,7 @@ export type Context = typeof(setmetatable(
 		_popover: {
 			menu: Instance,
 			catcher: Instance,
-			conns: { RBXScriptConnection },
+			unanchor: () -> (),
 			onClose: (() -> ())?,
 			fade: any,
 		}?,
@@ -90,6 +92,10 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		-- test harness) gets the default. Read it as `ctx.Keybinds ~= false` so a
 		-- context predating the field still means "yes".
 		Keybinds = true,
+		-- Where a control's `Desc` is drawn — see SetDescriptions. "hover" is the
+		-- default because inline prose under every row is what made a card of eight
+		-- controls three screens tall.
+		Descriptions = "hover",
 		overlay = overlay,
 		Flags = {},
 		-- Every collapsible group in the window, in build order, each under a
@@ -98,6 +104,7 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		Groups = {},
 		_groupKeys = {},
 		_consumers = Signal.new(),
+		_descWatchers = Signal.new(),
 		_flagWatchers = Signal.new(),
 		_valueWatchers = Signal.new(),
 		_lastEncoded = {},
@@ -161,6 +168,50 @@ function Context:SetAccent(color: Color3)
 	-- and stepped over. (Firing over a snapshot — so a consumer may unsubscribe
 	-- itself mid-broadcast without skipping the next control — is Signal's job.)
 	self._consumers:Fire(self.Accent, self.AccentHover)
+end
+
+-- ── Descriptions ────────────────────────────────────────────────────────────
+-- Where a control's `Desc` goes: "inline" (a second line of prose under its name,
+-- which is what every control used to do unconditionally), "hover" (behind the
+-- info glyph — components/Info.lua) or "both".
+--
+-- It lives on the Context rather than on the window because every field reads it,
+-- and fields are built at arbitrary times: a host that builds a tab thirty seconds
+-- after CreateWindow has to get the same answer as the first card did.
+--
+-- The mode STRINGS are validated here, next to the value, even though the popover
+-- that implements two of them is a component — util/ can't require components/,
+-- and a host switching the mode from a settings toggle is the caller most likely
+-- to hand us a typo.
+local DESCRIPTION_MODES: { [string]: boolean } = { hover = true, inline = true, both = true }
+
+-- Returns the mode in force afterwards, which is NOT necessarily the one asked
+-- for: an unrecognized mode warns and changes nothing. Silently falling back to
+-- the default would turn one typo in a host's settings switch into "the switch
+-- does nothing in one position", which is far harder to notice than a warning.
+function Context:SetDescriptions(mode: any): string
+	local wanted = type(mode) == "string" and mode:lower() or nil
+	if wanted == nil or not DESCRIPTION_MODES[wanted] then
+		local got = if type(mode) == "string" then ('"%s"'):format(mode) else typeof(mode)
+		Log.warn("Descriptions", ('expects "hover", "inline" or "both", got %s — staying on "%s".')
+			:format(got, self.Descriptions))
+		return self.Descriptions
+	end
+	if wanted == self.Descriptions then
+		return wanted
+	end
+	self.Descriptions = wanted
+	-- Unguarded, like SetAccent: these are the library's own fields re-laying
+	-- themselves out, so one throwing is our bug and should surface.
+	self._descWatchers:Fire(wanted)
+	return wanted
+end
+
+-- Every field subscribes so a runtime switch re-lays out the menu that's already
+-- on screen instead of the next one built. No replay — the field reads
+-- `ctx.Descriptions` itself when it builds, which is the same answer.
+function Context:OnDescriptions(fn: (string) -> ()): () -> ()
+	return self._descWatchers:Connect(fn)
 end
 
 -- ── Flags / config ──────────────────────────────────────────────────────────
@@ -737,9 +788,7 @@ function Context:ClosePopover()
 		return
 	end
 	self._popover = nil
-	for _, conn in p.conns do
-		conn:Disconnect()
-	end
+	p.unanchor()
 	p.catcher:Destroy()
 	-- Land the open-fade back on its resting values before hiding. Closing
 	-- mid-fade and immediately reopening would otherwise snapshot the half-faded
@@ -751,27 +800,17 @@ function Context:ClosePopover()
 	end
 end
 
--- Open `menu` directly under `anchor`, closing any other open popover first.
--- A full-overlay catcher button dismisses it on any outside click.
-function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() -> ())?)
-	self:ClosePopover()
-
-	local catcher = Create("TextButton", {
-		Name = "Catcher",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		ZIndex = 50,
-		Parent = self.overlay,
-	})
-	menu.ZIndex = 60
-	menu.Parent = self.overlay
-
-	-- Place the menu under the anchor, but keep it inside the overlay (= window)
-	-- bounds: clamp horizontally, and flip above the anchor when there isn't
-	-- enough room below. The window clips descendants, so a menu that spilled
-	-- off the edge would be cut off — this keeps it fully visible.
+-- Place `menu` under `anchor`, keep it inside the overlay (= window) bounds —
+-- clamp horizontally, flip above the anchor when there isn't enough room below —
+-- and keep doing so as either of them moves. Returns a function that stops
+-- tracking. The window clips descendants, so a menu that spilled off the edge
+-- would be cut off; this keeps it fully visible.
+--
+-- Split out of OpenPopover because the hover half of components/Info.lua needs
+-- exactly this and none of the rest: a popover that follows the cursor's dwell
+-- must NOT install the click catcher, or it eats the click on the very control
+-- its description is describing.
+function Context:AnchorTo(menu: GuiObject, anchor: GuiObject): () -> ()
 	local MARGIN = 8
 	local GAP = 6
 	local function place()
@@ -795,6 +834,40 @@ function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() ->
 		menu.Position = UDim2.fromOffset(x, y)
 	end
 	place()
+
+	-- Re-place when the anchor moves, when the menu's auto-size settles, or when
+	-- the window resizes.
+	local conns = {
+		anchor:GetPropertyChangedSignal("AbsolutePosition"):Connect(place),
+		menu:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
+		self.overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
+	}
+	return function()
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		table.clear(conns)
+	end
+end
+
+-- Open `menu` directly under `anchor`, closing any other open popover first.
+-- A full-overlay catcher button dismisses it on any outside click.
+function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() -> ())?)
+	self:ClosePopover()
+
+	local catcher = Create("TextButton", {
+		Name = "Catcher",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 50,
+		Parent = self.overlay,
+	})
+	menu.ZIndex = 60
+	menu.Parent = self.overlay
+
+	local unanchor = self:AnchorTo(menu, anchor)
 	menu.Visible = true
 
 	-- Fade the menu in as a unit. This used to be a CanvasGroup + one
@@ -806,14 +879,7 @@ function Context:OpenPopover(menu: GuiObject, anchor: GuiObject, onClose: (() ->
 	fade:Set(1)
 	fade:To(Tween.Pop, 0)
 
-	-- Re-place when the anchor moves, when the menu's auto-size settles, or when
-	-- the window resizes.
-	local conns = {
-		anchor:GetPropertyChangedSignal("AbsolutePosition"):Connect(place),
-		menu:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
-		self.overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
-	}
-	self._popover = { menu = menu, catcher = catcher, conns = conns, onClose = onClose, fade = fade }
+	self._popover = { menu = menu, catcher = catcher, unanchor = unanchor, onClose = onClose, fade = fade }
 	catcher.Activated:Connect(function()
 		self:ClosePopover()
 	end)

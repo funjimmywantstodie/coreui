@@ -25,6 +25,7 @@ local Log = require(script.Parent.Parent.util.Log)
 local Gui = require(script.Parent.Parent.util.Gui)
 local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
+local Info = require(script.Parent.Info)
 local Notify = require(script.Parent.Notify)
 local Splash = require(script.Parent.Splash)
 local SettingsPanel = require(script.Parent.Settings)
@@ -54,6 +55,7 @@ local WINDOW_SCHEMA: Log.Schema = {
 	{ "Splash", { "boolean", "table" } },
 	{ "Hud", { "boolean", "table" } },
 	{ "Keybinds", "boolean" },
+	{ "Descriptions", "string" },
 	{ "OnFlag", "function" },
 	{ "OnFlagChanged", "function" },
 	{ "PersistWindow", "boolean" },
@@ -677,6 +679,13 @@ return function(opts: any)
 	-- otherwise grow one by default (Toggle). A control that asks for a keybind
 	-- explicitly still gets it — this is the default, not a ban.
 	ctx.Keybinds = opts.Keybinds ~= false
+	-- Where every control's `Desc` is drawn: "hover" (the default — behind the info
+	-- glyph, components/Info.lua), "inline" (a second line under the name, what the
+	-- library used to do unconditionally) or "both". Set before a single control
+	-- exists, and switchable later with Window:SetDescriptions.
+	if opts.Descriptions ~= nil then
+		ctx:SetDescriptions(opts.Descriptions)
+	end
 
 	-- `CreateWindow{ OnFlag = function(name, kind) end }` — installed before a
 	-- single control exists, so a loader sees every flag the menu ever registers,
@@ -995,10 +1004,15 @@ return function(opts: any)
 	local minimized = false
 	-- Nav flyouts don't get a MouseLeave when the window vanishes from under the
 	-- cursor, so hiding/unloading drops them explicitly (see Tab:_hideFlyout).
+	-- A description popover opened by hovering an info glyph has exactly the same
+	-- problem — the toggle key can hide the window while the cursor sits on one —
+	-- and the same consequence: it would sit in the window fade's snapshot and come
+	-- back on restore with nothing pointing at it.
 	local function hideFlyouts()
 		for _, tab in tabs do
 			tab:_hideFlyout()
 		end
+		Info.hide(ctx)
 	end
 	local function setMinimized(value: boolean)
 		minimized = value
@@ -1278,6 +1292,20 @@ return function(opts: any)
 
 	function window:GetNotificationsEnabled(): boolean
 		return notificationsEnabled
+	end
+
+	-- Where control descriptions are drawn: "hover" · "inline" · "both". Re-lays
+	-- out every field already on screen, not just the ones built afterwards, which
+	-- is what makes it worth offering as a switch in a host's own settings panel.
+	-- Returns the mode in force afterwards — an unrecognized one warns and changes
+	-- nothing, so a caller can echo the result back into its control rather than
+	-- assume the write landed.
+	function window:SetDescriptions(mode: string): string
+		return ctx:SetDescriptions(mode)
+	end
+
+	function window:GetDescriptions(): string
+		return ctx.Descriptions
 	end
 
 	-- ── settings: headless keybinds ───────────────────────────────────────────
