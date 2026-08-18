@@ -69,5 +69,18 @@ return function(ctx: any, opts: any)
 	})
 	chip.Parent = f.row
 
+	-- Opt-in build-time fire: `Default` on its own never runs `Callback`
+	-- (see COMMON_SCHEMA in components/Controls.lua for why it stays opt-in).
+	-- The two modes have two different callback contracts, so this fires the one
+	-- this control is actually in — a picker reports its key, an activation bind
+	-- reports whether it's live, exactly as each would on its first real change.
+	if opts.FireDefault == true and opts.Callback then
+		if picker then
+			task.spawn(opts.Callback, handle:Get())
+		else
+			task.spawn(opts.Callback, handle:GetState(), handle:GetInfo())
+		end
+	end
+
 	return f.field, handle, true
 end

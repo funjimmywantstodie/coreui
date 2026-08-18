@@ -360,6 +360,13 @@ return function(ctx: any, opts: any): (Frame, any)
 	function handle:GetState(): boolean
 		return binding:GetState()
 	end
+	-- The `info` an activation callback is handed (`{ Key, Mode, KeyName }`), so a
+	-- caller firing one itself — components/Keybind.lua's `FireDefault` — passes
+	-- the same table util/Bind.lua would, rather than rebuilding the shape and
+	-- drifting from it.
+	function handle:GetInfo(): any
+		return binding:_info()
+	end
 	-- `fire` = also run the activation callback (default: just sync + repaint).
 	function handle:SetState(active: boolean, fire: boolean?)
 		binding:SetState(active, fire)

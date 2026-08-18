@@ -224,9 +224,26 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   - Every control takes `Desc` (and the richer `Info` table) — drawn as a hover
     popover behind a glyph, NOT inline, unless the window says otherwise. See
     **Descriptions** below.
+  - `List` and `Paragraph` are refreshable: `list:Set(items)` (same item shape,
+    rows pooled and repainted in place) and `para:Set(body)` / `para:SetTitle(t)`
+    (the title label is built lazily on first use). `Label:Set` was the only
+    update path in the display-only set before, which pushed anything wanting a
+    live *list* onto `Dropdown:SetOptions` — a widget picked for its update
+    method rather than for what it means.
 - Stateful controls take an optional `Flag = "id"` → captured by config save/load.
   `Custom`/`DataGrid` opt out (see below) — their content is transient, not a
   settable value.
+- **`Default` does not fire `Callback`** — a control opens at its default and the
+  callback runs on the first *change*. `FireDefault = true` is the opt-in that
+  fires it once at construction with the initial value, from each component's own
+  builder once its handle exists (so `Keybind` fires the shape its mode actually
+  has). It is **opt-in on purpose**: hub wrappers apply their own default at build
+  time (`if opts.Default then apply(true) end`) and would double-apply it. Making
+  it unconditional has to ship in lockstep with those wrappers dropping that line
+  — the coupling is written down in DOCS.md § Common conventions and beside
+  `COMMON_SCHEMA` in `components/Controls.lua`, which is where `FireDefault` is
+  declared (it means the same thing on every stateful control, so it isn't nine
+  component SCHEMAs).
 
 ## Single instance & unload
 

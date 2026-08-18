@@ -521,6 +521,14 @@ local function build(ctx: any, opts: any, multi: boolean)
 		fireCallback()
 	end
 
+	-- Opt-in build-time fire: `Default` on its own never runs `Callback`
+	-- (see COMMON_SCHEMA in components/Controls.lua for why it stays opt-in).
+	-- Through `fireCallback` so a `Default` of UserIds is resolved to live Player
+	-- instances the same way every later change is.
+	if opts.FireDefault == true then
+		fireCallback()
+	end
+
 	return f.field, handle, true
 end
 

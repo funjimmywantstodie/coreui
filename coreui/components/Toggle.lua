@@ -195,5 +195,11 @@ return function(ctx: any, opts: any)
 		paint(false)
 	end)
 
+	-- Opt-in build-time fire: `Default` on its own never runs `Callback`
+	-- (see COMMON_SCHEMA in components/Controls.lua for why it stays opt-in).
+	if opts.FireDefault == true and opts.Callback then
+		task.spawn(opts.Callback, state)
+	end
+
 	return f.field, handle, true
 end

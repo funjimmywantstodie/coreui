@@ -31,10 +31,24 @@ local MediaPlayer = require(script.Parent.MediaPlayer)
 -- The options EVERY control takes, checked here so each component only declares
 -- what it adds on top (its own `SCHEMA`). `Desc` and `Default` are deliberately
 -- absent: `Desc` is Field's, and `Default` is a different type per control.
+--
+-- `FireDefault` is here rather than in nine component SCHEMAs for the same
+-- reason `Callback` is: it means the same thing, and is the same type, on every
+-- stateful control. Each component still owns the *firing* — the value it hands
+-- over (and, for Keybind, the whole callback signature) is its own contract, so
+-- it fires from its own builder once its handle exists.
+--
+-- **Opt-in, and it has to stay opt-in.** A consumer that applies its own default
+-- at build time (`if opts.Default then apply(true) end` — the shape every hub
+-- that wraps this library ends up writing) would run it twice if this fired
+-- unconditionally. Making it unconditional is possible, but only in lockstep
+-- with those wrappers dropping their own line; see the note in
+-- DOCS.md § Common conventions, which is where that coupling is written down.
 local COMMON_SCHEMA: Log.Schema = {
 	{ "Name", "string" },
 	{ "Callback", "function" },
 	{ "Flag", "string" },
+	{ "FireDefault", "boolean" },
 }
 
 local Controls = {}
@@ -160,8 +174,10 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 			local onCallback, onChanged = opts.Callback, opts.OnChanged
 			local function notify()
 				-- `handle` is nil only if a control fires a callback from inside its
-				-- own constructor, before we've been handed it — nothing does today,
-				-- and a value that early is the default anyway.
+				-- own constructor, before we've been handed it — which is exactly what
+				-- `FireDefault` does, and skipping it there is the right answer twice
+				-- over: the flag isn't registered yet (RegisterFlag runs below), and a
+				-- control taking its Default is never a flag *change*.
 				if handle then
 					ctx:NotifyFlag(flag)
 				end

@@ -8,7 +8,8 @@ runs one source chunk, so we flatten every module into one file and emulate
 require() with an in-file module registry.
 
 A second, much smaller artifact is produced alongside it: `ui/screen.lua`, the
-standalone status page (see build_screen below).
+standalone status page (see build_screen below). `ui/` also carries a mirror of
+the bundle and of DOCS.md, which is the folder the Uranium repo copies in whole.
 
 Every build is VERIFIED before it is written anywhere anyone can reach it — see
 `verify` below. Nothing here used to parse its own output, so a syntax error in
@@ -31,6 +32,10 @@ OUT  = os.path.join(BASE, "coreui.bundle.lua")
 UI_DIR = os.path.join(BASE, "ui")
 UI_BUNDLE = os.path.join(UI_DIR, "uibundle.lua")
 UI_SCREEN = os.path.join(UI_DIR, "screen.lua")
+# ...and the consumer docs alongside them: the Uranium repo copies ui/ in as
+# build artifacts, so a DOCS.md that only exists at the root of this repo is one
+# hand-copy away from being a version behind the bundle it documents.
+UI_DOCS = os.path.join(UI_DIR, "DOCS.md")
 
 # Source of the status page: one body, two preludes (see build_screen).
 SCREEN_SRC = os.path.join(ROOT, "components", "Screen.lua")
@@ -852,7 +857,15 @@ def main():
     shutil.copyfile(OUT, UI_BUNDLE)
     print(f"wrote {UI_BUNDLE}  (mirror of coreui.bundle.lua)")
 
+    # Mirrored after api_check has had a chance to complain about the source
+    # DOCS.md, so what lands in ui/ is the copy that was just checked.
     api_check()
+    docs_src = os.path.join(BASE, "DOCS.md")
+    if os.path.isfile(docs_src):
+        shutil.copyfile(docs_src, UI_DOCS)
+        print(f"wrote {UI_DOCS}  (mirror of DOCS.md, {_kb(os.path.getsize(UI_DOCS))})")
+    else:
+        print("warn: DOCS.md not found — ui/DOCS.md was NOT refreshed")
 
     if not complete:
         print("\n** build NOT fully verified — install the Luau toolchain "
