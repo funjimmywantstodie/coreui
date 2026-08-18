@@ -56,6 +56,7 @@ local WINDOW_SCHEMA: Log.Schema = {
 	{ "Hud", { "boolean", "table" } },
 	{ "Keybinds", "boolean" },
 	{ "Descriptions", "string" },
+	{ "MinimizeHint", "boolean" },
 	{ "OnFlag", "function" },
 	{ "OnFlagChanged", "function" },
 	{ "PersistWindow", "boolean" },
@@ -97,6 +98,11 @@ return function(opts: any)
 	-- which key shows/hides the window (where configs live is WindowConfig's)
 	local toggleKey: Enum.KeyCode = opts.ToggleKey or Enum.KeyCode.RightShift
 	local notificationsEnabled = true
+	-- The little "UI Minimized" card in the corner. On by default — it's the only
+	-- thing on screen telling a first-time user which key brings the menu back —
+	-- but it's also the one piece of chrome that outlives the window's own fade,
+	-- so anyone recording or screenshotting with the menu hidden wants it gone.
+	local minimizeHint = opts.MinimizeHint ~= false
 	-- UserInputService connections live past the ScreenGui's lifetime, so they're
 	-- tracked here and disconnected by Window:Destroy.
 	local connections: { RBXScriptConnection } = {}
@@ -1027,7 +1033,7 @@ return function(opts: any)
 					main.Visible = false
 				end
 			end)
-			restoreHint.Visible = true
+			restoreHint.Visible = minimizeHint
 		else
 			-- restore from the shrunk/faded state: pop the scale, ease the fade in
 			main.Visible = true
@@ -1284,6 +1290,20 @@ return function(opts: any)
 
 	function window:GetToggleKey(): Enum.KeyCode
 		return toggleKey
+	end
+
+	-- The minimized card, on or off. Applied live: switching it off from the
+	-- Settings panel while the window is minimized is impossible (the panel is in
+	-- the window), but a host can call this from a keybind at any time, and a card
+	-- left on screen after being switched off would be the one bit of UI the
+	-- setting visibly failed to reach.
+	function window:SetMinimizeHint(enabled: boolean)
+		minimizeHint = enabled ~= false
+		restoreHint.Visible = minimizeHint and minimized
+	end
+
+	function window:GetMinimizeHint(): boolean
+		return minimizeHint
 	end
 
 	function window:SetNotificationsEnabled(enabled: boolean)

@@ -64,8 +64,9 @@ local DESCRIPTION_LABELS: { [string]: string } = {
 }
 
 -- ── Interface ────────────────────────────────────────────────────────────────
--- Accent colour, the toggle keybind, descriptions, notifications, the bind HUD
--- switch. Returns `{ Group, Accent, ToggleKey, Descriptions, Notifications, Hud }`.
+-- Accent colour, the toggle keybind, descriptions, the minimize hint,
+-- notifications, the bind HUD switch. Returns
+-- `{ Group, Accent, ToggleKey, Descriptions, MinimizeHint, Notifications, Hud }`.
 function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 	local o: any = opts or {}
 	local g = group(tab, o, "Interface", 1)
@@ -115,6 +116,22 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 	-- the default rule they'd all qualify — a keyless toggle that's ON is listed —
 	-- so every user would open the panel to find "Notifications" and, absurdly,
 	-- "Keybind HUD" at the top of it.
+
+	-- The "UI Minimized" card. It's the only on-screen answer to "where did the
+	-- menu go?", so it stays on by default — but it's also the one piece of the UI
+	-- that's deliberately visible when everything else is hidden, which is exactly
+	-- what someone recording or screenshotting with the menu closed wants rid of.
+	controls.MinimizeHint = g:Toggle({
+		Name = "Minimize Hint",
+		Desc = "Show the corner card when the UI is hidden.",
+		Flag = o.MinimizeHintFlag or "uranium_minimizehint",
+		Default = window:GetMinimizeHint(),
+		Hud = false,
+		Callback = function(on)
+			window:SetMinimizeHint(on)
+		end,
+	})
+
 	controls.Notifications = g:Toggle({
 		Name = "Notifications",
 		Desc = "Show toast notifications.",

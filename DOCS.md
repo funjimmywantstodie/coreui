@@ -160,6 +160,7 @@ local Window = Uranium:CreateWindow({
     Hud          = true,                     -- floating bind HUD (default off; see below)
     Keybinds     = true,                     -- toggles carry a bind chip (default true)
     Descriptions = "hover",                  -- where control `Desc` is drawn (default "hover")
+    MinimizeHint = true,                     -- "UI Minimized" corner card (default true)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
@@ -248,6 +249,8 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:GetToggleKey()` → `Enum.KeyCode` | The current show/hide key. |
+| `Window:SetMinimizeHint(bool)` | Show/hide the "UI Minimized" corner card. Applied live. |
+| `Window:GetMinimizeHint()` → `bool` | Whether the card is on. |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
 | `Window:GetNotificationsEnabled()` → `bool` | Whether toasts are on. |
 | `Window:SetDescriptions(mode)` → `string` | `"hover"` / `"inline"` / `"both"`, applied live to the fields already on screen. Returns the mode in force afterwards. |
@@ -1538,7 +1541,7 @@ local tab, controls = Window:CreateSettingsTab({
 
 A drop-in panel that wires up: accent color picker, the toggle-UI keybind, a
 **Descriptions** picker (see [Descriptions](#descriptions-desc--info)), a
-notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
+**Minimize Hint** switch, a notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
 **Unload** button.
 
@@ -1552,7 +1555,7 @@ The second return is every handle the panel built, also on `tab.Controls`:
 
 | Key | What |
 | --- | --- |
-| `Accent` `ToggleKey` `Descriptions` `Notifications` `Hud` | The Interface controls. |
+| `Accent` `ToggleKey` `Descriptions` `MinimizeHint` `Notifications` `Hud` | The Interface controls. |
 | `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
 | `OnSelect(fn)` → `unsub` | `fn(name)` whenever the selection changes. |
 | `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |
