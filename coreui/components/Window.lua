@@ -732,6 +732,15 @@ return function(opts: any)
 	titlebar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
+			-- ...unless something drawn on top of the window already owns this press.
+			-- The bind HUD is a sibling of `main` at a higher ZIndex and drags
+			-- itself, and Roblox hands `InputBegan` to every non-sinking object under
+			-- the pointer — so grabbing the HUD where it overlapped the titlebar used
+			-- to drag both at once, off the same mouse, until the gesture wedged.
+			-- See Context:RegisterDragPriority.
+			if ctx:DragClaimed(Vector2.new(input.Position.X, input.Position.Y)) then
+				return
+			end
 			dragging = true
 			dragStart = input.Position
 			startPos = main.Position

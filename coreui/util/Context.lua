@@ -115,6 +115,9 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		_windowState = Signal.new(),
 		_popover = nil,
 		_capturing = 0,
+		-- Hit probes for anything drawn ABOVE the window frame that drags itself.
+		-- See RegisterDragPriority.
+		_dragLayers = {},
 	}, Context)
 end
 
@@ -133,6 +136,45 @@ end
 
 function Context:IsCapturing(): boolean
 	return self._capturing > 0
+end
+
+-- ── Drag priority ────────────────────────────────────────────────────────────
+-- Which draggable surface owns a press, when two of them overlap.
+--
+-- Roblox fires `GuiObject.InputBegan` on every non-sinking object under the
+-- pointer, not only the topmost one — so a press that landed on the bind HUD,
+-- which is a *sibling* of the window frame at a higher ZIndex, started the
+-- HUD's drag and the titlebar's drag on the same click. Both then tracked the
+-- same mouse off one shared `UserInputService.InputChanged`, the window walked
+-- out from under the panel, and the gesture ended with the two wedged against
+-- their own clamps. Whatever is drawn on top wins, which is the only answer
+-- that matches what the user sees.
+--
+-- Not a Signal: this collects an answer rather than announcing something, and
+-- `Signal:Fire` discards what its listeners return. `probe` is handed a point in
+-- the same space `InputObject.Position` and `AbsolutePosition` share (the
+-- window's ScreenGui sets IgnoreGuiInset, so both are raw viewport pixels).
+-- Returns an unsubscribe — a HUD that's torn down must stop claiming presses.
+function Context:RegisterDragPriority(probe: (Vector2) -> boolean): () -> ()
+	table.insert(self._dragLayers, probe)
+	return function()
+		local index = table.find(self._dragLayers, probe)
+		if index then
+			table.remove(self._dragLayers, index)
+		end
+	end
+end
+
+-- Is this press already spoken for by something drawn above the window? Walked
+-- over a clone, for the same reason util/Signal.lua does: a probe is free to
+-- unregister itself from inside the call.
+function Context:DragClaimed(point: Vector2): boolean
+	for _, probe in table.clone(self._dragLayers) do
+		if probe(point) then
+			return true
+		end
+	end
+	return false
 end
 
 -- Register a function recolored whenever the accent changes. Called once now
@@ -240,6 +282,16 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 		-- reached the file: saving with no selection and loading it back left
 		-- whatever had been picked since. `false` is the stand-in that survives the
 		-- JSON round trip; decode hands nil back.
+		encode = function(v) if v == nil then return false end return v end,
+		decode = function(v) if v == false then return nil end return v end,
+	},
+	-- components/Picker.lua — the value is the id of the item that's picked, which
+	-- is the caller's own string or number and already JSON-safe. Same `false`
+	-- stand-in as `dropdown`, for the same reason: nothing picked has to survive
+	-- the round trip as something, or the key never reaches the file at all. The
+	-- items themselves are content, not value, and never persist — a config that
+	-- names an id the catalogue no longer has just holds an id nothing draws.
+	picker = {
 		encode = function(v) if v == nil then return false end return v end,
 		decode = function(v) if v == false then return nil end return v end,
 	},

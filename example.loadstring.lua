@@ -197,6 +197,49 @@ Selection:PlayerMultiSelect({
 	end,
 })
 
+-- A Picker: the gallery control — a searchable, filterable grid of things you
+-- pick ONE of, with a thumbnail each. It owns the search box, the filter chips,
+-- the "nothing matches" state and the selected-item highlight, and it
+-- VIRTUALISES: hand it three hundred items and only the ones on screen exist.
+-- Item images take the same sources everything else does (id / url / file /
+-- chain). `Layout = "rows"` draws the same list as rows instead of tiles.
+local Gallery = Components:CreateGroup({ Title = "Gallery", Column = 1 })
+local ART = Uranium.Asset.url("uranium-orbitals-512-square.png")
+local RARITY = { "Common", "Rare", "Legendary" }
+local favourite = { sword3 = true }
+local skins = {}
+for i = 1, 24 do
+	table.insert(skins, {
+		id       = "sword" .. i,
+		Title    = "Sword " .. i,
+		Subtitle = RARITY[(i % 3) + 1],   -- doubles as the filter name
+		Image    = ART,
+		Badge    = (i % 6 == 0) and "Dual" or nil,
+		Actions  = { { Name = "fav", Icon = favourite["sword" .. i] and "star" or "star-off" } },
+	})
+end
+local gallery
+gallery = Gallery:Picker({
+	Name = "Swords", Desc = "This is a picker — search it, filter it, pick one.",
+	Height = 240, Layout = "tiles", TileSize = 84, Search = true,
+	Filters = {
+		"All", "Common", "Rare", "Legendary",
+		-- A chip whose rule isn't in the data: only the host knows what's starred.
+		{ Name = "Favourites", Match = function(item) return favourite[item.id] == true end },
+	},
+	Items = skins, Default = "sword1", Flag = "equipped_sword",
+	Callback = function(id) print("equipped:", id) end,
+	OnAction = function(id, name)
+		if name == "fav" then
+			favourite[id] = (not favourite[id]) or nil
+			-- Patch the one item rather than handing the whole catalogue back.
+			gallery:UpdateItem(id, {
+				Actions = { { Name = "fav", Icon = favourite[id] and "star" or "star-off" } },
+			})
+		end
+	end,
+})
+
 -- A Code field: a multi-line monospace editor for pasting raw config that won't
 -- fit a structured control (Lua tables, JSON, scripts). `Parse` validates it on
 -- blur — a parse error paints the box red and prints the message beneath it.

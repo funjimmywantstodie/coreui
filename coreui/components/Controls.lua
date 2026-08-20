@@ -25,6 +25,7 @@ local PlayerSelect = require(script.Parent.PlayerSelect)
 local Section = require(script.Parent.Section)
 local Custom = require(script.Parent.Custom)
 local Image = require(script.Parent.Image)
+local Picker = require(script.Parent.Picker)
 local DataGrid = require(script.Parent.DataGrid)
 local MediaPlayer = require(script.Parent.MediaPlayer)
 
@@ -307,6 +308,13 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		return mount(function(c, _opts)
 			return Custom(c, builder)
 		end, nil, nil, "Custom")
+	end
+
+	-- Stateful, unlike Image / DataGrid: the value is which item is picked, and
+	-- "which skin is equipped" is exactly the kind of thing a config should hold.
+	-- The `Items` themselves are caller-owned content and never persist.
+	function api:Picker(o)
+		return mount(Picker, o, "picker")
 	end
 
 	function api:DataGrid(o)

@@ -826,7 +826,8 @@ All controls below are methods on a **Group** or **Section** surface.
 - **`Flag = "id"`** — registers the control for config save/load. The value is
   captured on `SaveConfig` and restored on `LoadConfig` / auto-load. See
   [Config & flags](#config--flags). Only stateful controls support flags
-  (Toggle, Slider, Dropdown, MultiDropdown, Input, Code, Keybind, Colorpicker).
+  (Toggle, Slider, Dropdown, MultiDropdown, Input, Code, Keybind, Colorpicker,
+  PlayerSelect, PlayerMultiSelect, Picker).
 
 Stateful controls return a **handle** with `:Get()` and `:Set(value)`. `:Set`
 fires the callback.
@@ -854,7 +855,7 @@ Group:Toggle({
 
 Supported on every stateful control: `Toggle`, `Slider`, `Dropdown`,
 `MultiDropdown`, `Input`, `Code`, `Colorpicker`, `Keybind`, `PlayerSelect`,
-`PlayerMultiSelect`. The callback is handed exactly what it would receive from
+`PlayerMultiSelect`, `Picker`. The callback is handed exactly what it would receive from
 the first real change — including `Keybind`'s two shapes, so a picker
 (`Mode = "None"`) is fired with its key and an activation bind with
 `(active, info)`.
@@ -1249,6 +1250,116 @@ h:Set(Color3.fromHex("3b82f6"))
 
 Opens a preset swatch grid with the current hex shown.
 
+### Picker (item gallery)
+
+A searchable, filterable grid of pickable things with a thumbnail each — skins,
+weapons, pets, maps, loadouts. It is the control a cosmetic list wants and
+[`DataGrid`](#datagrid-data-table) isn't: pictures, a **selected** item, its own
+search box and filter chips, a real empty state, and **virtualisation**, so the
+whole catalogue goes in as one `Items` array — a few hundred entries cost the
+same handful of frames as a dozen.
+
+```lua
+local h = Group:Picker({
+    Name     = "Swords",
+    Desc     = "Pick the one you want equipped.",
+    Height   = 260,        -- viewport height in px          (default 260)
+    Layout   = "tiles",    -- "tiles" (grid) | "rows" (list) (default "tiles")
+    TileSize = 84,         -- tile width to aim for, "tiles" (default 84)
+    Search   = true,       -- built-in search box; a string sets its placeholder
+    Count    = true,       -- the "312 items" / "12 of 312" readout (default true)
+    Empty    = "Nothing owned yet",  -- shown when there are no items at all
+    Filters  = { "All", "Legendary", { Name = "Favourites", Match = isFav } },
+    Items    = {
+        { id = "ghost", Title = "Ghost", Subtitle = "Legendary",
+          Image = "rbxassetid://123", Badge = "Dual", Selected = true,
+          Tags = { "event" },
+          Actions = { { Name = "fav", Icon = "star" } } },
+        { id = "iron", Title = "Iron", Subtitle = "Common", Image = 74808640463075 },
+    },
+    Flag     = "skin",
+    Callback = function(id, item) equip(id) end,           -- an item was picked
+    OnAction = function(id, name, item) toggleFav(id) end, -- its action was pressed
+})
+```
+
+**Item shape.** Only `id` is required, and it has to be unique — an item without
+one, or repeating one already in the list, is skipped with a warning rather than
+taking the render down with it (`id` is what `Callback`, `:Select` and
+`:UpdateItem` all speak in, so a duplicate would make them disagree about which
+item they mean).
+
+| Field | |
+| --- | --- |
+| `id` | **required**, unique. What every callback and method identifies the item by. |
+| `Title` | the main line. Falls back to the `id` if absent. |
+| `Subtitle` | the second, muted line. Doubles as a filter name — see below. |
+| `Image` | the thumbnail. **Anything** [`Asset.resolve`](#images--assets) takes: a bare decal id, `rbxassetid://…`, an https url, a local file, or an array as a fallback chain. A placeholder icon shows until it lands. |
+| `Badge` | a small accent pill — over the picture in `tiles`, at the right of the row in `rows`. |
+| `Tags` | `{ string }`, matched by the filter chips. Never displayed. |
+| `Filter` | one explicit filter name, when the category isn't the `Subtitle`. |
+| `Selected` | `true` marks this the picked item at build time (or on the `SetItems` that brings it in). |
+| `Actions` | `{ { Name = "fav", Icon = "star", Text = "Fav" } }` — small buttons on the item. `Icon` wins over `Text`; pressing one fires `OnAction`, **not** `Callback`. |
+
+**Filters.** Each entry in `Filters` becomes a chip; one is active at a time and
+the row wraps onto a second line when it has to. A chip is either a name or a
+rule:
+
+| Chip | Matches |
+| --- | --- |
+| `"All"` (or `{ Name = "…", All = true }`) | everything |
+| `"Legendary"` | items whose `Filter`, `Subtitle` or one of whose `Tags` is `"Legendary"`, case-insensitively |
+| `{ Name = "Favourites", Match = function(item) return fav[item.id] end }` | whatever the predicate says |
+
+`Match` is the escape hatch, and it's why chips aren't just a list of strings:
+"Favourites" is not a property of the item, it's a property of the user, and only
+the host knows it. A predicate that errors keeps the item and warns rather than
+blanking the gallery.
+
+**The search box** filters on the item's `Title`, `Subtitle`, `Badge`, `Filter`,
+`Tags` and `id` together, as a plain case-insensitive substring, and stacks with
+the active chip. It scrolls back to the top on every keystroke, since the old
+offset points into results that are no longer there.
+
+| Handle | |
+| --- | --- |
+| `h:GetSelected()` → `id, item` | what's picked (`nil` if nothing is) |
+| `h:Select(id)` | pick it. Fires `Callback`, like every other control's `:Set`. `nil` clears. |
+| `h:Get()` / `h:Set(id)` | the same thing under the flag names — this is a stateful control |
+| `h:SetItems(list)` | replace the catalogue |
+| `h:UpdateItem(id, patch)` | patch one item in place — the "toggle a favourite" path |
+| `h:SetFilters(list)` | replace the chips |
+| `h:GetItems()` | the items that were accepted, in order |
+
+`SetItems` keeps the scroll position and holds the item tables **by reference**
+(that's what lets `UpdateItem` write into them). An incoming item carrying
+`Selected = true` becomes the selection; otherwise the current one is kept even
+if the new list doesn't contain it, so a catalogue that comes and goes doesn't
+forget what's equipped. `UpdateItem` moving the selection is data, not a pick, so
+it does **not** fire `Callback`.
+
+```lua
+-- Flip a favourite without handing the whole catalogue back to redraw one star.
+Group:Picker({
+    Items = list,
+    OnAction = function(id, name)
+        if name == "fav" then
+            fav[id] = not fav[id]
+            h:UpdateItem(id, { Actions = { { Name = "fav", Icon = fav[id] and "star" or "star-off" } } })
+        end
+    end,
+})
+```
+
+**With a `Flag`,** the picked `id` is what persists — the items themselves are
+content, not value, and never reach the file. A config naming an id the current
+catalogue doesn't have restores as that id with nothing highlighted, which is the
+honest answer for "the skin you had equipped isn't in this list".
+
+Two things it does *not* do, deliberately: there is no multi-select (a picker
+picks one; a set of things is what `MultiDropdown` is for), and `Layout` is fixed
+at build time.
+
 ---
 
 ## Display-only components
@@ -1265,8 +1376,12 @@ anything showing live state:
 | `Image` | `:Set(source)` · `:Get()` · `:SetCaption(text)` |
 | `Divider`, `Player` | none — nothing to update |
 
-`DataGrid` and `MediaPlayer` are display-only too but carry their own, larger
-surfaces; see their sections.
+[`DataGrid`](#datagrid-data-table) is display-only too but carries its own,
+larger surface — see its section below. So does `MediaPlayer`
+(cover art, transport, timeline, volume), which isn't documented here yet;
+read the header of `components/MediaPlayer.lua` for its options.
+[`Picker`](#picker-item-gallery) looks like it belongs here and doesn't: it
+holds a selection, so it's a stateful control with a `Flag`.
 
 ### Label (key / value row)
 
@@ -1355,6 +1470,95 @@ h:SetCaption("new caption")
 
 While the source is empty (or still downloading) the frame shows a placeholder
 icon, so a slow or broken image never leaves a hole in the layout.
+
+### DataGrid (data table)
+
+A dense, fixed-height table for tool output shaped like rows and columns — a
+memory or value scanner, a traffic log, an instance browser, a leaderboard. Rows
+are pooled and repainted in place, so it's built for a few hundred live rows
+updating several times a second rather than for a one-shot render.
+
+```lua
+local grid = Group:DataGrid({
+    Name      = "Results",       -- optional label above the table
+    Desc      = "Matches so far.",
+    Height    = 200,             -- viewport height in px (default 200)
+    RowHeight = 27,              -- per row, and the header  (default 27)
+    Columns   = {
+        { Key = "path",    Title = "Path",  Width = 0.45 },
+        { Key = "value",   Title = "Value", Width = 0.20, Editable = true },
+        { Key = "actions", Title = "",      Width = 0.35, Type = "actions" },
+    },
+})
+
+grid:SetRows({
+    { id = "row1", path = "Humanoid.WalkSpeed", value = "16",
+      actions = { { Name = "lock", Icon = "lock" }, { Name = "info", Icon = "info" } } },
+    { id = "row2", path = "Humanoid.JumpPower", value = "50", actions = {} },
+})
+
+grid:UpdateRow("row1", { value = "24" })   -- patch one row
+grid:RemoveRow("row2")
+
+grid.RowEdited:Connect(function(id, columnKey, newText) end)
+grid.RowAction:Connect(function(id, actionName) end)
+```
+
+**Columns** are declared once, at build time, and can't be changed afterwards.
+
+| Field | |
+| --- | --- |
+| `Key` | which field of a row this column shows, and the `columnKey` `RowEdited` reports |
+| `Title` | the header text. Defaults to `Key` — pass `""` for a heading-less column (an actions column usually wants one). |
+| `Width` | a **fraction of the table's width, 0..1** — not pixels. Columns are laid out left to right in declaration order, so the fractions should add up to 1 or less; past that the last columns run off the edge. |
+| `Editable` | `true` makes the cell a mono TextBox. See below. |
+| `Type` | `"text"` (default) or `"actions"` — a row of small buttons built from that cell's value. |
+
+**Rows** are flat tables: one field per column `Key`, plus an `id`.
+
+- **Every row needs a unique `id`.** It's what `UpdateRow`, `RemoveRow` and both
+  events speak in, and it's how a row is matched to the frame already drawing it
+  across `SetRows` calls. A row without one is **skipped with a warning** and the
+  rest of the call still renders — for a grid refilled several times a second,
+  one malformed entry taking the whole view down is not a trade worth making.
+- A cell whose value is `nil` renders empty; anything else goes through
+  `tostring`.
+- Row order is array order.
+
+**`:SetRows` is a diff, not a rebuild.** Rows already on screen keep their frames
+(matched by `id`), only cells whose value actually changed get written, rows that
+have dropped out go back to the pool, and new ones come off it. Handing the same
+list back costs nothing, so a ticker can call it on every sample.
+
+There is **no virtualisation**: every row in the list is a frame, and the
+viewport scrolls over them. That's the right trade for a live scanner, where the
+row count is bounded by whatever the tool found — but for a long, browsable list
+of things a user picks from, reach for [`Picker`](#picker-item-gallery), which
+mounts only what's on screen.
+
+**Actions** — a cell in an `actions` column holds `{ ActionDef }`:
+
+```lua
+{ Name = "lock", Icon = "lock", Text = "Lock" }
+```
+
+`Name` is what `RowAction` reports. **`Icon` wins over `Text`**: with an `Icon`
+the button is a fixed 22×22 square and `Text` is unused; with only `Text` it's an
+auto-width pill. Any [icon name](#icons) works. Buttons are reused by `Name`
+across renders and repainted for whatever that action now is, so flipping
+`Icon = "lock"` → `"unlock"` on the next `SetRows` swaps the glyph in place.
+
+**Editable cells** commit on focus loss (click away or press Enter), firing
+`RowEdited(id, columnKey, newText)` — the grid does **not** write the value back
+itself, so the row shows what you last put in it and it's the handler's job to
+`UpdateRow` (or reject the edit by not doing so). Two details worth knowing: the
+row an edit belongs to is captured when it *starts*, so a `SetRows` that recycles
+the frame mid-edit can't commit the typed text against a different row; and
+incoming updates to a cell that's currently focused are held back rather than
+overwriting what's being typed, and land once it blurs.
+
+`DataGrid` takes no `Flag` — its content is caller-owned and transient, not a
+value to save. Same for `MediaPlayer`, `Image` and `Custom`.
 
 ---
 
@@ -1714,9 +1918,10 @@ build) degrades to a `•` glyph rather than erroring.
 ## Images & assets
 
 Roblox's `Image` property only accepts content URLs, which is why every image
-field in Uranium (the `Image` control, `Player.Avatar`, a MediaPlayer track's
-`Cover`, the window `Logo`) runs its value through `Uranium.Asset.resolve`
-first. That means all of these work, interchangeably:
+field in Uranium (the `Image` control, a `Picker` item's `Image`,
+`Player.Avatar`, a MediaPlayer track's `Cover`, the window `Logo`) runs its
+value through `Uranium.Asset.resolve` first. That means all of these work,
+interchangeably:
 
 | You pass | What happens |
 | --- | --- |

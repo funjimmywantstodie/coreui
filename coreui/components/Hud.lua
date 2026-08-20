@@ -132,6 +132,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 		BackgroundTransparency = 1,
 		Visible = false, -- revealed below, so the fade snapshots a finished panel
 		ZIndex = 10,
+		-- The panel floats over the window and over the game, so it swallows the
+		-- presses that land on it rather than letting them through to whatever is
+		-- underneath — the window's own titlebar buttons included. See the drag
+		-- priority registration further down, which is the half of this the window
+		-- consults explicitly.
+		Active = true,
 		Parent = parent,
 	}, {
 		Create.listLayout({ Padding = UDim.new(0, GAP) }),
@@ -700,6 +706,19 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local dragStart = Vector2.zero
 	local dragOrigin = pos
 	local dragMoved = false
+	-- The HUD is on top, so a press on it is the HUD's and nothing else's. The
+	-- window's titlebar asks this before it starts its own drag: `Active` above is
+	-- the engine's half of that, but the titlebar is a plain Frame dragging off
+	-- `InputBegan`, and two drags fighting over one mouse for a whole gesture is
+	-- not a failure worth leaving to hit-test order (util/Context.lua).
+	local unsubscribeDrag = ctx:RegisterDragPriority(function(point: Vector2): boolean
+		if not root.Visible then
+			return false
+		end
+		local origin, size = root.AbsolutePosition, root.AbsoluteSize
+		return point.X >= origin.X and point.X <= origin.X + size.X
+			and point.Y >= origin.Y and point.Y <= origin.Y + size.Y
+	end)
 	root.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
@@ -938,6 +957,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		table.clear(connections)
 		unsubscribeBinds()
 		unsubscribeAccent()
+		unsubscribeDrag()
 		root:Destroy()
 	end
 

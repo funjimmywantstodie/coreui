@@ -139,6 +139,7 @@ coreui/
     Field.lua         the row scaffold (name | control), and which mode `Desc` is in
     Info.lua          the description popover + the glyph that advertises one
     Screen.lua        the full-screen status page — ALSO the source of ui/screen.lua
+    Picker.lua        the item gallery — the one list in here that virtualises
 standalone/
   screen.prelude.lua  the dependency-free prelude ui/screen.lua is built with
 tests/
@@ -206,7 +207,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   **Window state** below for what `Id` is for; plus the tab-identity options and
   setters under **Tabs & the sidebar**
 - Group/Section: `:Section :Button :ButtonRow :Toggle :Slider :Dropdown :MultiDropdown
-  :PlayerSelect :PlayerMultiSelect :Input :Code :Keybind :Colorpicker :Paragraph
+  :PlayerSelect :PlayerMultiSelect :Picker :Input :Code :Keybind :Colorpicker :Paragraph
   :Label :Divider :List :Player :Image :Custom :DataGrid :MediaPlayer`
   - `PlayerSelect`/`PlayerMultiSelect` (`components/PlayerSelect.lua`) — dropdown-shell
     picker that lists `Players:GetPlayers()` live (refetched each open, and rebuilt
@@ -814,8 +815,19 @@ The Settings panel's own switches (Notifications, Keybind HUD, Auto Load) pass
 game, and the default rule (keyless + on = listed) would otherwise put "Keybind
 HUD" in the keybind HUD for every user.
 
-Six things to respect:
+Seven things to respect:
 
+- **It's on top, so it wins the press.** Roblox hands `InputBegan` to every
+  non-sinking object under the pointer, not just the topmost — so grabbing the
+  HUD where it overlapped the titlebar started the HUD's drag *and* the window's,
+  both tracking the same mouse off the same `InputChanged`, until the gesture
+  wedged against two clamps. `root` is `Active` (it sinks, so the titlebar's own
+  buttons don't fire through it) and it registers a hit probe via
+  `ctx:RegisterDragPriority`, which the titlebar asks (`ctx:DragClaimed`) before
+  starting a drag. The probe is the half that doesn't depend on hit-test order;
+  the point it's handed is raw viewport pixels, which is `AbsolutePosition` space
+  too because the ScreenGui sets `IgnoreGuiInset`. Anything else drawn above the
+  window that drags itself belongs in that registry.
 - **It's a SIBLING of `main` in the ScreenGui, not a child.** Minimize and the
   toggle key hide `main`; the HUD has to survive both or it's pointless. It still
   dies with the ScreenGui, and `Window:Destroy` calls `hud:Destroy()` because its
@@ -1072,6 +1084,65 @@ like `Custom`/`DataGrid` — no Flag codec.
 ```lua
 Group:Image({ Name = "Banner", Image = 74808640463075, Height = 160, Fit = "contain" })
 ```
+
+**`Group:Picker{...}` / `Section:Picker{...}`** (`components/Picker.lua`) is the
+item gallery: a searchable, filterable grid (`Layout = "tiles"`) or list
+(`"rows"`) of things the user picks ONE of, with a thumbnail each — skins,
+weapons, pets, maps. It exists because every hub that shipped one built it out of
+`DataGrid`, which is a data *table*: it has columns, not pictures, and no idea
+what "selected" means. The six things that had to be hand-rolled around it — a
+search Input re-filtering per keystroke, a rarity Dropdown doing it again, a fake
+row (`id = "_"`) as the empty state that the click handler then special-cases,
+"which one is equipped" faked by swapping an action icon, a manual cap at 80
+rendered rows plus a "80 of 312" Label, and no thumbnail at all — are the
+component's job, and are all in here.
+
+```lua
+local picker = Group:Picker({
+	Name = "Swords", Height = 260, Layout = "tiles", TileSize = 84,
+	Search = true,                        -- built-in box; a string is its placeholder
+	Filters = { "All", "Legendary", { Name = "Favourites", Match = isFav } },
+	Items = { { id = "ghost", Title = "Ghost", Subtitle = "Legendary",
+	            Image = "https://…/ghost.png", Badge = "Dual", Selected = true,
+	            Tags = { "event" }, Actions = { { Name = "fav", Icon = "star" } } } },
+	Flag = "skin",
+	Callback = function(id, item) equip(id) end,
+	OnAction = function(id, name, item) toggleFav(id) end,
+})
+picker:SetItems(list) · :UpdateItem(id, patch) · :Select(id) · :GetSelected()
+picker:SetFilters(list) · :GetItems() · :Get()/:Set(id)   -- the Flag pair
+```
+
+Five things to respect:
+
+- **It VIRTUALISES, and that's the whole reason it isn't a `DataGrid` variant.**
+  Cells are pooled *and* only the rows inside the viewport (plus one row of
+  `OVERSCAN`) are mounted at all, at manual positions inside a manually-sized
+  canvas — 312 items cost the same ~16 frames as 20 do. That rules out a
+  `UIListLayout` in the viewport: the layout owns its children's Position, and a
+  virtualised canvas has to own it instead. `AutomaticCanvasSize` goes with it,
+  since there is nothing there for the engine to measure.
+- **`repaint()` is on the CanvasPosition signal**, which fires every frame of a
+  scroll, so it early-outs when the visible row range hasn't moved, and rebinds a
+  cell only when the item at that index is a different *table*. `force` is for
+  the paths where the data moved under a stable range (a filter, a re-theme, an
+  `UpdateItem`) — get that wrong and the gallery silently keeps drawing the old
+  items.
+- **`TileSize` is a target, not a width.** Columns come off the viewport's
+  measured width and tiles stretch to fill the row evenly; the tile's *height*
+  is derived from the width it actually got, so the picture stays square.
+- **A chip is a name or a rule.** A string chip matches an item's `Filter`,
+  `Subtitle` or one of its `Tags`; a table chip may carry `Match(item)`. The
+  predicate form is not sugar — "Favourites" isn't a property of the item, it's
+  a property of the user, and the host is the only one who knows it. A `Match`
+  that errors keeps the item and warns rather than blanking the gallery.
+- **Stateful, unlike `Image`/`DataGrid`/`MediaPlayer`.** The value is the picked
+  `id` (codec `picker` in `util/Context.lua`, same `false` stand-in for "nothing
+  picked" the `dropdown` codec uses); the items are content and never persist.
+  `Selected = true` on an incoming item wins over the current selection;
+  otherwise `SetItems` keeps it even when the new list lacks it, so a catalogue
+  that comes and goes doesn't forget what's equipped. `UpdateItem` moving the
+  selection is data, not a pick, so it doesn't fire `Callback`.
 
 **`Group:DataGrid{...}` / `Section:DataGrid{...}`** (`components/DataGrid.lua`)
 is a dense row grid built on the same escape hatch, for tools shaped like a
