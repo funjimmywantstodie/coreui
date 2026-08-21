@@ -377,7 +377,18 @@ return function(ctx: any, opts: any)
 
 	local function hideTip(immediate: boolean?)
 		local frame = tip
-		if not frame or not frame.Visible then
+		if not frame then
+			return
+		end
+		-- The visibility read is only a "is there anything to do?" guard, and every
+		-- way it can fail (the instance already destroyed, a container that refuses
+		-- the read) means the answer is no. Worth a pcall because the callers are
+		-- teardown paths â `tab:_hideFlyout` runs inside `Window:Destroy` â where
+		-- throwing out of a no-op would be the expensive half of this function.
+		local ok, visible = pcall(function()
+			return frame.Visible
+		end)
+		if not ok or not visible then
 			return
 		end
 		if tipMoveConn then

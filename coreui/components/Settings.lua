@@ -117,13 +117,14 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 	-- so every user would open the panel to find "Notifications" and, absurdly,
 	-- "Keybind HUD" at the top of it.
 
-	-- The "UI Minimized" card. It's the only on-screen answer to "where did the
-	-- menu go?", so it stays on by default — but it's also the one piece of the UI
+	-- The minimized card. It's the only on-screen answer to "where did the menu
+	-- go?" — and, since it's clickable, the only way back at all on a device with
+	-- no keyboard to press the toggle key on — so it stays on by default — but it's also the one piece of the UI
 	-- that's deliberately visible when everything else is hidden, which is exactly
 	-- what someone recording or screenshotting with the menu closed wants rid of.
 	controls.MinimizeHint = g:Toggle({
 		Name = "Minimize Hint",
-		Desc = "Show the corner card when the UI is hidden.",
+		Desc = "Show the corner card that reopens the UI when the UI is hidden.",
 		Flag = o.MinimizeHintFlag or "uranium_minimizehint",
 		Default = window:GetMinimizeHint(),
 		Hud = false,
@@ -443,8 +444,14 @@ function Settings.DangerGroup(window: any, tab: any, opts: any?): any
 	controls.Unload = g:Button({
 		Name = inline and "Danger Zone" or nil,
 		Label = o.Label or ("Unload " .. Theme.Brand.name),
+		-- Deferred for the same reason the titlebar â is (see Window.lua's close
+		-- button): this runs on the engine's Activated thread, where a write into
+		-- a protected GUI container can be refused, and the teardown has to be able
+		-- to make those writes. Never deferred on the `immediate` path.
 		Callback = function()
-			window:Destroy()
+			task.defer(function()
+				window:Destroy()
+			end)
 		end,
 	})
 	return controls

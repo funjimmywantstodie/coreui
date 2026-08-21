@@ -341,7 +341,17 @@ local function whenLoaded(image: ImageLabel, timeout: number?, alive: (() -> boo
 		if alive and not alive() then
 			return false
 		end
+		local before = os.clock()
 		task.wait(0.15)
+		-- A wait that comes back seconds late is a client that ran no frames in
+		-- between, and the engine only decodes textures on frames — so a frozen
+		-- stretch is time the load never had, not time it spent. Charged against
+		-- the deadline, one long stall (a game still streaming its map in) timed
+		-- out every image on screen at once and warned about each, all wrongly.
+		local overshoot = os.clock() - before - 0.15
+		if overshoot > 0.5 then
+			deadline += overshoot
+		end
 	end
 	return image.IsLoaded
 end

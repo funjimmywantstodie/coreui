@@ -160,7 +160,7 @@ local Window = Uranium:CreateWindow({
     Hud          = true,                     -- floating bind HUD (default off; see below)
     Keybinds     = true,                     -- toggles carry a bind chip (default true)
     Descriptions = "hover",                  -- where control `Desc` is drawn (default "hover")
-    MinimizeHint = true,                     -- "UI Minimized" corner card (default true)
+    MinimizeHint = true,                     -- click-to-reopen corner card (default true)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
@@ -249,7 +249,7 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:GetToggleKey()` → `Enum.KeyCode` | The current show/hide key. |
-| `Window:SetMinimizeHint(bool)` | Show/hide the "UI Minimized" corner card. Applied live. |
+| `Window:SetMinimizeHint(bool)` | Show/hide the minimized corner card — the branded "<Title> Minimized" chip that reopens the window when clicked or tapped. Applied live. |
 | `Window:GetMinimizeHint()` → `bool` | Whether the card is on. |
 | `Window:SetNotificationsEnabled(bool)` | Enable/disable toasts globally. |
 | `Window:GetNotificationsEnabled()` → `bool` | Whether toasts are on. |

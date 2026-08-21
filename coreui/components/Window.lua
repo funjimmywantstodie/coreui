@@ -272,90 +272,113 @@ return function(opts: any)
 		}),
 	})
 
-	-- logo — the brand mark, square art rounded off by the holder's UICorner.
-	-- `Logo` accepts anything util/Asset.lua resolves (id, url, file path); the
-	-- accent square with the brand initial is the fallback while it loads or if
-	-- it never resolves (Studio without executor globals, bad id, …).
-	local logo = Create("Frame", {
-		Name = "Logo",
-		Size = UDim2.fromOffset(M.logo, M.logo),
+	-- The brand mark — square art over an accent tile, rounded off and clipped by
+	-- its holder. `Logo` accepts anything util/Asset.lua resolves (id, url, file
+	-- path); the accent tile with a Lucide glyph is the fallback while it loads or
+	-- if it never resolves (Studio without executor globals, bad id, …).
+	--
+	-- It's a factory because there are TWO of them: the titlebar's and the one on
+	-- the minimized hint card. Both have to follow `SetLogo` and `SetAccent`, so
+	-- the composition is written once and every instance registers itself in
+	-- `marks`; anything that repaints a mark walks that list rather than naming an
+	-- instance, or the second one silently stops tracking the first.
+	local marks: { { apply: (any, number?) -> (), square: Frame, glyph: any } } = {}
+	local function newMark(parent: Instance, size: number, glyphSize: number, extra: { [string]: any }?): (Frame, any)
+		local radius = opts.LogoRadius or Theme.Brand.radius
+		local first = #marks == 0
+		local props: { [string]: any } = {
+			Name = "Logo",
+			Size = UDim2.fromOffset(size, size),
+			BackgroundTransparency = 1,
+			ClipsDescendants = true,
+			Parent = parent,
+		}
+		for key, value in extra or {} do
+			props[key] = value
+		end
+		local holder = Create("Frame", props, {
+			Create.corner(radius),
+		})
+		-- The accent square is its own layer under the art rather than the holder's
+		-- background, so the async load result can hide it with `Visible` alone.
+		-- Writing a transparency from a load callback would fight util/Fade.lua if
+		-- the asset happened to arrive mid mount/minimize fade.
+		-- The fallback is a mark, not a letter. An accent square with the brand's
+		-- initial in it is indistinguishable from "the logo failed to load" — which
+		-- is what it *was*, for every client whose executor can't fetch the art (and
+		-- for a while, for everyone, because the art URL had gone stale). Lucide's
+		-- `atom` is a nucleus crossed by two elliptical orbits: the Uranium mark's own
+		-- composition, drawn from a spritesheet the engine fetches itself, so it needs
+		-- nothing from the executor. Tinted tile + accent glyph is the `accent_soft`
+		-- pattern the active nav button uses. components/Screen.lua does the same.
+		local square = Create("Frame", {
+			Name = "Square",
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = colors.accent_soft,
+			BorderSizePixel = 0,
+			Parent = holder,
+		}, {
+			Create.corner(radius),
+		})
+		local fallback = Icons.new("atom", glyphSize, colors.accent) :: any
+		fallback.Name = "Glyph"
+		fallback.AnchorPoint = Vector2.new(0.5, 0.5)
+		fallback.Position = UDim2.fromScale(0.5, 0.5)
+		fallback.Parent = holder
+		-- Fit, not Crop: a brand mark must never lose an edge or change proportion.
+		-- Fit letterboxes non-square art inside the square holder; the zoom below is
+		-- what fills the holder, and it's a scale on both axes so it can't stretch.
+		local image = Create("ImageLabel", {
+			Name = "Mark",
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(1, 1),
+			Image = "",
+			ScaleType = Enum.ScaleType.Fit,
+			Visible = false,
+			Parent = holder,
+		}) :: ImageLabel
+		-- `zoom` > 1 draws the art oversized inside the clipping holder, trimming a
+		-- margin baked into the source (see Theme.Brand.zoom). nil = draw it 1:1.
+		local function apply(source: any, zoom: number?)
+			local z = tonumber(zoom) or 1
+			if z <= 0 then
+				z = 1
+			end
+			image.Size = UDim2.fromScale(z, z)
+			-- The mark is ALWAYS visible — it has to be, or the engine never fetches
+			-- the texture — and it's drawn over the accent square, which stays put as
+			-- a backdrop. So the art covers the square when it loads, and if it never
+			-- loads you're left with the accent square + glyph. Never a hole,
+			-- whatever the load check believes.
+			image.Visible = true
+			fallback.Visible = true
+			square.Visible = true
+			Asset.load(image, source, function(loaded)
+				-- Only the fallback reacts; the image is left alone.
+				fallback.Visible = not loaded
+				square.Visible = not loaded
+				-- One warning per failed source, not one per mark drawing it.
+				if first and not loaded and source ~= nil then
+					Log.warn("CreateWindow", ("Logo %s hasn't loaded — the fallback mark is showing. "
+						.. "Check the id is an image/decal, that it passed moderation, and that "
+						.. "it isn't Restricted in Creator Dashboard."):format(tostring(source)))
+				end
+			end)
+		end
+		local entry = { apply = apply, square = square, glyph = fallback }
+		table.insert(marks, entry)
+		return holder, entry
+	end
+
+	local logo = newMark(titlebar, M.logo, 20, {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, M.sidebar / 2, 0.5, 0),
-		BackgroundTransparency = 1,
-		ClipsDescendants = true,
-		Parent = titlebar,
-	}, {
-		Create.corner(opts.LogoRadius or Theme.Brand.radius),
-	})
-	-- The accent square is its own layer under the art rather than the holder's
-	-- background, so the async load result can hide it with `Visible` alone.
-	-- Writing a transparency from a load callback would fight util/Fade.lua if
-	-- the asset happened to arrive mid mount/minimize fade.
-	-- The fallback is a mark, not a letter. An accent square with the brand's
-	-- initial in it is indistinguishable from "the logo failed to load" — which
-	-- is what it *was*, for every client whose executor can't fetch the art (and
-	-- for a while, for everyone, because the art URL had gone stale). Lucide's
-	-- `atom` is a nucleus crossed by two elliptical orbits: the Uranium mark's own
-	-- composition, drawn from a spritesheet the engine fetches itself, so it needs
-	-- nothing from the executor. Tinted tile + accent glyph is the `accent_soft`
-	-- pattern the active nav button uses. components/Screen.lua does the same.
-	local logoSquare = Create("Frame", {
-		Name = "Square",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = colors.accent_soft,
-		BorderSizePixel = 0,
-		Parent = logo,
-	}, {
-		Create.corner(opts.LogoRadius or Theme.Brand.radius),
 	})
 	local brandName = opts.Title or Theme.Brand.name
-	local logoFallback = Icons.new("atom", 20, colors.accent) :: any
-	logoFallback.Name = "Glyph"
-	logoFallback.AnchorPoint = Vector2.new(0.5, 0.5)
-	logoFallback.Position = UDim2.fromScale(0.5, 0.5)
-	logoFallback.Parent = logo
-	-- Fit, not Crop: a brand mark must never lose an edge or change proportion.
-	-- Fit letterboxes non-square art inside the square holder; the zoom below is
-	-- what fills the holder, and it's a scale on both axes so it can't stretch.
-	local logoImage = Create("ImageLabel", {
-		Name = "Mark",
-		BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(1, 1),
-		Image = "",
-		ScaleType = Enum.ScaleType.Fit,
-		Visible = false,
-		Parent = logo,
-	}) :: ImageLabel
-	-- `zoom` > 1 draws the art oversized inside the clipping holder, trimming a
-	-- margin baked into the source (see Theme.Brand.zoom). nil = draw it 1:1.
-	local function setLogo(source: any, zoom: number?)
-		local z = tonumber(zoom) or 1
-		if z <= 0 then
-			z = 1
-		end
-		logoImage.Size = UDim2.fromScale(z, z)
-		-- The mark is ALWAYS visible — it has to be, or the engine never fetches
-		-- the texture — and it's drawn over the accent square, which stays put as
-		-- a backdrop. So the art covers the square when it loads, and if it never
-		-- loads you're left with the accent square + initial. Never a hole,
-		-- whatever the load check believes.
-		logoImage.Visible = true
-		logoFallback.Visible = true
-		logoSquare.Visible = true
-		Asset.load(logoImage, source, function(loaded)
-			-- Only the fallback reacts; the image is left alone.
-			logoFallback.Visible = not loaded
-			logoSquare.Visible = not loaded
-			if not loaded and source ~= nil then
-				Log.warn("CreateWindow", ("Logo %s hasn't loaded — the fallback mark is showing. "
-					.. "Check the id is an image/decal, that it passed moderation, and that "
-					.. "it isn't Restricted in Creator Dashboard."):format(tostring(source)))
-			end
-		end)
-	end
-	-- `Logo = false` means "no art at all" — keep the accent square + initial.
+
+	-- `Logo = false` means "no art at all" — keep the accent square + glyph.
 	-- The built-in mark gets Theme.Brand.zoom (its margin is known); art the
 	-- caller supplied is drawn 1:1 unless they ask for a zoom themselves.
 	-- Resolved into locals because the splash screen shows the same mark.
@@ -367,6 +390,14 @@ return function(opts: any)
 		logoSource, logoZoom = opts.Logo, opts.LogoZoom
 	else
 		logoSource, logoZoom = Theme.Brand.logo, opts.LogoZoom or Theme.Brand.zoom
+	end
+	-- Paints every mark registered so far, and is re-run by `SetLogo`; a mark
+	-- built later (the hint's) applies the current source itself at construction.
+	local function setLogo(source: any, zoom: number?)
+		logoSource, logoZoom = source, zoom
+		for _, mark in marks do
+			mark.apply(source, zoom)
+		end
 	end
 	setLogo(logoSource, logoZoom)
 
@@ -723,8 +754,10 @@ return function(opts: any)
 	-- glyph off the accent itself, both derived on the Context so the ramp is
 	-- never recomputed here.
 	ctx:RegisterAccent(function(accent)
-		logoSquare.BackgroundColor3 = ctx.AccentSoft
-		Icons.tint(logoFallback, accent)
+		for _, mark in marks do
+			mark.square.BackgroundColor3 = ctx.AccentSoft
+			Icons.tint(mark.glyph, accent)
+		end
 	end)
 
 	-- ── titlebar dragging ────────────────────────────────────────────────────
@@ -962,47 +995,109 @@ return function(opts: any)
 	end)
 
 	-- ── minimize / restore (toggle key) ────────────────────────────────────────
-	local restoreHint = Create("Frame", {
+	-- The card that stands in for the window while it's minimized — and it is a
+	-- BUTTON, not a label. The only documented way back used to be the toggle key,
+	-- which is a *keyboard* key: on a phone this card was the entire UI, forever,
+	-- telling the user to press something their device doesn't have. Clicking or
+	-- tapping it restores the window, which is also the shortest route back with a
+	-- mouse. It carries the brand mark for the same reason components/Screen.lua
+	-- does: with the window gone, this card is the only thing on screen that is us.
+	local HINT_PAD, HINT_MARK, HINT_GAP = 14, 30, 10
+	local HINT_W = 246
+	-- The text column is a fixed offset, not a scale: it sits in a horizontal
+	-- UIListLayout, where a scale width would measure against the card's FULL
+	-- width and push the wrap out past the padding.
+	local HINT_TEXT_W = HINT_W - HINT_PAD * 2 - HINT_MARK - HINT_GAP
+	local restoreHint = Create("TextButton", {
 		Name = "MinimizedHint",
 		Visible = false,
+		Text = "",
+		AutoButtonColor = false, -- the hover pair below owns the fill
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -16, 1, -16),
-		Size = UDim2.fromOffset(220, 0),
+		Size = UDim2.fromOffset(HINT_W, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = colors.pop,
 		Parent = screenGui,
 	}, {
-		Create.corner(9),
-		Create.stroke(colors.border),
-		Create.padding(11, 14),
-		Create.listLayout({ Padding = UDim.new(0, 3) }),
+		Create.padding(11, HINT_PAD),
+		-- Horizontal, centered: with AutomaticSize.Y the card is as tall as its
+		-- tallest child, so the mark and the text block centre against each other
+		-- whether the line wraps or not. (Centring the mark by hand would need a
+		-- scale Position, which is exactly what AutomaticSize can't measure.)
+		Create.listLayout({
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, HINT_GAP),
+		}),
+	})
+	local hintScale = Create("UIScale", { Parent = restoreHint }) :: UIScale
+	local hintStroke = Create.stroke(colors.border)
+	hintStroke.Parent = restoreHint
+	-- Hover lifts the fill and lights the border. Roblox has no `cursor: pointer`,
+	-- so the border is the whole of what says this card can be pressed — and it's
+	-- driven off the card's own MouseEnter (Create.hover only animates the instance
+	-- under the pointer, and a UIStroke has no mouse events of its own).
+	Create.hover(restoreHint, "BackgroundColor3", colors.pop, colors.hover)
+	local hintHovered = false
+	local function paintHintStroke()
+		Tween.play(hintStroke, Tween.Fast, { Color = if hintHovered then ctx.Accent else colors.border })
+	end
+	restoreHint.MouseEnter:Connect(function()
+		hintHovered = true
+		paintHintStroke()
+	end)
+	restoreHint.MouseLeave:Connect(function()
+		hintHovered = false
+		paintHintStroke()
+	end)
+	ctx:RegisterAccent(paintHintStroke)
+
+	-- The mark registers in `marks` like the titlebar's, so it follows SetLogo and
+	-- SetAccent from here on — but it's built after both have already run, so it
+	-- paints itself into the window's current state rather than the theme's.
+	local _, hintMark = newMark(restoreHint, HINT_MARK, 17, { LayoutOrder = 1 })
+	hintMark.square.BackgroundColor3 = ctx.AccentSoft
+	Icons.tint(hintMark.glyph, ctx.Accent)
+	hintMark.apply(logoSource, logoZoom)
+
+	local hintCopy = Create("Frame", {
+		Name = "Text",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(HINT_TEXT_W, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = 2,
+		Parent = restoreHint,
+	}, {
+		Create.listLayout({ Padding = UDim.new(0, 2) }),
 	})
 	Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Text = "UI Minimized",
+		Text = brandName .. " Minimized",
 		TextColor3 = colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		LayoutOrder = 1,
-		Parent = restoreHint,
+		Parent = hintCopy,
 	})
-	-- What the minimized card says. `CreateWindow{ ToggleKey = Enum.KeyCode.Unknown }`
-	-- is a legal way to say "no toggle key", and building the label inline printed
-	-- the literal "Press None to show it again." for it — a window with no way back
-	-- telling the user to press a key that doesn't exist. SetToggleKey already had
-	-- the right wording; this is the same answer at build time.
+	-- What the card says. `CreateWindow{ ToggleKey = Enum.KeyCode.Unknown }` is a
+	-- legal way to say "no toggle key", and building the label inline printed the
+	-- literal "Press None to show it again." for it. It no longer has to send the
+	-- keyless case away empty-handed either — the card itself is the way back now,
+	-- so that branch just drops the key clause instead of naming a dead end.
 	local function hintText(): string
 		if toggleKey == nil or toggleKey == Enum.KeyCode.Unknown then
-			return "Re-bind a toggle key to show it again."
+			return "Click here to reopen it."
 		end
-		return ("Press %s to show it again."):format(Bind.name(toggleKey))
+		return ("Click here or press %s to reopen it."):format(Bind.name(toggleKey))
 	end
 	local restoreHintText = Create("TextLabel", {
-		Name = "Text",
+		Name = "Body",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
@@ -1013,8 +1108,20 @@ return function(opts: any)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextWrapped = true,
 		LayoutOrder = 2,
-		Parent = restoreHint,
+		Parent = hintCopy,
 	})
+	-- Shown with a small pop, hidden outright. Deliberately NOT a util/Fade.lua
+	-- fade: on a device with no keyboard this card is the only way back to the UI,
+	-- and a fade stranded mid-play would leave it invisible-but-there — the exact
+	-- state the card exists to prevent. A wrong scale is still a card you can see
+	-- and press.
+	local function showHint(show: boolean)
+		restoreHint.Visible = show
+		if show then
+			hintScale.Scale = 0.92
+			Tween.play(hintScale, Tween.Pop, { Scale = 1 })
+		end
+	end
 
 	local minimized = false
 	-- Nav flyouts don't get a MouseLeave when the window vanishes from under the
@@ -1042,7 +1149,7 @@ return function(opts: any)
 					main.Visible = false
 				end
 			end)
-			restoreHint.Visible = minimizeHint
+			showHint(minimizeHint)
 		else
 			-- restore from the shrunk/faded state: pop the scale, ease the fade in
 			main.Visible = true
@@ -1057,11 +1164,20 @@ return function(opts: any)
 			Tween.play(mainScale, Tween.Pop, { Scale = 1 })
 			mainFade:To(Tween.Normal, 0)
 			Tween.play(shadow, Tween.Normal, { ImageTransparency = SHADOW_T })
-			restoreHint.Visible = false
+			showHint(false)
 		end
 	end
 	winBtns.min.Activated:Connect(function()
 		setMinimized(true)
+	end)
+	-- Tapping the card is the restore. `Activated` covers mouse and touch alike,
+	-- which is the whole point of it — it fires for a finger, and a finger has no
+	-- toggle key. Guarded on `minimized` because the card can only be up while the
+	-- window is down, and a stray Activated on the way out shouldn't re-show it.
+	restoreHint.Activated:Connect(function()
+		if minimized then
+			setMinimized(false)
+		end
 	end)
 	-- The toggle key hides AND restores (a single press flips the window's state),
 	-- ignored while the player is typing into a textbox / capturing a keybind.
@@ -1124,8 +1240,20 @@ return function(opts: any)
 	-- Close is a real unload, not a hide: same shrink+fade as minimize, but the
 	-- listeners come off, the ScreenGui is destroyed and the singleton slot is
 	-- freed. Use the minimize button (or the toggle key) to stash it temporarily.
+	--
+	-- ...on a DEFERRED thread, not this one. `Activated` runs us on the engine's
+	-- input thread, and a teardown that has to write to a protected container
+	-- (the executor's hidden GUI parent) can be refused there — the same reason
+	-- the hub's row loop does its writes on a thread it spawned. `task.defer`
+	-- hops off it before any of the teardown runs, and costs one frame nobody
+	-- can see behind the close fade. The `immediate` path deliberately does NOT
+	-- get this: a re-run unloads the old window and immediately claims the slot
+	-- for the new one, and a deferred `Singleton.release` would land AFTER that
+	-- claim and free the new window's slot.
 	winBtns.close.Activated:Connect(function()
-		window:Destroy()
+		task.defer(function()
+			window:Destroy()
+		end)
 	end)
 
 	function window:CreateTab(tabOpts: any)
@@ -1308,7 +1436,7 @@ return function(opts: any)
 	-- setting visibly failed to reach.
 	function window:SetMinimizeHint(enabled: boolean)
 		minimizeHint = enabled ~= false
-		restoreHint.Visible = minimizeHint and minimized
+		showHint(minimizeHint and minimized)
 	end
 
 	function window:GetMinimizeHint(): boolean
@@ -1459,36 +1587,79 @@ return function(opts: any)
 	-- landing in that gap would otherwise "restore" a window about to be deleted.
 	-- `immediate` skips the fade entirely (used when a re-run is unloading us to
 	-- take our place — the new window shouldn't wait on the old one's animation).
+	--
+	-- EVERY step is its own pcall, and that is the whole shape of this function.
+	-- The steps are independent — a flyout that refuses to hide has nothing to do
+	-- with whether the ScreenGui goes away — but written as a straight sequence
+	-- they aren't: one error unwinds the rest, and the two that MUST happen
+	-- (`screenGui:Destroy()` and `Singleton.release`) are the ones at the bottom.
+	-- The result was a window still on screen with the singleton slot still
+	-- claimed, i.e. an unload that did nothing but set `destroyed = true` — and
+	-- the re-run that followed found a record pointing at a corpse. Failures are
+	-- warned about, never rethrown: by the time we are here the caller has already
+	-- decided this window is going.
 	local destroyed = false
+	local function step(what: string, fn: () -> ())
+		local ok, err = pcall(fn)
+		if not ok then
+			Log.warn("Destroy", ("%s failed (%s) — continuing teardown."):format(what, tostring(err)))
+		end
+		return ok
+	end
 	function window:Destroy(immediate: boolean?)
 		if destroyed then
 			return
 		end
 		destroyed = true
-		for _, conn in connections do
-			conn:Disconnect()
-		end
+		step("disconnecting listeners", function()
+			for _, conn in connections do
+				pcall(function()
+					conn:Disconnect()
+				end)
+			end
+		end)
 		table.clear(connections)
-		binds:Destroy() -- drops every registered binding with the listeners
-		ctx:ClosePopover()
-		hideFlyouts()
-		Singleton.release(record)
+		step("binds:Destroy", function()
+			binds:Destroy() -- drops every registered binding with the listeners
+		end)
+		step("ClosePopover", function()
+			ctx:ClosePopover()
+		end)
+		step("hiding flyouts", hideFlyouts)
+		step("Singleton.release", function()
+			Singleton.release(record)
+		end)
 		if splash then
-			splash:Destroy() -- torn down mid-boot: don't leave the splash on screen
-			splash = nil
+			local s = splash
+			splash = nil -- cleared first: a splash that won't die isn't retried
+			step("splash:Destroy", function()
+				s:Destroy() -- torn down mid-boot: don't leave the splash on screen
+			end)
 		end
 		-- The HUD's own input listeners outlive the ScreenGui, same as ours.
-		hudApi.Destroy()
+		step("hud teardown", hudApi.Destroy)
 
+		local function finish()
+			step("screenGui:Destroy", function()
+				screenGui:Destroy()
+			end)
+		end
 		if immediate then
-			screenGui:Destroy()
+			finish()
 			return
 		end
-		Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
-		Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
-		mainFade:To(Tween.MenuOut, 1, function()
-			screenGui:Destroy()
+		-- The fade is the one step allowed to be skipped rather than survived: if
+		-- starting it throws, the callback that destroys the GUI never runs, so the
+		-- fallback is to destroy it now and let the window vanish without the
+		-- animation. A missing 0.16s fade is not a failure; a surviving window is.
+		local ok = step("close animation", function()
+			Tween.play(mainScale, Tween.MenuOut, { Scale = 0.9 })
+			Tween.play(shadow, Tween.MenuOut, { ImageTransparency = 1 })
+			mainFade:To(Tween.MenuOut, 1, finish)
 		end)
+		if not ok then
+			finish()
+		end
 	end
 
 	-- ── built-in Settings tab ───────────────────────────────────────────────────
