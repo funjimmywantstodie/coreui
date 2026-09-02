@@ -19,6 +19,7 @@
 --       Tone  = "error",
 --       Discord = "discord.gg/uranium",
 --       Dismissable = false,
+--       OnClose = function(page, how) end,   -- "dismiss" | "action" | "replaced"
 --   })
 --
 -- Four things shape the whole file:
@@ -249,7 +250,7 @@ return function(opts: any): any
 	if active then
 		local previous = active
 		active = nil
-		previous:Close(true)
+		previous:Close(true, "replaced")
 	end
 
 	local dismissable = o.Dismissable ~= false
@@ -770,11 +771,44 @@ return function(opts: any): any
 	local conns: { RBXScriptConnection } = {}
 	local flashToken = 0
 
-	function handle:Close(immediate: boolean?)
+	-- `OnClose(page, how)` fires EXACTLY once, whichever path took the page down:
+	--
+	--   how = "dismiss"    Esc, the x in the titlebar, or a bare `page:Close()`
+	--   how = "action"     an Actions button that closes (`Close ~= false`)
+	--   how = "replaced"   a second Screen, `Uranium:Unload()`, CreateWindow, or
+	--                      any other singleton sweep — i.e. the page was taken
+	--                      down without being answered.
+	--
+	-- Read off `o` rather than captured, so `Set{ OnClose = ... }` reaches it the
+	-- same way every other option does. It runs on its own pcall'd thread for the
+	-- reason the Actions callbacks do: teardown is already underway by the time
+	-- this fires, and a consumer callback that errors or yields must not take the
+	-- rest of it — or the caller that triggered the close — with it. The error is
+	-- dropped rather than reported, which is this module's rule everywhere: it is
+	-- what runs when everything else already failed, and it never throws.
+	local closeFired = false
+	local function fireClose(how: string)
+		if closeFired then
+			return
+		end
+		closeFired = true
+		local fn = o.OnClose
+		if type(fn) ~= "function" then
+			return
+		end
+		task.spawn(function()
+			pcall(fn, handle, how)
+		end)
+	end
+
+	-- `how` defaults to "dismiss": a bare `page:Close()` from the consumer is the
+	-- manual equivalent of the x, and the paths that mean anything else say so.
+	function handle:Close(immediate: boolean?, how: string?)
 		if closing then
 			return
 		end
 		closing = true
+		fireClose(type(how) == "string" and how or "dismiss")
 		if active == handle then
 			active = nil
 		end
@@ -793,6 +827,7 @@ return function(opts: any): any
 	-- `Destroying` is the one signal that covers every way this page can go.
 	screenGui.Destroying:Connect(function()
 		closing = true
+		fireClose("replaced")
 		if active == handle then
 			active = nil
 		end
@@ -1255,7 +1290,7 @@ return function(opts: any): any
 							end)
 						end
 						if closeAfter then
-							handle:Close()
+							handle:Close(nil, "action")
 						end
 					end)
 					n += 1
@@ -1388,7 +1423,7 @@ return function(opts: any): any
 
 	closeBtn.Activated:Connect(function()
 		if dismissable then
-			handle:Close()
+			handle:Close(nil, "dismiss")
 		end
 	end)
 
@@ -1409,7 +1444,7 @@ return function(opts: any): any
 				return
 			end
 			if input.KeyCode == Enum.KeyCode.Escape then
-				handle:Close()
+				handle:Close(nil, "dismiss")
 			end
 		end))
 	end

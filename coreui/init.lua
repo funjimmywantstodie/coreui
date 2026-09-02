@@ -110,6 +110,12 @@ end
 --       Tone  = "error",           -- "error" | "warning" | "info"
 --       Discord = "discord.gg/uranium",
 --       Dismissable = false,
+--       OnClose = function(page, how) end,   -- fires exactly once, whatever
+--                                            -- took the page down:
+--                                            -- "dismiss" (Esc / ×), "action"
+--                                            -- (a closing Actions button), or
+--                                            -- "replaced" (a second Screen,
+--                                            -- Unload, CreateWindow, sweep).
 --   })
 --
 -- It needs no window and creates none — that's the main case. See DOCS.md and

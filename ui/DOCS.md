@@ -466,6 +466,7 @@ local page = Uranium:Screen({
     Footer      = "Uranium · build 2026-08-15", -- small muted line at the bottom
     Discord     = "discord.gg/uranium",         -- adds a Copy button + selectable text
     Dismissable = true,                         -- default true (Esc + a × button)
+    OnClose     = function(page, how) end,      -- fires once — see below
     Parent      = someInstance,                 -- same meaning as CreateWindow.Parent
     Input       = nil,                          -- a text entry block — see below
     Actions     = {
@@ -497,7 +498,7 @@ local page = Uranium:Screen({
 
 | Method | |
 |---|---|
-| `page:Close()` | Fade out and destroy. |
+| `page:Close()` | Fade out and destroy. Reports `"dismiss"` to `OnClose`. |
 | `page:Set(opts)` | Patch any of the options above, in place. |
 | `page:Flash(text)` | Transient status line under the buttons (~3s). |
 | `page.ScreenGui` | The `ScreenGui`, if you want to re-parent it yourself. |
@@ -533,6 +534,41 @@ you say otherwise.
 
 **`Dismissable = false`** removes Esc and the × — the only way out is re-running
 the loadstring. That's deliberate for a ban.
+
+**`OnClose(page, how)`** fires **exactly once**, whichever path took the page
+down, with `how` saying which one:
+
+| `how` | |
+|---|---|
+| `"dismiss"` | Esc, the × in the titlebar, or a bare `page:Close()`. |
+| `"action"` | An `Actions` button that closes (`Close ~= false`). |
+| `"replaced"` | A second `Uranium:Screen`, `Uranium:Unload()`, `CreateWindow`, or any other singleton sweep — the page was taken down without being answered. |
+
+That last one is the reason this is a callback and not a return value. A key
+gate has to know the difference between *the user answered* and *something took
+the page away*, and the sweep destroys the `ScreenGui` without going through
+`page:Close()` at all — so the once-guard hangs off `Destroying`, which is the
+one signal that covers every path. It runs on its own `pcall`'d thread: a
+callback that errors or yields can't take the teardown, or whatever triggered
+it, down with it.
+
+```lua
+local answered = false
+Uranium:Screen({
+    Title = "Key System",
+    Input = { Placeholder = "Paste your key" },
+    Actions = { { Label = "Continue", Primary = true, Callback = function(page)
+        answered = true
+        Hub:Check(page.Input:Get())
+    end } },
+    OnClose = function(page, how)
+        if not answered then
+            -- "dismiss" → they walked away; "replaced" → the loader re-ran.
+            Hub:Abort(how)
+        end
+    end,
+})
+```
 
 ### `Input` — taking a value back
 
