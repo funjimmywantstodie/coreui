@@ -57,6 +57,7 @@ local WINDOW_SCHEMA: Log.Schema = {
 	{ "Keybinds", "boolean" },
 	{ "Descriptions", "string" },
 	{ "MinimizeHint", "boolean" },
+	{ "MinimizeHintStyle", "string" },
 	{ "OnFlag", "function" },
 	{ "OnFlagChanged", "function" },
 	{ "PersistWindow", "boolean" },
@@ -282,7 +283,7 @@ return function(opts: any)
 	-- the composition is written once and every instance registers itself in
 	-- `marks`; anything that repaints a mark walks that list rather than naming an
 	-- instance, or the second one silently stops tracking the first.
-	local marks: { { apply: (any, number?) -> (), square: Frame, glyph: any } } = {}
+	local marks: { { apply: (any, number?) -> (), square: Frame, glyph: any, resize: (number) -> () } } = {}
 	local function newMark(parent: Instance, size: number, glyphSize: number, extra: { [string]: any }?): (Frame, any)
 		local radius = opts.LogoRadius or Theme.Brand.radius
 		local first = #marks == 0
@@ -296,8 +297,14 @@ return function(opts: any)
 		for key, value in extra or {} do
 			props[key] = value
 		end
+		-- Both corners are held rather than created inline: the minimized hint
+		-- card resizes its mark at runtime (see `resize` below), and a radius that
+		-- doesn't scale with the tile reads as a different shape rather than the
+		-- same mark at another size.
+		local holderCorner = Create.corner(radius)
+		local squareCorner = Create.corner(radius)
 		local holder = Create("Frame", props, {
-			Create.corner(radius),
+			holderCorner,
 		})
 		-- The accent square is its own layer under the art rather than the holder's
 		-- background, so the async load result can hide it with `Visible` alone.
@@ -318,7 +325,7 @@ return function(opts: any)
 			BorderSizePixel = 0,
 			Parent = holder,
 		}, {
-			Create.corner(radius),
+			squareCorner,
 		})
 		local fallback = Icons.new("atom", glyphSize, colors.accent) :: any
 		fallback.Name = "Glyph"
@@ -367,7 +374,22 @@ return function(opts: any)
 				end
 			end)
 		end
-		local entry = { apply = apply, square = square, glyph = fallback }
+		-- Everything the mark's geometry is made of, scaled together — holder,
+		-- both radii and the fallback glyph. Additive to the entry: only the
+		-- minimized hint card calls it (30px as a card, 46px as a bare tile), and
+		-- nothing else reads it.
+		local function resize(newSize: number)
+			local k = newSize / size
+			holder.Size = UDim2.fromOffset(newSize, newSize)
+			holderCorner.CornerRadius = UDim.new(0, radius * k)
+			squareCorner.CornerRadius = UDim.new(0, radius * k)
+			local glyph = glyphSize * k
+			fallback.Size = UDim2.fromOffset(glyph, glyph)
+			if fallback:IsA("TextLabel") then
+				fallback.TextSize = glyph
+			end
+		end
+		local entry = { apply = apply, square = square, glyph = fallback, resize = resize }
 		table.insert(marks, entry)
 		return holder, entry
 	end
@@ -1004,23 +1026,36 @@ return function(opts: any)
 	-- does: with the window gone, this card is the only thing on screen that is us.
 	local HINT_PAD, HINT_MARK, HINT_GAP = 14, 30, 10
 	local HINT_W = 246
+	-- Logo style: the card IS the mark, at 46px. Not a padded card *around* a
+	-- rounded tile — that's a box inside a box whatever pair of radii you pick.
+	local HINT_LOGO = 46
+	local HINT_MARGIN = 16
+	local HINT_RADIUS = opts.LogoRadius or Theme.Brand.radius
 	-- The text column is a fixed offset, not a scale: it sits in a horizontal
 	-- UIListLayout, where a scale width would measure against the card's FULL
 	-- width and push the wrap out past the padding.
 	local HINT_TEXT_W = HINT_W - HINT_PAD * 2 - HINT_MARK - HINT_GAP
+	-- Both held: the two styles below drive them. The card had no UICorner at all
+	-- — a sharp rectangle among a UI of rounded ones.
+	local hintPadding = Create.padding(11, HINT_PAD)
+	local hintCorner = Create.corner(M.cardRadius)
 	local restoreHint = Create("TextButton", {
 		Name = "MinimizedHint",
 		Visible = false,
 		Text = "",
 		AutoButtonColor = false, -- the hover pair below owns the fill
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -16, 1, -16),
+		-- Anchored top-left and positioned in raw pixel offsets because the card is
+		-- DRAGGED: a drag writes a top-left and the clamp reads one, and any other
+		-- anchor puts half a card of slack between the two.
+		AnchorPoint = Vector2.zero,
+		Position = UDim2.fromOffset(0, HINT_MARGIN),
 		Size = UDim2.fromOffset(HINT_W, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = colors.pop,
 		Parent = screenGui,
 	}, {
-		Create.padding(11, HINT_PAD),
+		hintPadding,
+		hintCorner,
 		-- Horizontal, centered: with AutomaticSize.Y the card is as tall as its
 		-- tallest child, so the mark and the text block centre against each other
 		-- whether the line wraps or not. (Centring the mark by hand would need a
@@ -1110,6 +1145,179 @@ return function(opts: any)
 		LayoutOrder = 2,
 		Parent = hintCopy,
 	})
+	-- ── hint style: a card with a keyboard, a logo without one ────────────────
+	-- "card" is the full thing: mark, "<Brand> Minimized" and the click/press
+	-- line. "logo" is the mark on its own — on a phone the sentence is about a key
+	-- the device doesn't have, and the tile alone is the same affordance in a
+	-- quarter of the screen. "auto" picks per device.
+	local HINT_STYLES: { [string]: boolean } = { auto = true, card = true, logo = true }
+	local minimizeHintStyle = "auto"
+	-- Resolved on every apply rather than cached at build: an executor can run
+	-- before the input devices have reported themselves, and a cached answer would
+	-- pin the wrong style for the whole session. Touch AND no keyboard, not touch
+	-- alone — a touchscreen laptop has both, and the card's text is a sentence
+	-- about the keyboard.
+	local function hintStyleInForce(): string
+		if minimizeHintStyle ~= "auto" then
+			return minimizeHintStyle
+		end
+		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+			return "logo"
+		end
+		return "card"
+	end
+
+	-- ── where the card rests, and the drag that moves it ──────────────────────
+	-- Top centre with a 16px margin: the one strip of screen neither our own HUD
+	-- nor the game's chrome usually occupies. `hintPos` stays nil for "wherever
+	-- the default is", so the card keeps re-centring itself through a style change
+	-- or a viewport resize and stops the moment the user has an opinion about
+	-- where it goes.
+	local hintPos: Vector2? = nil
+	-- The position last WRITTEN, post-clamp. A drag seeds its grab from this and
+	-- never from AbsolutePosition: this ScreenGui sets IgnoreGuiInset and
+	-- AbsolutePosition reports as though it hadn't, so a grab seeded from it starts
+	-- a topbar's height above the cursor and stays there for the whole gesture.
+	local hintDrawn = Vector2.zero
+	local function placeHint(p: Vector2?)
+		local vp = screenGui.AbsoluteSize
+		-- Width off the LAYOUT, not AbsoluteSize: the rendered size runs through
+		-- `hintScale`, which sits at 0.92 through the pop, and dividing that back
+		-- out lands a frame behind the tween — the card would slide while it popped.
+		-- Only the height is measured, and only the bottom clamp reads it.
+		local w = restoreHint.Size.X.Offset
+		local h = restoreHint.AbsoluteSize.Y
+		local target = p or Vector2.new((vp.X - w) / 2, HINT_MARGIN)
+		-- The WHOLE card stays on screen, not just an edge: with no keyboard to
+		-- press the toggle key on, this card is the only way back to the UI.
+		if vp.X > 0 then
+			target = Vector2.new(
+				math.clamp(target.X, HINT_MARGIN, math.max(HINT_MARGIN, vp.X - w - HINT_MARGIN)),
+				math.clamp(target.Y, HINT_MARGIN, math.max(HINT_MARGIN, vp.Y - h - HINT_MARGIN))
+			)
+		end
+		hintDrawn = Vector2.new(math.round(target.X), math.round(target.Y))
+		restoreHint.Position = UDim2.fromOffset(hintDrawn.X, hintDrawn.Y)
+	end
+	placeHint(hintPos)
+	table.insert(connections, screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		placeHint(hintPos)
+	end))
+	-- AutomaticSize settles a frame late, so the first place above measured a card
+	-- of no height at all — and a style switch changes both dimensions.
+	restoreHint:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		placeHint(hintPos)
+	end)
+
+	local function applyHintStyle()
+		if hintStyleInForce() == "logo" then
+			-- Hidden, NOT sized to zero: a UIListLayout skips invisible children, so
+			-- a zero-width column still spends the layout's padding and leaves the
+			-- mark off-centre in a card the width of its own padding.
+			hintCopy.Visible = false
+			hintPadding.PaddingTop = UDim.new()
+			hintPadding.PaddingBottom = UDim.new()
+			hintPadding.PaddingLeft = UDim.new()
+			hintPadding.PaddingRight = UDim.new()
+			restoreHint.AutomaticSize = Enum.AutomaticSize.None
+			restoreHint.Size = UDim2.fromOffset(HINT_LOGO, HINT_LOGO)
+			restoreHint.BackgroundTransparency = 1
+			-- The card's own corner matched to the tile's, so the two edges are one
+			-- edge. The stroke stays either way — it hugs the tile and is what
+			-- carries the hover/accent feedback with no fill behind it.
+			hintCorner.CornerRadius = UDim.new(0, HINT_RADIUS * (HINT_LOGO / HINT_MARK))
+			hintMark.resize(HINT_LOGO)
+		else
+			hintCopy.Visible = true
+			hintPadding.PaddingTop = UDim.new(0, 11)
+			hintPadding.PaddingBottom = UDim.new(0, 11)
+			hintPadding.PaddingLeft = UDim.new(0, HINT_PAD)
+			hintPadding.PaddingRight = UDim.new(0, HINT_PAD)
+			restoreHint.AutomaticSize = Enum.AutomaticSize.Y
+			restoreHint.Size = UDim2.fromOffset(HINT_W, 0)
+			restoreHint.BackgroundTransparency = 0
+			hintCorner.CornerRadius = UDim.new(0, M.cardRadius)
+			hintMark.resize(HINT_MARK)
+		end
+		placeHint(hintPos)
+	end
+	-- Validated like Context:SetDescriptions — lowercased, and an unrecognized
+	-- value warns and changes nothing rather than falling back to the default,
+	-- since a typo in a host's settings dropdown that silently means "auto" reads
+	-- as "the control does nothing in one position".
+	local function setHintStyle(style: any, where: string): string
+		local wanted = if type(style) == "string" then style:lower() else nil
+		if wanted == nil or not HINT_STYLES[wanted] then
+			local got = if type(style) == "string" then ('"%s"'):format(style) else typeof(style)
+			Log.warn(where, ('expects "auto", "card" or "logo", got %s — staying on "%s".')
+				:format(got, minimizeHintStyle))
+			return minimizeHintStyle
+		end
+		if wanted ~= minimizeHintStyle then
+			minimizeHintStyle = wanted
+			applyHintStyle()
+		end
+		return minimizeHintStyle
+	end
+	if opts.MinimizeHintStyle ~= nil then
+		setHintStyle(opts.MinimizeHintStyle, "CreateWindow")
+	end
+	applyHintStyle()
+
+	-- The card drags, with the same gesture as the bind HUD (components/Hud.lua).
+	-- It ASKS `ctx:DragClaimed` so a press where the HUD overlaps drags the HUD
+	-- alone, but deliberately registers no probe of its own: it's a TextButton and
+	-- already sinks its own press, so a probe would only make it claim that press
+	-- from itself and never start a drag.
+	local hintDragging = false
+	local hintDragStart = Vector2.zero
+	local hintDragOrigin = Vector2.zero
+	local hintDragMoved = false
+	restoreHint.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			local point = Vector2.new(input.Position.X, input.Position.Y)
+			if ctx:DragClaimed(point) then
+				return
+			end
+			hintDragging = true
+			hintDragMoved = false
+			hintDragStart = point
+			hintDragOrigin = hintDrawn
+		end
+	end)
+	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+		if not hintDragging then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			local delta = Vector2.new(input.Position.X, input.Position.Y) - hintDragStart
+			if math.abs(delta.X) + math.abs(delta.Y) > 4 then
+				hintDragMoved = true
+			end
+			-- Only a real drag gives the card a position of its own; until then
+			-- `hintPos` stays nil and the card keeps re-centring itself.
+			if hintDragMoved then
+				hintPos = hintDragOrigin + delta
+				placeHint(hintPos)
+			end
+		end
+	end))
+	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			hintDragging = false
+			-- The card is a TextButton, so a drag ends in a release that fires
+			-- `Activated` and would reopen the window under the cursor. Deferred
+			-- because that Activated fires on this same release and has to still see
+			-- the flag.
+			task.defer(function()
+				hintDragMoved = false
+			end)
+		end
+	end))
+
 	-- Shown with a small pop, hidden outright. Deliberately NOT a util/Fade.lua
 	-- fade: on a device with no keyboard this card is the only way back to the UI,
 	-- and a fade stranded mid-play would leave it invisible-but-there — the exact
@@ -1175,6 +1383,11 @@ return function(opts: any)
 	-- toggle key. Guarded on `minimized` because the card can only be up while the
 	-- window is down, and a stray Activated on the way out shouldn't re-show it.
 	restoreHint.Activated:Connect(function()
+		-- A press that moved the card was a drag, not a click on it (see the drag
+		-- block above) — without this, every drag would end by reopening the window.
+		if hintDragMoved then
+			return
+		end
 		if minimized then
 			setMinimized(false)
 		end
@@ -1441,6 +1654,20 @@ return function(opts: any)
 
 	function window:GetMinimizeHint(): boolean
 		return minimizeHint
+	end
+
+	-- The minimized card's shape: "auto" (a bare logo on touch, the full card
+	-- wherever there's a keyboard) · "card" · "logo". Applied live, and returns
+	-- the style in force afterwards — an unrecognized one warns and changes
+	-- nothing, so a caller can echo the result back into its own control rather
+	-- than assume the write landed.
+	function window:SetMinimizeHintStyle(style: any): string
+		return setHintStyle(style, "SetMinimizeHintStyle")
+	end
+
+	-- What was SET, not what "auto" resolved to on this device.
+	function window:GetMinimizeHintStyle(): string
+		return minimizeHintStyle
 	end
 
 	function window:SetNotificationsEnabled(enabled: boolean)

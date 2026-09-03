@@ -63,10 +63,21 @@ local DESCRIPTION_LABELS: { [string]: string } = {
 	both = "Both",
 }
 
+-- The minimized card's shape, as the user picks it. Same deal as the
+-- descriptions labels above: capitalized for the dropdown, handed to
+-- `SetMinimizeHintStyle` unchanged.
+local HINT_STYLE_OPTIONS = { "Auto", "Card", "Logo" }
+local HINT_STYLE_LABELS: { [string]: string } = {
+	auto = "Auto",
+	card = "Card",
+	logo = "Logo",
+}
+
 -- ── Interface ────────────────────────────────────────────────────────────────
 -- Accent colour, the toggle keybind, descriptions, the minimize hint,
 -- notifications, the bind HUD switch. Returns
--- `{ Group, Accent, ToggleKey, Descriptions, MinimizeHint, Notifications, Hud }`.
+-- `{ Group, Accent, ToggleKey, Descriptions, MinimizeHint, MinimizeHintStyle,
+-- Notifications, Hud }`.
 function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 	local o: any = opts or {}
 	local g = group(tab, o, "Interface", 1)
@@ -130,6 +141,29 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 		Hud = false,
 		Callback = function(on)
 			window:SetMinimizeHint(on)
+		end,
+	})
+	-- Its OWN flag rather than a third state folded into the switch above: on/off
+	-- and card/logo are two settings, and a config written before this existed
+	-- still loads its boolean into the switch with nothing to disagree with.
+	-- Capitalized labels handed to the setter unchanged (it lowercases), like the
+	-- Descriptions dropdown above.
+	controls.MinimizeHintStyle = g:Dropdown({
+		Name = "Hint Style",
+		Desc = "How the minimized card is drawn.",
+		Info = {
+			Fields = {
+				{ "Auto", "Logo on touch, card with a keyboard" },
+				{ "Card", "Mark, title and the reopen line" },
+				{ "Logo", "The mark on its own" },
+			},
+		},
+		Flag = o.MinimizeHintStyleFlag or "uranium_minimizehintstyle",
+		Options = HINT_STYLE_OPTIONS,
+		Default = HINT_STYLE_LABELS[window:GetMinimizeHintStyle()],
+		Width = 110,
+		Callback = function(style)
+			window:SetMinimizeHintStyle(style)
 		end,
 	})
 
