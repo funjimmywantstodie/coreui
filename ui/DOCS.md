@@ -250,7 +250,7 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:SetLogo(source, zoom?)` | Swap the titlebar mark (asset id, url, or file path). |
 | `Window:SetToggleKey(key)` | Re-bind the show/hide key (`Enum.KeyCode`). |
 | `Window:GetToggleKey()` → `Enum.KeyCode` | The current show/hide key. |
-| `Window:SetMinimizeHint(bool)` | Show/hide the minimized card — the branded chip that reopens the window when clicked or tapped. It rests top centre and can be dragged anywhere on screen. Applied live. |
+| `Window:SetMinimizeHint(bool)` | Show/hide the minimized card — the branded chip that reopens the window when clicked or tapped. The full card rests bottom right, the logo tile top centre, and either can be dragged anywhere on screen. Applied live. |
 | `Window:GetMinimizeHint()` → `bool` | Whether the card is on. |
 | `Window:SetMinimizeHintStyle(style)` → `string` | How that card is drawn: `"card"` (mark + "<Title> Minimized" + the reopen line), `"logo"` (the mark on its own), or `"auto"` — a logo on a touch device with no keyboard, a card everywhere else, resolved per device. Applied live; returns the style in force afterwards, and an unrecognized one warns and changes nothing. |
 | `Window:GetMinimizeHintStyle()` → `string` | The style that was set — `"auto"`, not what auto resolved to. |

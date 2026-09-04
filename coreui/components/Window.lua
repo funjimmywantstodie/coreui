@@ -1026,19 +1026,23 @@ return function(opts: any)
 	-- does: with the window gone, this card is the only thing on screen that is us.
 	local HINT_PAD, HINT_MARK, HINT_GAP = 14, 30, 10
 	local HINT_W = 246
-	-- Logo style: the card IS the mark, at 46px. Not a padded card *around* a
-	-- rounded tile — that's a box inside a box whatever pair of radii you pick.
+	-- Logo style: the tile IS the card, at 46px — the mark plus the same ring of
+	-- air the card gives it, and nothing else.
+	local HINT_TILE_PAD = 4
 	local HINT_LOGO = 46
+	local HINT_LOGO_MARK = HINT_LOGO - HINT_TILE_PAD * 2
 	local HINT_MARGIN = 16
 	local HINT_RADIUS = opts.LogoRadius or Theme.Brand.radius
 	-- The text column is a fixed offset, not a scale: it sits in a horizontal
 	-- UIListLayout, where a scale width would measure against the card's FULL
 	-- width and push the wrap out past the padding.
-	local HINT_TEXT_W = HINT_W - HINT_PAD * 2 - HINT_MARK - HINT_GAP
+	local HINT_TEXT_W = HINT_W - HINT_PAD * 2 - (HINT_MARK + HINT_TILE_PAD * 2) - HINT_GAP
 	-- Both held: the two styles below drive them. The card had no UICorner at all
-	-- — a sharp rectangle among a UI of rounded ones.
+	-- — a sharp rectangle among a UI of rounded ones — and its radius is the
+	-- WINDOW's, not a card's: this thing stands in for the window, so its outline
+	-- is the one the window just left behind.
 	local hintPadding = Create.padding(11, HINT_PAD)
-	local hintCorner = Create.corner(M.cardRadius)
+	local hintCorner = Create.corner(M.windowRadius)
 	local restoreHint = Create("TextButton", {
 		Name = "MinimizedHint",
 		Visible = false,
@@ -1088,13 +1092,47 @@ return function(opts: any)
 	end)
 	ctx:RegisterAccent(paintHintStroke)
 
+	-- The mark sits on a chrome tile of its own, and that tile is what carries the
+	-- rounded edge. The art is a full-bleed square whose margin is exactly
+	-- `chrome`, and the holder that crops the zoom `ClipsDescendants` — which
+	-- clips to a RECTANGLE, not to its UICorner (same engine limit as the titlebar
+	-- above). So the art's square corners overhang the rounded shape by a couple
+	-- of pixels: invisible on the titlebar, where the surface under them IS
+	-- chrome, and four dark nubs out here, where a rounded stroke then traced a
+	-- shape the art plainly wasn't. Backing it with chrome and insetting it by
+	-- HINT_TILE_PAD puts the overhang back on its own colour, and the only edge
+	-- left to see is a UICorner's.
+	local hintTileCorner = Create.corner(HINT_RADIUS + HINT_TILE_PAD)
+	local hintTile = Create("Frame", {
+		Name = "Tile",
+		Size = UDim2.fromOffset(HINT_MARK + HINT_TILE_PAD * 2, HINT_MARK + HINT_TILE_PAD * 2),
+		BackgroundColor3 = colors.chrome,
+		BorderSizePixel = 0,
+		LayoutOrder = 1,
+		Parent = restoreHint,
+	}, {
+		hintTileCorner,
+	})
 	-- The mark registers in `marks` like the titlebar's, so it follows SetLogo and
 	-- SetAccent from here on — but it's built after both have already run, so it
 	-- paints itself into the window's current state rather than the theme's.
-	local _, hintMark = newMark(restoreHint, HINT_MARK, 17, { LayoutOrder = 1 })
+	local _, hintMark = newMark(hintTile, HINT_MARK, 17, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+	})
 	hintMark.square.BackgroundColor3 = ctx.AccentSoft
 	Icons.tint(hintMark.glyph, ctx.Accent)
 	hintMark.apply(logoSource, logoZoom)
+	-- Mark and tile resize together, radius included, so the two styles are one
+	-- shape at two sizes. Returns the tile's outer size — the logo style's whole
+	-- card is that square.
+	local function sizeHintTile(mark: number): number
+		hintMark.resize(mark)
+		local tile = mark + HINT_TILE_PAD * 2
+		hintTile.Size = UDim2.fromOffset(tile, tile)
+		hintTileCorner.CornerRadius = UDim.new(0, HINT_RADIUS * (mark / HINT_MARK) + HINT_TILE_PAD)
+		return tile
+	end
 
 	local hintCopy = Create("Frame", {
 		Name = "Text",
@@ -1168,11 +1206,15 @@ return function(opts: any)
 	end
 
 	-- ── where the card rests, and the drag that moves it ──────────────────────
-	-- Top centre with a 16px margin: the one strip of screen neither our own HUD
-	-- nor the game's chrome usually occupies. `hintPos` stays nil for "wherever
-	-- the default is", so the card keeps re-centring itself through a style change
-	-- or a viewport resize and stops the moment the user has an opinion about
-	-- where it goes.
+	-- Two resting places, one per style, because they're two different objects.
+	-- The card is wide and wordy and belongs where a desktop UI puts a dismissed
+	-- thing: BOTTOM RIGHT, out of the way of both the game's HUD and ours. The
+	-- logo tile is small and is the phone's only route back to the menu, so it
+	-- sits TOP CENTRE — the one strip of screen a game's own touch controls
+	-- almost never occupy, and the thumb's reach doesn't matter for something you
+	-- have to look for. `hintPos` stays nil for "wherever the default is", so the
+	-- card keeps re-placing itself through a style change or a viewport resize and
+	-- stops the moment the user has an opinion about where it goes.
 	local hintPos: Vector2? = nil
 	-- The position last WRITTEN, post-clamp. A drag seeds its grab from this and
 	-- never from AbsolutePosition: this ScreenGui sets IgnoreGuiInset and
@@ -1187,7 +1229,14 @@ return function(opts: any)
 		-- Only the height is measured, and only the bottom clamp reads it.
 		local w = restoreHint.Size.X.Offset
 		local h = restoreHint.AbsoluteSize.Y
-		local target = p or Vector2.new((vp.X - w) / 2, HINT_MARGIN)
+		local target = p
+		if target == nil then
+			if hintStyleInForce() == "logo" then
+				target = Vector2.new((vp.X - w) / 2, HINT_MARGIN)
+			else
+				target = Vector2.new(vp.X - w - HINT_MARGIN, vp.Y - h - HINT_MARGIN)
+			end
+		end
 		-- The WHOLE card stays on screen, not just an edge: with no keyboard to
 		-- press the toggle key on, this card is the only way back to the UI.
 		if vp.X > 0 then
@@ -1220,13 +1269,17 @@ return function(opts: any)
 			hintPadding.PaddingLeft = UDim.new()
 			hintPadding.PaddingRight = UDim.new()
 			restoreHint.AutomaticSize = Enum.AutomaticSize.None
-			restoreHint.Size = UDim2.fromOffset(HINT_LOGO, HINT_LOGO)
+			local tile = sizeHintTile(HINT_LOGO_MARK)
+			restoreHint.Size = UDim2.fromOffset(tile, tile)
+			-- No fill of its own: the tile under it is the whole card, so the
+			-- button's job here is the hit target and the stroke. Matching its
+			-- corner to the tile's is what makes the outline hug the shape instead
+			-- of tracing a rounder one around it — and it's why the hover fill is
+			-- left alone in this style (the tile has to stay `chrome`, which is the
+			-- colour the art's own margin is drawn in). The stroke's accent lift is
+			-- the feedback.
 			restoreHint.BackgroundTransparency = 1
-			-- The card's own corner matched to the tile's, so the two edges are one
-			-- edge. The stroke stays either way — it hugs the tile and is what
-			-- carries the hover/accent feedback with no fill behind it.
-			hintCorner.CornerRadius = UDim.new(0, HINT_RADIUS * (HINT_LOGO / HINT_MARK))
-			hintMark.resize(HINT_LOGO)
+			hintCorner.CornerRadius = hintTileCorner.CornerRadius
 		else
 			hintCopy.Visible = true
 			hintPadding.PaddingTop = UDim.new(0, 11)
@@ -1236,8 +1289,8 @@ return function(opts: any)
 			restoreHint.AutomaticSize = Enum.AutomaticSize.Y
 			restoreHint.Size = UDim2.fromOffset(HINT_W, 0)
 			restoreHint.BackgroundTransparency = 0
-			hintCorner.CornerRadius = UDim.new(0, M.cardRadius)
-			hintMark.resize(HINT_MARK)
+			hintCorner.CornerRadius = UDim.new(0, M.windowRadius)
+			sizeHintTile(HINT_MARK)
 		end
 		placeHint(hintPos)
 	end
