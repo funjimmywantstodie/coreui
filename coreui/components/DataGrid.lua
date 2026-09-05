@@ -68,7 +68,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		Parent = f.field,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 	})
 	local headerContent = makeContent(header)
 	for i, col in columns do
@@ -104,7 +104,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		Parent = f.field,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.listLayout({}),
 	})
 
@@ -262,7 +262,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 					Parent = content,
 				}, {
 					Create.corner(4),
-					Create.stroke(colors.border),
+					Create.stroke(colors.border_soft),
 					Create.padding(0, 6),
 				}) :: TextBox
 				local stroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
@@ -276,7 +276,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 					Tween.play(stroke, Tween.Fast, { Color = ctx.Accent })
 				end)
 				box.FocusLost:Connect(function()
-					Tween.play(stroke, Tween.Fast, { Color = colors.border })
+					Tween.play(stroke, Tween.Fast, { Color = colors.border_soft })
 					local id = editingId
 					editingId = nil
 					if id ~= nil and id == entry.id then

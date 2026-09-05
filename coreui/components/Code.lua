@@ -45,7 +45,7 @@ return function(ctx: any, opts: any)
 		Parent = f.field,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.padding(9, 11),
 	})
 	local stroke = scroller:FindFirstChildOfClass("UIStroke") :: UIStroke
@@ -138,7 +138,7 @@ return function(ctx: any, opts: any)
 		if valid then
 			status.Visible = false
 			if not focused then
-				Tween.play(stroke, Tween.Fast, { Color = colors.border })
+				Tween.play(stroke, Tween.Fast, { Color = colors.border_soft })
 			end
 		else
 			status.Text = ok and "Parse returned nil" or tostring(res)
@@ -156,7 +156,7 @@ return function(ctx: any, opts: any)
 	box.FocusLost:Connect(function()
 		validate(false)
 		if valid then
-			Tween.play(stroke, Tween.Fast, { Color = colors.border })
+			Tween.play(stroke, Tween.Fast, { Color = colors.border_soft })
 		end
 	end)
 	-- `handle:Set` writes `box.Text` and lets this signal do the work, so the two

@@ -31,14 +31,36 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 		Create.listLayout({}),
 	})
 
+	-- The SHELL is the one bordered surface: header strip on top, the collapsing
+	-- body under it, one fill, one edge, one radius. The title used to float
+	-- above the card as a muted caption — the HTML mock's `.coreui-group-head` —
+	-- and a page of those read as a form: grey labels, then boxes. With the title
+	-- inside, a group is a panel with a name, the same miniature-of-the-window
+	-- shape the bind HUD and the status page already have, and collapsing one
+	-- leaves a titled bar behind rather than a caption over nothing.
+	local shell = Create("Frame", {
+		Name = "Shell",
+		BackgroundColor3 = colors.card,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Parent = group,
+	}, {
+		Create.corner(Theme.Metrics.cardRadius),
+		Create.stroke(colors.border),
+		-- Centered so the inset `Rule` below lands centered too (a layout-managed
+		-- child ignores its own Position); the header and body are full-width, so
+		-- it changes nothing for them.
+		Create.listLayout({ HorizontalAlignment = Enum.HorizontalAlignment.Center }),
+	})
+
 	-- NOTE: the header does NOT use a UIListLayout. A UIListLayout manages its
 	-- children's transforms and suppresses their Rotation, so a chevron laid out
 	-- by one never visually spins. Title + chevron are positioned manually so the
 	-- chevron is free to rotate (matches a bare ImageLabel, which rotates fine).
 	-- The fold caret's whole row is the tap target, so on a phone it's padded out
-	-- to ~40px; the desktop keeps the design's tight header. Per call, re-applied
-	-- when the device answer moves (Context:OnTouch).
-	local headPad = Create.padding(2, 4, 8, 4)
+	-- to ~44px; the desktop keeps a 40px strip. Per call, re-applied when the
+	-- device answer moves (Context:OnTouch).
+	local headPad = Create.padding(12, 14, 11, 14)
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -47,14 +69,14 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		LayoutOrder = 1,
-		Parent = group,
+		Parent = shell,
 	}, {
 		headPad,
 	})
 	local function fitHead()
 		local touch = ctx:IsTouch()
-		headPad.PaddingTop = UDim.new(0, touch and 12 or 2)
-		headPad.PaddingBottom = UDim.new(0, touch and 12 or 8)
+		headPad.PaddingTop = UDim.new(0, touch and 14 or 12)
+		headPad.PaddingBottom = UDim.new(0, touch and 14 or 11)
 	end
 	fitHead()
 	local unsubscribeTouch = ctx:OnTouch(fitHead)
@@ -64,9 +86,10 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 		Name = "Title",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
+		Size = UDim2.new(1, -22, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Group",
-		TextColor3 = colors.text_muted,
+		-- Full text weight: it's the panel's name now, not a caption over it.
+		TextColor3 = colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -78,24 +101,47 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 	chevron.Position = UDim2.new(1, 0, 0.5, 0)
 	chevron.Rotation = collapsed and 180 or 0;
 	(chevron :: any).Parent = head
+	-- The header is a button, and the chevron is what says so; it brightens under
+	-- the pointer the way every other idle icon in the window does.
+	head.MouseEnter:Connect(function()
+		Icons.tween(chevron, Tween.Fast, colors.text_muted)
+	end)
+	head.MouseLeave:Connect(function()
+		Icons.tween(chevron, Tween.Fast, colors.text_dim)
+	end)
 
+	-- Hairline between the header and its body. Hidden while collapsed: a folded
+	-- group is a bar, and a bar with a rule along its bottom edge reads as a table
+	-- header waiting for rows. Toggled with the fold rather than faded, so it
+	-- vanishes the frame the body starts sliding up under the header.
+	local rule = Create("Frame", {
+		Name = "Rule",
+		Size = UDim2.new(1, -28, 0, 1), -- inset to the header's text edge
+		BackgroundColor3 = colors.border_soft,
+		BorderSizePixel = 0,
+		Visible = not collapsed,
+		LayoutOrder = 2,
+		Parent = shell,
+	})
+
+	-- The body — still called "Card", because that's the frame controls mount into
+	-- and the titlebar search walks (`handle._search.card` below). Transparent: the
+	-- shell carries the fill and the edge now.
 	local card = Create("Frame", {
 		Name = "Card",
-		BackgroundColor3 = colors.card,
+		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 	}, {
-		Create.corner(Theme.Metrics.cardRadius),
-		Create.stroke(colors.border),
-		Create.padding(2, 14),
+		Create.padding(1, 14, 5, 14),
 		Create.listLayout({}),
 	})
 
-	-- A clipping holder owns the card's height so collapse/expand slides the panel
+	-- A clipping holder owns the body's height so collapse/expand slides the panel
 	-- open/closed instead of snapping its visibility.
 	local holder, setCollapsed = Collapse.wrap(card, collapsed)
-	holder.LayoutOrder = 2
-	holder.Parent = group
+	holder.LayoutOrder = 3
+	holder.Parent = shell
 
 	-- `any` for the same reason components/Window.lua types its tab handle that
 	-- way: the control surface grows the two collapse methods below, and under
@@ -144,6 +190,7 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 			return
 		end
 		collapsed = value
+		rule.Visible = not collapsed
 		if animate == false then
 			chevron.Rotation = collapsed and 180 or 0
 		else

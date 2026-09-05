@@ -111,6 +111,31 @@ function Create.hover<T>(inst: GuiObject, prop: string, base: T, over: T): (GuiO
 	end
 end
 
+-- The edge half of a control's hover: a UIStroke's Color tweened `base` → `over`
+-- while the pointer is on `inst`, at Tween.Fast like `Create.hover`. Same shape,
+-- same `set(base, over)` return, split out because a stroke isn't a GuiObject
+-- and has no MouseEnter of its own — it has to borrow the control's.
+--
+-- Every control resting inside a card draws its edge in `border_soft` and firms
+-- it to `border` on hover (see the note on the two line weights in Theme.lua), so
+-- this is called next to `Create.hover` on the fill at each of those sites.
+function Create.edge(inst: GuiObject, stroke: UIStroke, base: Color3, over: Color3): ((Color3, Color3) -> ())
+	local restingValue, hoverValue = base, over
+	local inside = false
+	inst.MouseEnter:Connect(function()
+		inside = true
+		Tween.play(stroke, Tween.Fast, { Color = hoverValue })
+	end)
+	inst.MouseLeave:Connect(function()
+		inside = false
+		Tween.play(stroke, Tween.Fast, { Color = restingValue })
+	end)
+	return function(newBase: Color3, newOver: Color3)
+		restingValue, hoverValue = newBase, newOver
+		stroke.Color = inside and hoverValue or restingValue
+	end
+end
+
 function Create.listLayout(props: { [string]: any }?): UIListLayout
 	local layout = Create("UIListLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder,

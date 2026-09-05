@@ -45,12 +45,28 @@ local function build(ctx: any, opts: any, multi: boolean)
 		Parent = stack and f.field or f.row,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.padding(0, 8, 0, 12),
 		-- No UIListLayout: a layout-managed child won't render its Rotation, so
 		-- the caret is positioned manually to keep it free to spin.
 	})
 	local boxStroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
+	-- Edge states, strongest wins: open → accent, hovered → `border`, resting →
+	-- `border_soft`. One painter, so closing the menu with the pointer still on
+	-- the box lands on the hover edge rather than snapping past it to rest.
+	local isOpen, hovering = false, false
+	local function paintEdge()
+		local color = if isOpen then ctx.Accent elseif hovering then colors.border else colors.border_soft
+		Tween.play(boxStroke, Tween.Fast, { Color = color })
+	end
+	box.MouseEnter:Connect(function()
+		hovering = true
+		paintEdge()
+	end)
+	box.MouseLeave:Connect(function()
+		hovering = false
+		paintEdge()
+	end)
 
 	local valLabel = Create("TextLabel", {
 		Name = "Value",
@@ -268,7 +284,8 @@ local function build(ctx: any, opts: any, multi: boolean)
 	end
 
 	local function setOpenVisual(open: boolean)
-		Tween.play(boxStroke, Tween.Fast, { Color = open and ctx.Accent or colors.border })
+		isOpen = open
+		paintEdge()
 		Tween.play(chevron, Tween.Spin, { Rotation = open and 180 or 0 })
 	end
 

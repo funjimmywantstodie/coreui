@@ -20,8 +20,10 @@
 --    value:
 --      `accent`      small marks — slider fill, toggle track, icons, focus
 --                    strokes, text. Bright, because it's tiny.
---      `accent_fill` large solid fills (primary buttons). Deeper; hovers *up*
---                    to `accent`, so the interaction reads as lighting up.
+--      `accent_fill` large solid fills. Deeper; hovers *up* to `accent`.
+--                    (Primary buttons no longer use it — they're `accent_soft`
+--                    tiles with an accent edge, components/Button.lua — so it
+--                    is the reserve shade for any future large fill.)
 --      `accent_soft` accent laid into a surface (~13%) for tinted tiles — the
 --                    active nav, avatar placeholders, badges. Reads as "this is
 --                    accent-coloured" without putting neon on the screen.
@@ -94,15 +96,26 @@ Theme.Colors = {
 	-- track still reads against the field it sits in.
 	toggle_off  = Color3.fromHex("2B3428"),
 	knob        = Color3.fromHex("6E7C69"), -- toggle knob (off)
-	border      = Color3.fromHex("2B3427"), -- every 1px line
-	border_soft = Color3.fromHex("1F271D"), -- between-field dividers (quieter than an edge)
+	-- Two weights of line, by what they outline:
+	--   `border`      floating surfaces (menus, popovers, toasts), the card
+	--                 shell, and a control the pointer is ON. Also the hover
+	--                 destination of every `border_soft` edge.
+	--   `border_soft` between-field dividers AND the resting edge of a control
+	--                 sitting inside a card (button, dropdown, input, chip). A
+	--                 resting control used to carry the full `border`, so a card
+	--                 of eight controls was eight boxes drawn in the same weight
+	--                 as the card itself — the fill ramp already lifts a control
+	--                 off its card, so at rest the edge only has to crisp it.
+	--                 Hover firms it to `border`, focus/open/active take the accent.
+	border      = Color3.fromHex("2B3427"),
+	border_soft = Color3.fromHex("1F271D"),
 	text        = Color3.fromHex("E9F2E5"), -- primary text / headings
 	text_muted  = Color3.fromHex("98A394"), -- descriptions, placeholders, readouts
 	text_dim    = Color3.fromHex("616D5D"), -- small caps headers, hints, idle icons
 	-- Accent, by area — see the header. Small marks / large fills / tinted tiles.
 	accent      = Color3.fromHex("7BE04A"), -- slider fill, toggle-on, focus stroke, icons
 	accent_2    = Color3.fromHex("96EC69"), -- accent hover
-	accent_fill = Color3.fromHex("5EB832"), -- large solid fills (primary buttons)
+	accent_fill = Color3.fromHex("5EB832"), -- large solid fills (unused by the stock controls now)
 	accent_soft = Color3.fromHex("22331A"), -- accent tinted into a surface (~13%)
 	accent_dim  = Color3.fromHex("4E9B2B"), -- pressed / disabled accent
 	knockout    = Color3.fromHex("08140A"), -- text + icons ON a solid accent fill
@@ -126,10 +139,13 @@ Theme.Metrics = {
 	navButton     = 40,
 	navRadius     = 11,
 	navIcon       = 20,
-	cardRadius    = 9,
-	controlRadius = 7,
+	cardRadius    = 10,
+	controlRadius = 8,
+	-- The group's title lives INSIDE the card now (components/Group.lua), so the
+	-- gap between cards is card-to-card, not card-to-next-title; 18 read as a
+	-- hole once the title stopped sitting in it.
 	columnGap     = 24,
-	groupGap      = 18,
+	groupGap      = 14,
 }
 
 -- ── Fonts ─────────────────────────────────────────────────────────────────

@@ -510,7 +510,7 @@ return function(opts: any)
 		Parent = rightCluster,
 	}, {
 		Create.corner(M.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.padding(0, 10),
 		Create.listLayout({
 			FillDirection = Enum.FillDirection.Horizontal,

@@ -104,7 +104,7 @@ return function(ctx: any, opts: any): (Frame, any)
 		LayoutOrder = opts.LayoutOrder or 2,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.listLayout({
 			FillDirection = Enum.FillDirection.Horizontal,
 			VerticalAlignment = Enum.VerticalAlignment.Center,
@@ -161,7 +161,7 @@ return function(ctx: any, opts: any): (Frame, any)
 		-- so it can't punch a dead spot in either segment's hover.
 		divider = Create("Frame", {
 			Name = "Divider",
-			BackgroundColor3 = colors.border,
+			BackgroundColor3 = colors.border_soft,
 			BorderSizePixel = 0,
 			Position = UDim2.fromOffset(-padX, 0),
 			Size = UDim2.new(0, 1, 1, 0),
@@ -225,15 +225,30 @@ return function(ctx: any, opts: any): (Frame, any)
 	-- ── paint ────────────────────────────────────────────────────────────────
 	function paint()
 		local over = overChip()
+		-- An active bind (held, or toggled on) lights up the way the bind HUD's
+		-- rows and the active nav tile do: accent text and an accent edge on an
+		-- accent-TINTED fill (`ctx.AccentSoft`), never a solid accent slab. The
+		-- menu and the HUD agreeing on what "live" looks like is the point.
+		local active = not listening and binding:GetState()
+		local hasKey = Bind.name(binding:GetKey()) ~= "None"
+
 		-- The whole pill lifts on hover (it's one control), and the half under the
 		-- pointer brightens its label — that's what tells you the two halves do
 		-- different things before you click either of them.
-		chip.BackgroundColor3 = over and colors.control_hi or colors.control
+		if active then
+			chip.BackgroundColor3 = ctx.AccentSoft
+		else
+			chip.BackgroundColor3 = over and colors.control_hi or colors.control
+		end
+		-- Edge, strongest wins: listening / active → accent, hovered → `border`,
+		-- at rest → `border_soft` (Theme.lua, the two line weights).
+		stroke.Color = if (listening or active) then ctx.Accent
+			elseif over then colors.border
+			else colors.border_soft
 
 		if listening then
 			keyBtn.Text = "..."
 			keyBtn.TextColor3 = ctx.Accent
-			stroke.Color = ctx.Accent
 		else
 			-- The pin half carries no text; the glyph is the whole label, lit while
 			-- the bind is pinned.
@@ -241,11 +256,13 @@ return function(ctx: any, opts: any): (Frame, any)
 			if showPin then
 				Icons.tint(pinIcon, binding:IsPinned() and ctx.Accent or colors.text_dim)
 			end
-			-- An active bind (held, or toggled on) lights up, so a Hold key reads as
-			-- live while it's down without anything else on the row moving.
-			local active = binding:GetState()
-			keyBtn.TextColor3 = active and ctx.Accent or colors.text
-			stroke.Color = active and ctx.Accent or colors.border
+			-- An unbound chip says "None", and every toggle in the menu has one, so
+			-- at full weight a card read as a column of Nones. It recedes to dim
+			-- until there's a key in it (or the pointer is on it — it's still a
+			-- button), and a bound key gets the full text colour back.
+			keyBtn.TextColor3 = if active then ctx.Accent
+				elseif hasKey or over then colors.text
+				else colors.text_dim
 		end
 
 		if modeBtn then

@@ -53,8 +53,10 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Size = UDim2.new(1, -18, 0, 0), -- leaves room for the chevron flush right
 		Text = opts.Title or "Section",
-		TextColor3 = colors.text,
-		TextSize = 13,
+		-- One step under the group's own title (components/Group.lua: `text`, 13),
+		-- so a nested section reads as a subdivision of the card, not a second card.
+		TextColor3 = colors.text_muted,
+		TextSize = 12,
 		FontFace = Theme.Font.Medium,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = head,

@@ -61,16 +61,34 @@ return function(ctx: any, opts: any)
 		Parent = f.field,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.padding(0, 12),
 	})
 	local stroke = box:FindFirstChildOfClass("UIStroke") :: UIStroke
 
+	-- Three edge states, strongest wins: focused → accent, pointer on it →
+	-- `border`, at rest → `border_soft`. Painted from one place so a hover
+	-- leaving mid-focus can't drop the focus ring to the hover colour.
+	local focused, hovering = false, false
+	local function paintEdge()
+		local color = if focused then ctx.Accent elseif hovering then colors.border else colors.border_soft
+		Tween.play(stroke, Tween.Fast, { Color = color })
+	end
+	box.MouseEnter:Connect(function()
+		hovering = true
+		paintEdge()
+	end)
+	box.MouseLeave:Connect(function()
+		hovering = false
+		paintEdge()
+	end)
 	box.Focused:Connect(function()
-		Tween.play(stroke, Tween.Fast, { Color = ctx.Accent })
+		focused = true
+		paintEdge()
 	end)
 	box.FocusLost:Connect(function(enterPressed)
-		Tween.play(stroke, Tween.Fast, { Color = colors.border })
+		focused = false
+		paintEdge()
 		if enterPressed and opts.OnEnter then
 			opts.OnEnter(box.Text)
 		end

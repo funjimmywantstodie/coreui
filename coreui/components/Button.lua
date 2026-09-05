@@ -12,37 +12,56 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 		Name = "Button",
 		AutoButtonColor = false,
 		Size = UDim2.new(1, 0, 0, 36),
-		-- Accent buttons take the *deepened* accent, not the accent itself: a
-		-- full-width slab of the raw accent is the single loudest thing the UI
-		-- can draw. It hovers up to the real accent (see below).
-		BackgroundColor3 = accent and ctx.AccentFill or colors.control,
+		-- An accent button is a TINTED tile — `AccentSoft` fill, accent edge,
+		-- accent text — the same "this is live" language the active nav tile, a
+		-- lit bind chip and the HUD's rows speak. It used to be a solid
+		-- `accent_fill` slab, which even deepened was the loudest thing on the
+		-- page: a card with two of them read as two green bars with a menu around
+		-- them. The tile keeps the button unmistakably the primary action (nothing
+		-- else at rest carries an accent edge) without painting a slab.
+		BackgroundColor3 = accent and ctx.AccentSoft or colors.control,
 		Text = label or "Button",
-		TextColor3 = accent and colors.knockout or colors.text,
+		TextColor3 = accent and ctx.Accent or colors.text,
 		TextSize = 13,
 		FontFace = Theme.Font.Medium,
 	}, {
 		Create.corner(Theme.Metrics.controlRadius),
-		Create.stroke(accent and colors.accent or colors.border, 1),
+		-- A secondary button rests on the soft edge and firms it under the pointer
+		-- (Theme.lua, the two line weights); the accent one wears the accent edge
+		-- at rest — that edge is what makes it the primary action.
+		Create.stroke(accent and ctx.Accent or colors.border_soft, 1),
 		Create("UIScale", {}),
 	})
 	local stroke = btn:FindFirstChildOfClass("UIStroke") :: UIStroke
-	if accent then
-		stroke.Transparency = 1
-	end
 	local scale = btn:FindFirstChildOfClass("UIScale") :: UIScale
 
 	local function base(): Color3
-		return accent and ctx.AccentFill or colors.control
+		return accent and ctx.AccentSoft or colors.control
 	end
-	-- Hovering an accent button brightens it to the full accent — the fill
-	-- "lights up" rather than shifting to yet another shade.
+	-- Hover: the secondary fill lifts `control` → `control_hi` like every other
+	-- control. The tinted tile has no lighter token to lift to, so its fill stays
+	-- put and the edge + text light to `AccentHover` instead (below).
 	local function over(): Color3
-		return accent and ctx.Accent or colors.control_hi
+		return accent and ctx.AccentSoft or colors.control_hi
 	end
 	-- The `hovering` boolean this used to keep is Create.hover's now: its setter
 	-- repaints to whichever end applies, so a SetAccent landing while the pointer
 	-- is on the button doesn't snap it back to the resting fill.
 	local _, setHover = Create.hover(btn, "BackgroundColor3", base(), over())
+	local setEdge
+	if accent then
+		-- Hover brightens edge + text to the accent's hover shade, so the tile
+		-- "lights up" the way the old slab did, without ever becoming one.
+		setEdge = Create.edge(btn, stroke, ctx.Accent, ctx.AccentHover)
+		btn.MouseEnter:Connect(function()
+			Tween.play(btn, Tween.Fast, { TextColor3 = ctx.AccentHover })
+		end)
+		btn.MouseLeave:Connect(function()
+			Tween.play(btn, Tween.Fast, { TextColor3 = ctx.Accent })
+		end)
+	else
+		setEdge = Create.edge(btn, stroke, colors.border_soft, colors.border)
+	end
 	btn.Activated:Connect(function()
 		-- quick squash-and-release so the tap feels physical
 		scale.Scale = 0.96
@@ -55,6 +74,8 @@ local function newButton(ctx: any, label: string, accent: boolean, callback: (()
 	if accent then
 		ctx:RegisterAccent(function()
 			setHover(base(), over())
+			setEdge(ctx.Accent, ctx.AccentHover)
+			btn.TextColor3 = ctx.Accent
 		end)
 	end
 	return btn

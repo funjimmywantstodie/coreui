@@ -74,14 +74,16 @@ return function(ctx: any, opts: any)
 		Size = UDim2.fromOffset(38, 22),
 		BackgroundColor3 = colors.control,
 		Text = format(value, suffix),
-		TextColor3 = colors.text_muted,
+		-- The value is the row's answer, not a hint — full text weight, and the
+		-- mono face so a changing number doesn't jitter the box's width.
+		TextColor3 = colors.text,
 		TextSize = 12,
-		FontFace = Theme.Font.Medium,
+		FontFace = Theme.Font.Mono,
 		LayoutOrder = 2,
 		Parent = f.row,
 	}, {
 		Create.corner(6),
-		Create.stroke(colors.border),
+		Create.stroke(colors.border_soft),
 		Create.padding(2, 9),
 		Create("UISizeConstraint", { MinSize = Vector2.new(38, 22) }),
 	})

@@ -58,8 +58,11 @@ return function(ctx: any, opts: any)
 		field = container
 	end
 
-	-- The frame clips so the UICorner actually rounds the picture (a UICorner on
-	-- the ImageLabel alone doesn't clip a Crop-scaled image).
+	-- The frame clips its overflow, but ClipsDescendants clips to the RECTANGLE:
+	-- a picture that fills the frame draws square corners straight over the
+	-- frame's UICorner. So the picture carries its own UICorner (same radius),
+	-- which rounds what it draws whatever its ScaleType, and the frame's corner
+	-- is left for the fill that shows around a `contain`ed picture.
 	local frame = Create("Frame", {
 		Name = "Frame",
 		Size = opts.Width and UDim2.new(0, tonumber(opts.Width) or 0, 0, height)
@@ -80,6 +83,8 @@ return function(ctx: any, opts: any)
 		Image = "",
 		ScaleType = scaleType,
 		Parent = frame,
+	}, {
+		Create.corner(radius),
 	}) :: ImageLabel
 
 	-- Shown whenever there's no resolvable source (or it's still downloading).

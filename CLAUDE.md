@@ -1378,8 +1378,11 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
   that any sizable fill of it took the window over.
   **The accent now has three weights, chosen by area** — `accent` for small
   marks (slider fill, toggle track, icons, focus strokes, text), `accent_fill`
-  (`#5EB832`, deeper) for large solid fills like primary buttons, which hover
-  *up* to `accent`, and `accent_soft` (`#22331A`, accent at ~13% into the
+  (`#5EB832`, deeper) for large solid fills, which hover *up* to `accent` —
+  **primary buttons stopped using it**: an accent `Button` is now an
+  `AccentSoft` tile with an accent edge + accent text (the lit-chip / active-nav
+  language), because a solid slab at button size was the loudest thing on the
+  page — and `accent_soft` (`#22331A`, accent at ~13% into the
   surface) for tinted tiles — the active nav, avatar placeholders, badge chips —
   where the icon/text on top carries the real colour. `util/Context.lua` derives
   `ctx.AccentFill` / `ctx.AccentSoft` from the live accent, so `SetAccent` moves
@@ -1397,6 +1400,25 @@ player.TrackChanged:Connect(function(track) print("now playing:", track.Title) e
   margin baked around the glyph: the titlebar holder clips and draws the art
   `zoom`× oversized to crop that margin off. Caller-supplied `Logo` art defaults
   to `zoom = 1` — we can't assume someone else's mark has margin to trim.
+- **Two line weights, by what they outline** (Theme.lua, at `border`). A
+  *floating* surface (menu, popover, toast) and the group's card shell take
+  `border`; a control *resting inside a card* (button, dropdown, input, bind
+  chip, slider value box, code/grid boxes) takes `border_soft` and firms to
+  `border` under the pointer — `Create.edge(inst, stroke, base, over)` is the
+  stroke half of `Create.hover`, for exactly that. Focus / open / active take
+  the accent. Every resting control used to carry `border`, so a card of eight
+  controls was eight boxes drawn as heavily as the card itself; the fill ramp
+  already lifts a control off its card, so at rest the edge only crisps it.
+  Primary (accent) buttons have no edge at all.
+- **The group title lives INSIDE the card.** `Group.lua` builds a `Shell`
+  (card fill + `border` + `cardRadius`) holding a header strip (`Head`: title in
+  `text`, chevron), a hairline `Rule` that hides while collapsed, and the
+  `Collapse` holder over the body — which is still the frame called `Card`, the
+  one controls mount into and `tab:Filter` walks via `handle._search.card`.
+  The title used to float above the card as `text_muted`, the HTML mock's
+  `.coreui-group-head`, and a page of those read as a form. `groupGap` dropped
+  18 → 14 with it (the gap is card-to-card now). A nested `Section` title is
+  `text_muted` 12 so it reads as a subdivision, not a second card.
 - **Fonts: set `FontFace` (NOT `Font`).** `Font` uses bitmap atlases → soft/
   pixelated scaling; `FontFace` uses the SDF renderer → crisp at any size. Use
   `Theme.Font.{Bold,Medium,Regular,Mono}`.
