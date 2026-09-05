@@ -190,6 +190,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:CreateHud(opts?)` · `:GetHud()` · `:SetHudVisible(b)` · `:OnHudVisible(fn)` · `:OnHudChanged(fn)` ·
   `:GetPosition()`/`:SetPosition(x,y)` · `:GetSize()`/`:SetSize(w,h)` ·
   `:IsMaximized()`/`:SetMaximized(b, animate?)` · `:GetSelected()` ·
+  `:IsTouch()` · `:SetTouch(b?)` · `:OnTouch(fn)` ·
   `:GetConfig()` · `:ApplyConfig(t, opts?)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
   `:OnFlagChanged(fn)` · `:NotifyFlag(name, source?)` ·
   `:SaveConfig(name, meta?)` · `:LoadConfig(name, opts?)` · `:DeleteConfig(name)` ·
@@ -306,6 +307,63 @@ Four things worth knowing before touching this:
 Hiding the *open* tab (`SetVisible(false)`) falls through to the next visible one
 — Window owns that, via the `tab._onVisible` hook, so `Visible = false` at build
 time takes the same path as hiding one later.
+
+## Phones — the touch layout
+
+Uranium's users are ~97% phones (2026-09: 5129 of 5301 machines), so the window
+has a second layout picked **per device**: `Context:IsTouch()` = `TouchEnabled
+and not KeyboardEnabled`, resolved **per call**, never cached at build (an
+executor can run before the input devices report; a touchscreen laptop has
+both). `CreateWindow{ Touch = bool }` / `Window:SetTouch` pin it (`ctx.Touch`) —
+needed to test in Studio, whose emulator reports a keyboard. Window watches the
+two UIS properties and raises `ctx:TouchChanged()` → `ctx:OnTouch(fn)`, and
+everything that laid itself out on the old answer re-lays out (chrome, sidebar,
+HUD rows, chips, group headers, the Settings row). **Desktop must show no
+change** — every branch reads the answer and falls through to the old code.
+
+Phone numbers: a viewport of 800×360–844×390, so 252–282px of body under the
+desktop chrome. What the touch branch does, and where:
+
+- **Window.lua `applyChrome`** — titlebar 50 → 40, status bar hidden (the
+  sidebar gets its own UICorner + two chrome fills so the bottom-left corner
+  stays rounded; the corner is only *parented* on touch), 36px window buttons,
+  toasts top-right. `VIEWPORT_INSET` 24 → 8. Opens **maximized** unless
+  `geometryChosen` (the max button, SetSize/SetMaximized, or a restored
+  `uranium_window` record — the WindowState deps wrapper sets it).
+- **Window.lua `fitNav`** — the two nav clusters are measured against each other
+  off the LAYOUT height (deterministic, no AutomaticSize wait). `NAV_LEVELS`:
+  design → tighter pad/gap → 32px tiles; still short → `navTop` (a
+  ScrollingFrame, always) gets a fixed height above `navBottom` and scrolls.
+  Re-run on `main.Size`, tab add / hide / pin, and touch change. On touch every
+  level draws the tab **name under the icon** (`tab:_layout{ size, icon, label }`
+  in Tab.lua, `LABEL_H`); the flyout then shows on **press** and carries only
+  Desc + badge.
+- **Tab.lua `_setStacked`** — column 2 under column 1 when the page is narrower
+  than `STACK_BELOW` (600, checked in Window's `fitPage`). A UIListLayout is
+  parented into `columns` for the stacked state and removed after; the columns'
+  anchors/scale positions are neutralized for it.
+- **Keyboard** — `shiftForKeyboard` in Window.lua (and the same shape in
+  Screen.lua's Input block): slides the window up so the focused box clears
+  `OnScreenKeyboardPosition.Y`, tracks the applied shift and subtracts exactly
+  that on focus lost. The box's bottom gets the GUI inset ADDED (over-shift is
+  harmless, under-shift isn't).
+- **Hud.lua** — rows fire binds (`Binding:Activate(down)` in Bind.lua, its own
+  `_downTap` flag so a keyboard release can't end a finger's hold). Rows stay
+  plain Frames so the panel still drags from them; `root.InputBegan` + an
+  8px `SLOP` decides tap vs drag on release, and a drag cancels a Hold. Touch:
+  44px rows, no key column, off/unbound top-level toggles listed dimmed
+  (`Binding:IsListed`'s last clause reads `manager.ctx:IsTouch()`), default
+  position right edge / centred until `hasPos`.
+- **BindChip.lua** — `HideKeyOnTouch` (Toggle passes it) drops the key half and
+  keeps the mode half if switchable; the key half is inert on touch everywhere.
+  Field.lua's `syncMain` skips invisible siblings so the name gets the width.
+- **Slider.lua** — value bubble over the knob and `ctx:LockScroll(true)` for a
+  touch drag (`ctx.Scroller` = the content frame; counted).
+- **Controls.lua** — every mounted handle gets `:SetVisible/:IsVisible` (row +
+  its hairline); Settings hides the Toggle UI row with it on touch.
+- The minimized logo tile squashes on press and **long-presses** (0.55s) to
+  toggle the HUD; Notify toasts dismiss on tap; Info pins on a long-press of the
+  name.
 
 ## Boot splash
 

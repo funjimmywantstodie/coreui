@@ -23,6 +23,9 @@ return function(ctx: any, opts: any): (Frame, Frame)
 
 	-- No UIListLayout on the header: a layout-managed child won't render its
 	-- Rotation, so the chevron is positioned manually to keep it free to spin.
+	-- Thumb-sized fold target on a phone, the design's own on a desktop — same
+	-- deal as components/Group.lua's header.
+	local headPad = Create.padding(9, 2)
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -33,8 +36,16 @@ return function(ctx: any, opts: any): (Frame, Frame)
 		LayoutOrder = 1,
 		Parent = section,
 	}, {
-		Create.padding(9, 2),
+		headPad,
 	})
+	local function fitHead()
+		local pad = ctx:IsTouch() and 12 or 9
+		headPad.PaddingTop = UDim.new(0, pad)
+		headPad.PaddingBottom = UDim.new(0, pad)
+	end
+	fitHead()
+	local unsubscribeTouch = ctx:OnTouch(fitHead)
+	section.Destroying:Connect(unsubscribeTouch)
 
 	Create("TextLabel", {
 		Name = "Title",

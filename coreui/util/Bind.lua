@@ -394,6 +394,7 @@ function Bind:Register(opts: any): any
 		getState = opts.GetState,
 		destroyed = false,
 		_downKey = nil :: any,
+		_downTap = nil :: boolean?,
 		_parentRev = nil :: number?,
 		_parentCache = nil :: any,
 		_childRev = nil :: number?,
@@ -507,6 +508,46 @@ function Binding:_press()
 		self:_pulse()
 	else -- Toggle
 		self:_set(not self:_value())
+	end
+end
+
+-- A press that didn't come from the key: a tap on the bind HUD's row, which on a
+-- phone is the only way to fire anything at all. `down = true` is the finger
+-- landing, `false` its lift. Same mode machine as `_press`/`_release`, with its
+-- own down-flag rather than `_downKey` so a keyboard release (which the router
+-- matches by key) can't end a hold the finger started, and vice versa. The HUD
+-- wraps the call in `ctx:User`, so a host watching OnFlagChanged sees a row tap
+-- as the user's, exactly like a keypress.
+function Binding:Activate(down: boolean)
+	if self.destroyed then
+		return
+	end
+	local mode = self.mode
+	if down then
+		if not self.enabled or mode == "None" or mode == "Always" then
+			return
+		end
+		if mode == "Hold" then
+			if not self._downTap then
+				self._downTap = true
+				self:_set(true)
+			end
+		elseif mode == "Press" then
+			if self.callback then
+				task.spawn(self.callback, true, self:_info())
+			end
+			self:_pulse()
+		else -- Toggle
+			self:_set(not self:_value())
+		end
+		return
+	end
+	-- Lift. Never gated on `enabled`, for the same reason `_release` isn't.
+	if self._downTap then
+		self._downTap = nil
+		if mode == "Hold" and self.state then
+			self:_set(false)
+		end
 	end
 end
 
@@ -715,13 +756,27 @@ function Binding:IsListed(): boolean
 	if self.hud ~= nil then
 		return self.hud == true
 	end
-	if self.label == nil or self.mode == "None" then
+	local mode = self.mode
+	if self.label == nil or mode == "None" then
 		return false
 	end
 	if Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown then
 		return true
 	end
-	return self:_value() and self:GetParent() == nil
+	if self:GetParent() ~= nil then
+		return false
+	end
+	if self:_value() then
+		return true
+	end
+	-- ON A PHONE the panel is the hotbar, not a readout: the key clause above
+	-- keeps out exactly the rows a phone user needs, since nothing there can ever
+	-- have a key. So an idle, unbound, top-level feature lists too (dimmed —
+	-- components/Hud.lua), as long as tapping it does something. Sub-options stay
+	-- rolled up under their parent as before. Read per call, like every other
+	-- touch decision (Context:IsTouch).
+	local ctx = self.manager.ctx
+	return mode ~= "Always" and ctx ~= nil and type(ctx.IsTouch) == "function" and ctx:IsTouch() == true
 end
 
 -- Sub-options that are ON but rolled up into this row (the "+2" the HUD draws).

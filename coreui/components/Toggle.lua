@@ -151,6 +151,9 @@ return function(ctx: any, opts: any)
 			Compact = true,
 			LayoutOrder = 2,
 			Where = where,
+			-- On a phone the key half is dead weight (nothing can fill it); the
+			-- mode half stays wherever there's a mode to cycle. See BindChip.
+			HideKeyOnTouch = true,
 			-- The toggle's own label is what the bind HUD lists it under, so
 			-- "hold B for aim" appears there without a second declaration.
 			Label = opts.Name,

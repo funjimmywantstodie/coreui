@@ -190,15 +190,36 @@ return function(ctx: any, container: Frame, opts: any)
 	end
 	toast.Destroying:Connect(retire)
 
-	-- hold → out → destroy
-	task.delay(opts.Duration or 3.2, function()
-		if finished then
+	-- out → destroy. Reached by the timer below, or early by a tap on the card:
+	-- on a phone the stack sits where the window's buttons are, and a toast that
+	-- can only wait out its timer is one more thing in the way. `leaving` makes
+	-- the two paths meet once.
+	local leaving = false
+	local function dismiss()
+		if finished or leaving then
 			return -- already retired (capped out, or the window went away)
 		end
+		leaving = true
 		Tween.play(card, Tween.ToastOut, { Position = UDim2.fromOffset(20, 0) })
 		fade:To(Tween.ToastOut, 1, function()
 			retire()
 			toast:Destroy()
 		end)
-	end)
+	end
+	-- An invisible full-card button rather than making the card one: the card is
+	-- a Frame the fade snapshots and the bar/icon sit in, and a button's own
+	-- AutoButtonColor/press states have no business in it.
+	local tap = Create("TextButton", {
+		Name = "Dismiss",
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		Text = "",
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 4,
+		Parent = card,
+	})
+	tap.Activated:Connect(dismiss)
+
+	-- hold → out → destroy
+	task.delay(opts.Duration or 3.2, dismiss)
 end

@@ -124,6 +124,7 @@ local EVENTS = {
 	InputBegan = true, InputChanged = true, InputEnded = true, Heartbeat = true,
 	RenderStepped = true, Stepped = true, Event = true, FocusLost = true,
 	Focused = true, PlayerAdded = true, PlayerRemoving = true, Ended = true,
+	TextBoxFocused = true, TextBoxFocusReleased = true,
 }
 
 local instance = {}

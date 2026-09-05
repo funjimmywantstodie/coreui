@@ -7,12 +7,15 @@
 -- scrolling content's clipping), and the flag registry that backs config
 -- save / load (any control given a `Flag` is captured by GetConfig/LoadConfig).
 
+local Services = require(script.Parent.Services)
 local Create = require(script.Parent.Create)
 local Tween = require(script.Parent.Tween)
 local Fade = require(script.Parent.Fade)
 local Log = require(script.Parent.Log)
 local Bind = require(script.Parent.Bind)
 local Signal = require(script.Parent.Signal)
+
+local UserInputService = Services.UserInputService
 
 local Context = {}
 Context.__index = Context
@@ -26,6 +29,10 @@ export type Context = typeof(setmetatable(
 		AccentSoft: Color3,
 		Keybinds: boolean,
 		Descriptions: string,
+		Touch: boolean?,
+		Scroller: ScrollingFrame?,
+		_scrollLocks: number,
+		_touchWatchers: Signal.Signal<boolean>,
 		overlay: Frame,
 		Flags: { [string]: { handle: any, kind: string } },
 		Groups: { { key: string, handle: any } },
@@ -96,6 +103,13 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		-- default because inline prose under every row is what made a card of eight
 		-- controls three screens tall.
 		Descriptions = "hover",
+		-- `CreateWindow{ Touch = true/false }` pins the device answer; nil = ask
+		-- UserInputService per call. See IsTouch.
+		Touch = nil,
+		-- The window's content ScrollingFrame, for LockScroll. Set by Window.
+		Scroller = nil,
+		_scrollLocks = 0,
+		_touchWatchers = Signal.new(),
 		overlay = overlay,
 		Flags = {},
 		-- Every collapsible group in the window, in build order, each under a
@@ -136,6 +150,63 @@ end
 
 function Context:IsCapturing(): boolean
 	return self._capturing > 0
+end
+
+-- ── Touch ────────────────────────────────────────────────────────────────────
+-- "Is this a phone?" — touch AND no keyboard. Not touch alone: a touchscreen
+-- laptop has both, and everything that branches on this is about a missing
+-- keyboard (chips naming keys, a hint sentence about a toggle key, rows that
+-- have to be tappable because there's nothing else to press).
+--
+-- Resolved PER CALL, never cached at build: an executor can run before the input
+-- devices have reported themselves, and a cached answer would pin the desktop
+-- layout on a phone for the whole session. `ctx.Touch` pins it either way for a
+-- host that knows better (or for testing the phone layout in Studio, where the
+-- keyboard is always "enabled"). Window raises OnTouch when the engine's answer
+-- moves, so everything that laid itself out on the old answer can re-lay out.
+function Context:IsTouch(): boolean
+	if self.Touch ~= nil then
+		return self.Touch == true
+	end
+	local ok, touch = pcall(function()
+		return UserInputService.TouchEnabled == true and UserInputService.KeyboardEnabled ~= true
+	end)
+	return ok and touch == true
+end
+
+-- Watch the device answer. `fn(isTouch)` fires when it changes — no replay: the
+-- caller reads `ctx:IsTouch()` itself when it builds, which is the same answer.
+function Context:OnTouch(fn: (boolean) -> ()): () -> ()
+	return self._touchWatchers:Connect(fn)
+end
+
+-- Window calls this from the UserInputService property signals (and SetTouch).
+-- Guarded like every other host-reachable broadcast: one component failing to
+-- re-lay out must not stop the rest.
+function Context:TouchChanged()
+	local touch = self:IsTouch()
+	self._touchWatchers:FireGuarded(function(err)
+		Log.warn("OnTouch", tostring(err))
+	end, touch)
+end
+
+-- ── Scroll lock ──────────────────────────────────────────────────────────────
+-- A control dragging horizontally inside the content ScrollingFrame (a slider
+-- under a thumb) holds the page still for the length of the gesture: on touch
+-- the frame would otherwise scroll on the vertical drift of a horizontal drag.
+-- Counted, so two overlapping locks can't release each other's.
+function Context:LockScroll(locked: boolean)
+	local scroller = self.Scroller
+	if locked then
+		self._scrollLocks += 1
+	else
+		self._scrollLocks = math.max(0, self._scrollLocks - 1)
+	end
+	if scroller then
+		pcall(function()
+			scroller.ScrollingEnabled = self._scrollLocks == 0
+		end)
+	end
 end
 
 -- ── Drag priority ────────────────────────────────────────────────────────────

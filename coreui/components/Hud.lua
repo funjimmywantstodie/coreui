@@ -65,9 +65,21 @@ local NAME_X = 26
 local KEY_W = 110 -- right column: "RShift · always" in 11px mono, with room to spare
 local MARGIN = 8  -- keep-on-screen inset
 local SUB_X = 12  -- how far a sub-option's row is indented under its parent
+-- ON A PHONE the rows are the hotbar — the only way to fire a bind at all — so
+-- they're thumb-sized, and the key column goes: `—` / `RShift` is noise on a
+-- device with nothing to press, so the mode word sits alone on the right and the
+-- name gets the width. Desktop keeps every number above.
+local ROW_H_TOUCH = 44
+local PAD_X_TOUCH = 16
+local KEY_W_TOUCH = 52
+-- How far a press may travel and still be a tap. Beyond it the gesture is a
+-- drag of the panel, and a Hold it started is let go.
+local SLOP = 8
 
--- One pooled bind row: dot (live marker) · name · "KEY · mode".
-type Row = { frame: Frame, dot: Frame, name: TextLabel, key: TextLabel }
+-- One pooled bind row: dot (live marker) · name · "KEY · mode". `entry` is what
+-- the row was last painted with — the tap handler is bound once per row and
+-- looks up what it's bound to at tap time.
+type Row = { frame: Frame, dot: Frame, name: TextLabel, key: TextLabel, entry: any }
 
 -- The name label is RichText (for the dim "+2" roll-up count), and a label is
 -- whatever the menu author called their feature — so it has to be escaped, or a
@@ -405,6 +417,56 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- ── rows ─────────────────────────────────────────────────────────────────
 	local rows: { Row } = {}
 
+	-- ── tapping a row ────────────────────────────────────────────────────────
+	-- A row is a plain Frame, deliberately: a TextButton would sink the press and
+	-- the panel could no longer be dragged from its rows. So the row only records
+	-- that it was pressed, and the drag machinery below (which sees every press on
+	-- `root`, rows included) decides on release whether that was a tap or a drag.
+	--
+	--   Toggle   tap flips it          Press   tap fires it once
+	--   Hold     down = key down, lift = key up — including a lift that slid off
+	--            the row (the release listener is UserInputService's, not the
+	--            row's) and a press that became a drag
+	--   Always   inert
+	--
+	-- Every activation goes through `ctx:User`, so a host watching OnFlagChanged
+	-- sees a row tap as `source = "user"`, exactly like the key.
+	local pressedRow: Row? = nil
+	local holdRow: Row? = nil
+	local function endHold()
+		local row = holdRow
+		holdRow = nil
+		if row and row.entry then
+			local entry = row.entry
+			ctx:User(function()
+				entry:Activate(false)
+			end)
+		end
+	end
+	local function rowPressed(row: Row)
+		pressedRow = row
+		local entry = row.entry
+		if entry and entry.GetMode and entry:GetMode() == "Hold" then
+			holdRow = row
+			ctx:User(function()
+				entry:Activate(true)
+			end)
+		end
+	end
+	local function rowTapped(row: Row)
+		local entry = row.entry
+		if not entry then
+			return
+		end
+		if entry:GetMode() == "Hold" then
+			endHold() -- the lift is the whole tap for a Hold
+			return
+		end
+		ctx:User(function()
+			entry:Activate(true)
+		end)
+	end
+
 	local function newRow(index: number): Row
 		local frame = Create("Frame", {
 			Name = "Bind",
@@ -458,22 +520,40 @@ return function(ctx: any, parent: Instance, opts: any): any
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = frame,
 		}) :: TextLabel
-		return { frame = frame, dot = dot, name = name, key = key }
+		local row: Row = { frame = frame, dot = dot, name = name, key = key, entry = nil }
+		frame.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				rowPressed(row)
+			end
+		end)
+		return row
 	end
 
 	-- `sub` = this row's parent is on screen right above it, so it draws indented
 	-- with a smaller dot: a bound sub-option reads as belonging to the feature
 	-- over it rather than as another top-level thing that's running.
 	local function paintRow(row: Row, entry: any, sub: boolean)
+		row.entry = entry
+		local touch = ctx:IsTouch()
+		local rowH = touch and ROW_H_TOUCH or ROW_H
+		local padX = touch and PAD_X_TOUCH or PAD_X
+		local nameX = padX + (NAME_X - PAD_X)
+		local keyW = touch and KEY_W_TOUCH or KEY_W
 		local active = entry:GetState() == true
 		local keyName = Bind.name(entry:GetKey())
-		if keyName == "None" then
-			-- Idle unbound rows are filtered out by Binding:IsListed, so this is a
-			-- keyless bind that's currently ON (an "Always", or a toggle switched on
-			-- from the menu) or a `Hud = true` override. The em dash is the honest
-			-- answer to "what key?" — there isn't one, it's running anyway.
+		local unbound = keyName == "None"
+		if unbound then
+			-- Idle unbound rows are filtered out by Binding:IsListed (except on a
+			-- phone — see below), so this is a keyless bind that's currently ON (an
+			-- "Always", or a toggle switched on from the menu) or a `Hud = true`
+			-- override. The em dash is the honest answer to "what key?" — there
+			-- isn't one, it's running anyway.
 			keyName = "—"
 		end
+		-- On a phone an OFF, unbound feature is listed too, as something to tap —
+		-- dimmed, so the list still reads as "what's on" at a glance.
+		local idle = unbound and not active
 		local indent = sub and SUB_X or 0
 		local text = escape(entry:GetLabel() or "Bind")
 		-- Sub-options that are on but rolled up into this row. The count is the
@@ -483,16 +563,25 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if extra > 0 then
 			text ..= ('<font color="#%s"> +%d</font>'):format(colors.text_dim:ToHex(), extra)
 		end
+		row.frame.Size = UDim2.new(1, 0, 0, rowH)
 		row.name.Text = text
-		row.name.Position = UDim2.fromOffset(NAME_X + indent, 0)
-		row.name.Size = UDim2.new(1, -(NAME_X + indent + KEY_W + PAD_X), 1, 0)
-		row.name.TextColor3 = active and colors.text or colors.text_muted
-		row.key.Text = ('%s<font color="#%s"> · %s</font>')
-			:format(keyName, colors.text_dim:ToHex(), entry:GetMode():lower())
+		row.name.TextSize = touch and 13 or 12
+		row.name.Position = UDim2.fromOffset(nameX + indent, 0)
+		row.name.Size = UDim2.new(1, -(nameX + indent + keyW + padX), 1, 0)
+		row.name.TextColor3 = active and colors.text or (idle and colors.text_dim or colors.text_muted)
+		if touch then
+			row.key.Text = entry:GetMode():lower()
+		else
+			row.key.Text = ('%s<font color="#%s"> · %s</font>')
+				:format(keyName, colors.text_dim:ToHex(), entry:GetMode():lower())
+		end
+		row.key.Position = UDim2.new(1, -padX, 0.5, 0)
+		row.key.Size = UDim2.new(0, keyW, 1, 0)
 		row.key.TextColor3 = active and colors.text or colors.text_dim
-		row.dot.Position = UDim2.new(0, PAD_X + indent, 0.5, 0)
+		row.dot.Position = UDim2.new(0, padX + indent, 0.5, 0)
 		row.dot.Size = sub and UDim2.fromOffset(4, 4) or UDim2.fromOffset(6, 6)
 		row.dot.BackgroundColor3 = active and ctx.Accent or colors.border
+		row.dot.BackgroundTransparency = idle and 0.5 or 0
 		row.frame.BackgroundTransparency = active and 0 or 1
 		row.frame.Visible = true
 	end
@@ -655,6 +744,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		end
 		for i = shown + 1, #rows do
 			rows[i].frame.Visible = false
+			rows[i].entry = nil -- a hidden row can't be tapped into a stale bind
 		end
 		empty.Visible = shown == 0
 		local rest = #order - shown
@@ -676,27 +766,49 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- Offset-only position, rounded to whole pixels: the panel is small and full
 	-- of 11px text, and a half-pixel origin is exactly what makes that text look
 	-- soft (see Window.lua's snapToPixels).
+	--
+	-- Until someone puts it somewhere (an `X`/`Y` option, a drag, SetPosition, a
+	-- restored flag) the panel rests at a DEFAULT that depends on the device: the
+	-- desktop's (16, 140), or on a phone the right edge, vertically centred — the
+	-- desktop spot lands on the left thumbstick, and the right-hand strip is the
+	-- one most games leave empty. A saved position always wins over either.
+	local hasPos = tonumber(opts.X) ~= nil or tonumber(opts.Y) ~= nil
 	local pos = Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
-	local function place(p: Vector2)
+	local function defaultPos(): Vector2
+		local vp = (parent :: any).AbsoluteSize
+		local size = root.AbsoluteSize
+		if ctx:IsTouch() and vp and vp.X > 0 then
+			return Vector2.new(vp.X - size.X - MARGIN, (vp.Y - size.Y) / 2)
+		end
+		return Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
+	end
+	local function place(p: Vector2?)
+		local target: Vector2 = p or defaultPos()
 		local vp = (parent :: any).AbsoluteSize
 		local size = root.AbsoluteSize
 		if vp and vp.X > 0 and size.X > 0 then
-			p = Vector2.new(
-				math.clamp(p.X, MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)),
-				math.clamp(p.Y, MARGIN, math.max(MARGIN, vp.Y - size.Y - MARGIN))
+			target = Vector2.new(
+				math.clamp(target.X, MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)),
+				math.clamp(target.Y, MARGIN, math.max(MARGIN, vp.Y - size.Y - MARGIN))
 			)
 		end
-		pos = Vector2.new(math.round(p.X), math.round(p.Y))
+		pos = Vector2.new(math.round(target.X), math.round(target.Y))
 		root.Position = UDim2.fromOffset(pos.X, pos.Y)
 	end
-	place(pos)
+	-- Re-place from the default while nobody has chosen a spot, from `pos` after.
+	local function replace()
+		place(hasPos and pos or nil)
+	end
+	replace()
 	-- A viewport (or a collapse) that shrinks under the panel would otherwise
 	-- leave it hanging off an edge with nothing to grab.
-	table.insert(connections, (parent :: any):GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		place(pos)
-	end))
-	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		place(pos)
+	table.insert(connections, (parent :: any):GetPropertyChangedSignal("AbsoluteSize"):Connect(replace))
+	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(replace)
+	-- The device answer moving (Context:OnTouch): rows re-lay out, the listing rule
+	-- changes (Binding:IsListed), and an unplaced panel moves to the other default.
+	local unsubscribeTouch = ctx:OnTouch(function()
+		refresh()
+		replace()
 	end)
 
 	-- Both cards drag as one unit — the handle is `root`, so the stat bar and the
@@ -735,10 +847,19 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
 			local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
-			if math.abs(delta.X) + math.abs(delta.Y) > 4 then
+			if not dragMoved and math.abs(delta.X) + math.abs(delta.Y) > SLOP then
 				dragMoved = true
+				hasPos = true -- the user has an opinion about where it goes now
+				-- A press that became a drag was never a tap — and a Hold it started
+				-- has to let go, or the feature runs for as long as the panel is held.
+				pressedRow = nil
+				endHold()
 			end
-			place(dragOrigin + delta)
+			-- The panel only moves once the gesture is a drag: a thumb that wobbles
+			-- 3px on a tap must not nudge the hotbar it's tapping.
+			if dragMoved then
+				place(dragOrigin + delta)
+			end
 		end
 	end))
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
@@ -751,6 +872,15 @@ return function(ctx: any, parent: Instance, opts: any): any
 			-- writing on every change would write sixty times a second across a drag.
 			if wasDragging and dragMoved then
 				ctx:User(changed)
+			end
+			-- A press that stayed put is a tap on whatever row it landed on. Every
+			-- release ends a Hold, including one whose finger slid off the row.
+			local tapped = pressedRow
+			pressedRow = nil
+			if wasDragging and not dragMoved and tapped then
+				rowTapped(tapped)
+			else
+				endHold()
 			end
 			-- Clear the drag flag here rather than only in the caret's handler. The
 			-- caret is a TextButton and sinks input, so a click on it never reaches
@@ -850,7 +980,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				Tween.play(panelScale, Tween.Pop, { Scale = 1 })
 				fade:To(Tween.Normal, 0, refresh)
 			end
-			place(pos)
+			replace()
 		elseif animate == false then
 			root.Visible = false
 		else
@@ -913,6 +1043,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		return pos
 	end
 	function handle:SetPosition(x: number, y: number)
+		hasPos = true
 		place(Vector2.new(tonumber(x) or pos.X, tonumber(y) or pos.Y))
 		changed()
 	end
@@ -932,6 +1063,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			return
 		end
 		if tonumber(value.X) and tonumber(value.Y) then
+			hasPos = true -- a saved spot beats the device default
 			place(Vector2.new(tonumber(value.X) :: number, tonumber(value.Y) :: number))
 		end
 		if value.Collapsed ~= nil then
@@ -958,6 +1090,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 		unsubscribeBinds()
 		unsubscribeAccent()
 		unsubscribeDrag()
+		unsubscribeTouch()
+		endHold() -- a Hold the finger still has down must not outlive the panel
 		root:Destroy()
 	end
 

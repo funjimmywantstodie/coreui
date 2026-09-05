@@ -137,12 +137,13 @@ return function(ctx: any, opts: any): (Frame, any)
 
 	keyBtn = segment("Key", 1, keyMin)
 
+	local divider: Frame? = nil
 	if switchable then
 		modeBtn = segment("Mode", 2, compact and 34 or 44)
 		-- Hairline between the halves, pulled back out of the mode segment's left
 		-- padding so it lands on the actual boundary. A Frame doesn't sink input,
 		-- so it can't punch a dead spot in either segment's hover.
-		Create("Frame", {
+		divider = Create("Frame", {
 			Name = "Divider",
 			BackgroundColor3 = colors.border,
 			BorderSizePixel = 0,
@@ -151,6 +152,28 @@ return function(ctx: any, opts: any): (Frame, any)
 			Parent = modeBtn,
 		})
 	end
+
+	-- ── touch ────────────────────────────────────────────────────────────────
+	-- On a device with no keyboard the key half can never be filled: nothing the
+	-- user can press will ever land in it. `HideKeyOnTouch` (a Toggle's chip)
+	-- drops it and keeps only the mode half, wherever there's more than one mode
+	-- to cycle — the row gets the chip's width back, and a phone can still put
+	-- Aim Key on hold / toggle / always. Without a mode half the chip goes
+	-- entirely. A Keybind control's chip keeps its key half on screen (it's the
+	-- control's whole body) but it's INERT — tapping it used to arm listening,
+	-- and on a phone nothing ends that but a tap elsewhere. Per call, like every
+	-- touch decision, and re-applied when the device answer moves.
+	local hideKeyOnTouch = opts.HideKeyOnTouch == true
+	local function applyTouch()
+		local hideKey = hideKeyOnTouch and ctx:IsTouch()
+		keyBtn.Visible = not hideKey
+		if divider then
+			divider.Visible = not hideKey
+		end
+		chip.Visible = not (hideKey and modeBtn == nil)
+	end
+	applyTouch()
+	local unsubscribeTouch = ctx:OnTouch(applyTouch)
 
 	local function overChip(): boolean
 		return hovered[keyBtn] == true or (modeBtn ~= nil and hovered[modeBtn] == true)
@@ -244,11 +267,15 @@ return function(ctx: any, opts: any): (Frame, any)
 		-- group rebuilt under it), where handle:Destroy is never called.
 		-- Unsubscribing twice is a no-op.
 		unsubscribeAccent()
+		unsubscribeTouch()
 	end)
 
 	keyBtn.Activated:Connect(function()
 		if listening then
 			return -- already armed; a left click on the chip is a no-op, not a bind
+		end
+		if ctx:IsTouch() then
+			return -- no keyboard to listen for (see the touch block above)
 		end
 		listening = true
 		-- Claim key capture so the window's toggle-key listener (and every other
@@ -408,6 +435,7 @@ return function(ctx: any, opts: any): (Frame, any)
 	function handle:Destroy()
 		disarm(false)
 		unsubscribeAccent()
+		unsubscribeTouch()
 		binding:Destroy()
 	end
 

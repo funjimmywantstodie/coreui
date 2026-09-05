@@ -211,7 +211,9 @@ function Field.new(ctx: any, opts: { Name: string?, Desc: string? }, stack: bool
 		syncMain = function()
 			local used, others = 0, 0
 			for _, child in row:GetChildren() do
-				if child:IsA("GuiObject") and child ~= block then
+				-- Visible siblings only: the layout skips a hidden one (a bind chip
+				-- stood down on touch), so the name block gets its width back too.
+				if child:IsA("GuiObject") and child ~= block and child.Visible then
 					used += child.AbsoluteSize.X
 					others += 1
 				end
@@ -223,6 +225,7 @@ function Field.new(ctx: any, opts: { Name: string?, Desc: string? }, stack: bool
 		row.ChildAdded:Connect(function(child)
 			if child:IsA("GuiObject") then
 				child:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncMain)
+				child:GetPropertyChangedSignal("Visible"):Connect(syncMain)
 			end
 			task.defer(syncMain)
 		end)

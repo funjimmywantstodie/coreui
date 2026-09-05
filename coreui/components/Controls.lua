@@ -209,6 +209,25 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		if watched then
 			ctx:RegisterFlag(flag, handle, kind)
 		end
+		-- Every mounted control can be hidden and shown as a ROW — the field and
+		-- the hairline under it together, so a hidden control doesn't leave a
+		-- stray separator behind. It exists so a panel can stand a row down on a
+		-- device where it means nothing (the Settings tab's Toggle-UI key on a
+		-- phone) through the public API alone. A control that already has its own
+		-- SetVisible keeps it.
+		if type(handle) == "table" and handle.SetVisible == nil then
+			local item = items[#items]
+			function handle:SetVisible(value: boolean)
+				local visible = value ~= false
+				;(inst :: any).Visible = visible
+				if item.sep then
+					item.sep.Visible = visible and item.bordered and item ~= items[#items]
+				end
+			end
+			function handle:IsVisible(): boolean
+				return (inst :: any).Visible == true
+			end
+		end
 		return handle
 	end
 

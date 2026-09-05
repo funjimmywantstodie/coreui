@@ -184,6 +184,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 				child:Destroy()
 			end
 		end
+		-- Menu rows are 30px on a desktop and 40px under a thumb. Read per open —
+		-- the rows are rebuilt every time — like every other touch decision.
+		local rowPadY = ctx:IsTouch() and 12 or 7
 		for i, opt in options do
 			local optBtn = Create("TextButton", {
 				Name = opt,
@@ -197,7 +200,7 @@ local function build(ctx: any, opts: any, multi: boolean)
 				Parent = scroller,
 			}, {
 				Create.corner(6),
-				Create.padding(7, 9),
+				Create.padding(rowPadY, 9),
 				Create.listLayout({
 					FillDirection = Enum.FillDirection.Horizontal,
 					VerticalAlignment = Enum.VerticalAlignment.Center,

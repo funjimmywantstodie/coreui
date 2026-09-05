@@ -162,6 +162,7 @@ local Window = Uranium:CreateWindow({
     Descriptions = "hover",                  -- where control `Desc` is drawn (default "hover")
     MinimizeHint = true,                     -- click-to-reopen card (default true)
     MinimizeHintStyle = "auto",              -- "auto" / "card" / "logo" (default "auto")
+    Touch        = nil,                      -- pin the phone layout on/off (default: per device, see below)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
@@ -185,6 +186,39 @@ info glyph), `"inline"` (a second line of prose under the name) or `"both"`. See
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
+
+### On a phone
+
+Most of Uranium's users are on a phone, so the window has a second layout it
+picks **per device**: a touch screen **and no keyboard** (a touchscreen laptop
+has both and gets the desktop layout). It's re-resolved on every decision rather
+than cached at build, because an executor can run before the input devices have
+reported themselves — and if the answer moves later, everything re-lays out.
+
+What changes, nothing of which is visible on a desktop:
+
+| | Desktop | Phone |
+| --- | --- | --- |
+| Window | windowed, 24px of air around it | opens **maximized**, 8px of air. A saved `uranium_window` record still wins. |
+| Chrome | 50px titlebar, 34px status bar | 40px titlebar, **no status bar** — a clock and a version string aren't worth 34px of a 280px body |
+| Sidebar | icons only; the tab's name is its hover flyout | the **name is drawn under each icon**; the flyout shows on press and carries only `Desc` and the badge |
+| Sidebar overflow | never measured | the two clusters never overlap: padding and gap tighten first, then the tiles shrink (40 → 32px), then the top cluster **scrolls** above the bottom one |
+| Columns | two, always | **one** below ~600px of content width — column 2 stacks under column 1 in build order |
+| Targets | design sizes | ≥ 40px: the window buttons, dropdown rows, group / section fold rows, the slider's grab area |
+| Sliders | value in the box | also in a **bubble over the knob** while dragged, and a horizontal drag doesn't scroll the page |
+| Keyboard | — | the window **slides up** to keep a focused box above the on-screen keyboard and back on focus lost |
+| Toasts | bottom-right | **top-right**, and a tap dismisses one (that works on a desktop too) |
+| Bind chips | key + mode | a toggle's chip drops its **key half** (nothing can ever fill it) and keeps the mode half; a Keybind control's key half is inert |
+| Bind HUD | a readout | a **hotbar** — see [Bind HUD](#bind-hud) |
+| Minimized | the card | the logo tile; **long-press** it to toggle the HUD without opening the window |
+| Settings | full | no **Toggle UI** key row |
+
+```lua
+Uranium:CreateWindow({ Touch = true })   -- force the phone layout (Studio's emulator reports a keyboard)
+Window:IsTouch()                          -- → boolean, the answer right now
+Window:SetTouch(nil)                      -- back to asking the engine; true / false pins it, live
+Window:OnTouch(function(isTouch) end)     -- → unsub; fires when the answer changes
+```
 
 ### Where the ScreenGui goes
 
@@ -267,6 +301,9 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:GetSize()` / `:SetSize(w, h)` | Its layout size. Setting is still clamped to the viewport. |
 | `Window:IsMaximized()` / `:SetMaximized(bool, animate?)` | The maximize state. |
 | `Window:GetSelected()` → `number` | Which tab is open (1-based). |
+| `Window:IsTouch()` → `bool` | Is the phone layout in force — a touch screen and no keyboard, read now. See [On a phone](#on-a-phone). |
+| `Window:SetTouch(bool?)` | Pin the phone layout on / off, or `nil` to ask the engine again. Applied live. |
+| `Window:OnTouch(fn)` → `unsub` | `fn(isTouch)` whenever that answer changes. No initial call. |
 | `Window:GetConfig()` → `table` | Snapshot every flag — what `SaveConfig` serializes. |
 | `Window:ApplyConfig(table, opts?)` → `applied, skipped` | Apply a flag table — what `LoadConfig` applies. `opts.Filter(name, kind)` applies only part of it. |
 | `Window:GetFlags()` → `{[name]=kind}` | Every registered flag and its codec kind. |
@@ -305,6 +342,10 @@ Window:Notify({
 It is case-insensitive and `"warn"` aliases `"warning"`. Omit `Type` (or pass
 anything unrecognized) for the original accent-colored toast with no icon.
 
+A click or tap on a toast dismisses it early. The stack sits bottom-right on a
+desktop and **top-right on a phone**, where the bottom-right corner is the jump
+button (see [On a phone](#on-a-phone)).
+
 A toast is for something the user may miss. For something they must not — the
 hub failing to load, a ban — use [`Uranium:Screen`](#screen-status-page),
 which needs no window at all.
@@ -341,7 +382,7 @@ Settings tab's *Keybind HUD* switch, or in code:
 Uranium:CreateWindow({ Hud = true })      -- defaults
 Uranium:CreateWindow({ Hud = {            -- or tune it
     Title    = "Active Binds",  -- header text     (default "Active Binds")
-    X        = 16,              -- offset from the left  (default 16)
+    X        = 16,              -- offset from the left  (default 16; on a phone: the right edge, centred)
     Y        = 140,             -- offset from the top   (default 140)
     MaxRows  = 10,              -- rows before "+N more" (default 10)
     Visible  = true,            -- start shown           (default true)
@@ -380,6 +421,32 @@ whole menu:
 
 Pass `Hud = true` / `Hud = false` on any of the three sources above to override
 all of it.
+
+#### On a phone: the HUD is the hotbar
+
+A phone has no keys, so the rows are the only way to fire a bind at all — and
+they're built for a thumb (see [On a phone](#on-a-phone) for the device rule):
+
+- **Rows fire the bind.** A tap on a `Toggle` row flips it, on a `Press` row
+  fires it once; press-and-hold a `Hold` row holds it and lifting releases it —
+  including a finger that slides off the row, and a press that turns into a
+  drag of the panel. An `Always` row is inert. A sub-option's row fires its own
+  bind. It reaches `OnFlagChanged` as `source = "user"`, exactly like the key.
+- **Thumb-sized rows** (44px), and **no key column**: `—` / `RShift` is noise
+  on a device with nothing to press, so the mode word sits alone on the right
+  and the name gets the width.
+- **Off, unbound top-level toggles are listed too**, dimmed — the first rule in
+  the list above keeps out exactly the rows a phone user needs. Sub-options
+  still roll up under their parent, and `MaxRows` / `+N more` still cap it.
+- **Drag vs tap.** The panel still drags from anywhere; a press that travels
+  more than ~8px is a drag and fires nothing.
+- **Default position** is the right edge, vertically centred (the desktop's
+  `(16, 140)` lands on the left thumbstick). A position you pass, drag to, or
+  restore from a config wins over it.
+- The minimized **logo tile** toggles the HUD on a **long-press**, so the hotbar
+  comes up without opening the window.
+
+The same rows work with a mouse; nothing above changes what a desktop shows.
 
 #### Sub-options (`Parent`)
 
@@ -871,6 +938,12 @@ All controls below are methods on a **Group** or **Section** surface.
 Stateful controls return a **handle** with `:Get()` and `:Set(value)`. `:Set`
 fires the callback.
 
+Every mounted control's handle also has **`:SetVisible(bool)`** / `:IsVisible()`,
+which hides or shows the whole row — the field and the hairline under it — so a
+control that means nothing in some situation (a key picker on a phone) can stand
+down without leaving a stray separator. A control that already had its own
+`SetVisible` keeps it.
+
 #### `FireDefault` — applying the default at build time
 
 Without it, every default is written twice — once as `Default`, once as the
@@ -945,8 +1018,8 @@ assuming the write landed.
 closing as soon as you leave. **Click the glyph to pin it** — it then stays up
 until you click somewhere else, which is what lets you read it while dragging the
 slider it's describing. On touch there is no hover at all, so tapping the glyph
-(a ~24px target around the 13px mark) is the only way in, and tapping anywhere
-else closes it.
+(a ~24px target around the 13px mark) or **long-pressing the name** is the way
+in, and tapping anywhere else closes it.
 
 A control with neither `Desc` nor `Info` gets no glyph and no gap. `Info = false`
 opts one control out entirely: its `Desc` stays on the row in every mode.
@@ -1168,6 +1241,10 @@ Click the chip, then press the key you want bound. While it's listening
 Left click isn't bindable from the UI — it's what you click the chip *with* — but
 `h:Set(Enum.UserInputType.MouseButton1)` binds it if you really want it.
 
+On a phone the key half is **inert**: there's no keyboard to listen for, and an
+armed chip would sit at `...` with nothing to end it but a tap elsewhere. The
+mode half still cycles. See [On a phone](#on-a-phone).
+
 #### Modes
 
 By default a Keybind is a pure key **picker**: nothing is bound, and `Callback`
@@ -1237,6 +1314,14 @@ configs people have already saved. An explicit `KeybindFlag` still wins.
 
 `handle.Bind` exposes the chip's handle (`:Get()` / `:Set(key)` / `:GetMode()` /
 `:SetMode(m)`), or is `nil` on a toggle that opted out.
+
+**On a phone the chip drops its key half.** Nothing the user can press will ever
+fill it, so it goes, and the row gets the width back. The **mode half stays**
+wherever there's more than one mode to cycle (`Aim Key` can still go `hold →
+toggle → always`, which is what the [HUD's rows](#on-a-phone-the-hud-is-the-hotbar)
+honour); a chip with a single mode disappears entirely. A saved key still
+round-trips through the flag — it just isn't drawn. `Keybinds = false` on the
+window puts nothing new on a phone.
 
 ### Dropdown (single select)
 
@@ -1871,6 +1956,11 @@ A drop-in panel that wires up: accent color picker, the toggle-UI keybind, a
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
 **Unload** button.
 
+On a phone the **Toggle UI** row is hidden (its flag still registers and
+round-trips): it names a key the device can't press, and the minimized logo tile
+is the way back there. `controls.TouchWatch` is the unsubscriber for that watch.
+See [On a phone](#on-a-phone).
+
 Picking a config in **Saved Configs** also fills the **Config Name** box with it,
 so the obvious gesture — pick `main`, press *Save* — overwrites the config you
 picked instead of writing a second one under whatever the box still held. It only
@@ -1882,6 +1972,7 @@ The second return is every handle the panel built, also on `tab.Controls`:
 | Key | What |
 | --- | --- |
 | `Accent` `ToggleKey` `Descriptions` `MinimizeHint` `MinimizeHintStyle` `Notifications` `Hud` | The Interface controls. |
+| `HudMirror` `HudChanges` `TouchWatch` `FolderWatch` | Unsubscribers for the panel's own watches, for a host tearing its settings UI down. |
 | `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
 | `OnSelect(fn)` → `unsub` | `fn(name)` whenever the selection changes. |
 | `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |

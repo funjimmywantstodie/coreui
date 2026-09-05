@@ -135,13 +135,46 @@ return function(ctx: any, opts: any)
 	})
 	local knobScale = knob:FindFirstChildOfClass("UIScale") :: UIScale
 
+	-- The value, over the knob, while a FINGER drags it: the thumb covers the
+	-- knob and the value box is a row away. A sibling of the knob on the rail
+	-- rather than a child of it, so the knob's grab-scale doesn't blow it up too.
+	local bubble = Create("TextLabel", {
+		Name = "Bubble",
+		Visible = false,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0, 0, 0, -12),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 24),
+		BackgroundColor3 = colors.pop,
+		Text = "",
+		TextColor3 = colors.text,
+		TextSize = 13,
+		FontFace = Theme.Font.Medium,
+		ZIndex = 3,
+		Parent = rail,
+	}, {
+		Create.corner(6),
+		Create.stroke(colors.border),
+		Create.padding(0, 9),
+	})
+
+	-- Thumb-sized grab area on a phone; the desktop's 18px stays.
+	local function fitTouch()
+		track.Size = UDim2.new(1, 0, 0, ctx:IsTouch() and 32 or 18)
+	end
+	fitTouch()
+	local unsubscribeTouch = ctx:OnTouch(fitTouch)
+
 	local function render()
 		-- guard min==max (degenerate range) so the ratio never produces NaN
 		local span = max - min
 		local pct = span ~= 0 and (value - min) / span or 0
 		fill.Size = UDim2.fromScale(pct, 1)
 		knob.Position = UDim2.fromScale(pct, 0.5)
-		valBox.Text = format(value, suffix)
+		local text = format(value, suffix)
+		valBox.Text = text
+		bubble.Text = text
+		bubble.Position = UDim2.new(pct, 0, 0, -12)
 	end
 
 	-- Drag is the only caller, so the whole body is user-driven — tagged for
@@ -173,11 +206,20 @@ return function(ctx: any, opts: any)
 	-- N idle sliders each leaking a permanent listener that fires on every mouse
 	-- move and survives Window:Destroy.
 	local dragConns: { RBXScriptConnection } = {}
+	-- Whether this drag holds the page still (Context:LockScroll). Only a touch
+	-- drag does: a mouse drag can't scroll the content, and the lock is counted,
+	-- so the release has to match the grab exactly.
+	local scrollLocked = false
 	local function endDrag()
 		for _, c in dragConns do
 			c:Disconnect()
 		end
 		table.clear(dragConns)
+		bubble.Visible = false
+		if scrollLocked then
+			scrollLocked = false
+			ctx:LockScroll(false)
+		end
 		Tween.play(knobScale, Tween.Spring, { Scale = 1 }) -- settle back on release
 	end
 	-- The move/release pair lives on UserInputService, which outlives the tree the
@@ -185,12 +227,23 @@ return function(ctx: any, opts: any)
 	-- left them connected forever, running setFromX against a destroyed rail on
 	-- every mouse move for the rest of the session. Releasing the button is the
 	-- normal exit; this is the one that can't be relied on to happen.
-	track.Destroying:Connect(endDrag)
+	track.Destroying:Connect(function()
+		endDrag()
+		unsubscribeTouch()
+	end)
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			if #dragConns > 0 then
 				return
+			end
+			if input.UserInputType == Enum.UserInputType.Touch then
+				-- A horizontal drag on the slider must not scroll the page: the
+				-- content frame scrolls on the vertical drift of a thumb, so it's held
+				-- for the gesture. And the finger covers the value, so it goes up top.
+				scrollLocked = true
+				ctx:LockScroll(true)
+				bubble.Visible = true
 			end
 			Tween.play(knobScale, Tween.Spring, { Scale = 1.3 }) -- grow while grabbed
 			setFromX(input.Position.X)

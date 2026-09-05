@@ -215,11 +215,41 @@ return function(ctx: any, opts: any)
 		Create.stroke(colors.chrome, 2),
 	})
 
+	-- The icon is a spritesheet slice, so it's pinned square: the compact sidebar
+	-- (see `_layout`) resizes it, and a slice drawn into a non-square box smears.
+	local function squareIcon(inst: GuiObject)
+		Create("UIAspectRatioConstraint", { AspectRatio = 1, Parent = inst })
+	end
 	local icon = Icons.new(opts.Icon or "gear", M.navIcon, colors.text_dim)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5);
 	(icon :: any).Parent = button
+	squareIcon(icon)
 	local iconScale = Create("UIScale", { Parent = icon })
+
+	-- The tab's NAME, under the icon — drawn on touch only. The sidebar is
+	-- icon-only and the flyout below is the label, but touch has no hover, so on a
+	-- phone every tab was an unlabeled glyph: Home, Global, Games, Settings and the
+	-- game tab were five grey shapes. It's 9px and dim, wider than the tile (the
+	-- sidebar clips it at its own edge), and the tile grows by LABEL_H to hold it.
+	local LABEL_H = 12
+	local navLabel = Create("TextLabel", {
+		Name = "Label",
+		Visible = false,
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -2),
+		Size = UDim2.fromOffset(M.sidebar - 4, LABEL_H),
+		Text = label,
+		TextColor3 = colors.text_dim,
+		TextSize = 9,
+		FontFace = Theme.Font.Medium,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 2,
+		Parent = button,
+	})
+	-- What the sidebar last asked for (Window drives it — see `_layout`).
+	local layoutSpec = { size = M.navButton, icon = M.navIcon, label = false }
 
 	-- hover flyout ────────────────────────────────────────────────────────
 	-- Built on first hover, not up front: a tab that's never hovered never pays
@@ -362,8 +392,18 @@ return function(ctx: any, opts: any)
 		if label == "" then
 			return
 		end
+		-- With the name drawn under the icon (touch), the flyout only has a job if
+		-- there's a description or a badge to carry — the name line is redundant,
+		-- and a flyout that repeats what's already on the tile is noise.
+		local labelled = layoutSpec.label
+		if labelled and not ((desc and desc ~= "") or (badge and badge ~= "")) then
+			return
+		end
 		buildTip()
 		local frame = tip :: Frame
+		if tipName then
+			tipName.Visible = not labelled
+		end
 		frame.Visible = true
 		placeTip()
 		tipFade:Set(1)
@@ -467,7 +507,9 @@ return function(ctx: any, opts: any)
 				BackgroundColor3 = fill,
 				BackgroundTransparency = style == "plain" and 1 or 0,
 			}
-			Icons.tint(icon, style == "solid" and colors.knockout or accent)
+			local ink = style == "solid" and colors.knockout or accent
+			Icons.tint(icon, ink)
+			navLabel.TextColor3 = ink
 			railGoal = { Size = UDim2.fromOffset(3, 18), BackgroundTransparency = 0 }
 		else
 			goal = {
@@ -477,7 +519,9 @@ return function(ctx: any, opts: any)
 					or (style == "solid" and accentFill or accentSoft),
 				BackgroundTransparency = hovering and 0 or 1,
 			}
-			Icons.tint(icon, hovering and colors.text_muted or colors.text_dim)
+			local ink = hovering and colors.text_muted or colors.text_dim
+			Icons.tint(icon, ink)
+			navLabel.TextColor3 = ink
 			railGoal = { Size = UDim2.fromOffset(3, 0), BackgroundTransparency = 1 }
 		end
 		if animate == false then
@@ -508,6 +552,44 @@ return function(ctx: any, opts: any)
 		if not active then
 			paint()
 		end
+	end)
+	-- Touch has no hover, so the flyout shows on PRESS: up from the finger landing
+	-- until it lifts or TOUCH_TIP_HOLD has passed, whichever is later. The tap
+	-- still switches the tab (Activated fires on the same release). `hovering` is
+	-- reused as the "keep it up" flag, so hideTip's own `done` guard holds.
+	local TOUCH_TIP_HOLD = 1.2
+	local touchTipToken = 0
+	button.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		touchTipToken += 1
+		local token = touchTipToken
+		hovering = true
+		showTip()
+		local released = false
+		local expired = false
+		local function settle()
+			if token == touchTipToken and released and expired then
+				hovering = false
+				hideTip()
+			end
+		end
+		local conn: RBXScriptConnection? = nil
+		conn = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End
+				or input.UserInputState == Enum.UserInputState.Cancel then
+				if conn then
+					conn:Disconnect()
+				end
+				released = true
+				settle()
+			end
+		end)
+		task.delay(TOUCH_TIP_HOLD, function()
+			expired = true
+			settle()
+		end)
 	end)
 	-- A tab with its own Color is pinned to it and ignores SetAccent; everything
 	-- else re-themes live.
@@ -571,6 +653,90 @@ return function(ctx: any, opts: any)
 		return active
 	end
 
+	-- ── sidebar geometry, driven by Window ───────────────────────────────────
+	-- `spec = { size, icon, label }`: the tile's width (and its height without a
+	-- label), the icon's size, and whether the name is drawn under the icon. The
+	-- sidebar picks these per level when its clusters would overlap on a short
+	-- viewport (Window.lua `fitNav`), and on touch, where the label is the only
+	-- place the name exists. Idempotent: the sidebar re-runs it on every fit.
+	function tab:_layout(spec: any)
+		local size = tonumber(spec.size) or M.navButton
+		local iconSize = tonumber(spec.icon) or M.navIcon
+		local labelled = spec.label == true
+		layoutSpec = { size = size, icon = iconSize, label = labelled }
+		local height = size + (labelled and LABEL_H or 0)
+		button.Size = UDim2.fromOffset(size, height)
+		-- The icon sits in the top `size` square; the label takes the strip below.
+		icon.Position = if labelled then UDim2.new(0.5, 0, 0, size / 2 + 1) else UDim2.fromScale(0.5, 0.5)
+		icon.Size = UDim2.fromOffset(iconSize, iconSize)
+		if icon:IsA("TextLabel") then
+			icon.TextSize = iconSize
+		end
+		navLabel.Visible = labelled
+		if tipName then
+			tipName.Visible = not labelled
+		end
+	end
+
+	-- The tile's height for a given spec, for the sidebar's overflow arithmetic —
+	-- computed here so the label strip's height isn't a second constant elsewhere.
+	function tab:_tileHeight(spec: any): number
+		return (tonumber(spec.size) or M.navButton) + (spec.label == true and LABEL_H or 0)
+	end
+
+	-- ── single column ─────────────────────────────────────────────────────────
+	-- Below a content width the two columns stop being a layout (each is ~150px
+	-- on a phone and every control is crushed), so column 2 stacks UNDER column 1
+	-- in build order. A layout-time reflow, not a change to `Column`: the groups
+	-- stay where they were built, only the column frames move. Driven by Window's
+	-- per-page fit, which is the one place the content width is known.
+	local stackLayout: UIListLayout? = nil
+	local stacked = false
+	function tab:_setStacked(value: boolean)
+		value = value == true
+		if value == stacked then
+			return
+		end
+		stacked = value
+		if value then
+			-- A UIListLayout owns its children's Position, so the columns' anchors
+			-- and scale positions have to be neutralized for it, and restored after.
+			col1.AnchorPoint = Vector2.zero
+			col2.AnchorPoint = Vector2.zero
+			col1.Position = UDim2.new()
+			col2.Position = UDim2.new()
+			col1.Size = UDim2.new(1, 0, 0, 0)
+			col2.Size = UDim2.new(1, 0, 0, 0)
+			col1.LayoutOrder = 1
+			col2.LayoutOrder = 2
+			local layout = stackLayout
+			if not layout then
+				layout = Create.listLayout({ Padding = UDim.new(0, M.groupGap) })
+				stackLayout = layout
+			end
+			layout.Parent = columns
+		else
+			if stackLayout then
+				stackLayout.Parent = nil
+			end
+			col1.AnchorPoint = Vector2.new(0, 0)
+			col1.Position = UDim2.fromScale(0, 0)
+			col2.AnchorPoint = Vector2.new(1, 0)
+			col2.Position = UDim2.fromScale(1, 0)
+			col1.Size = UDim2.new(0.5, -(M.columnGap / 2), 0, 0)
+			col2.Size = UDim2.new(0.5, -(M.columnGap / 2), 0, 0)
+		end
+		-- The divider only means something between two columns.
+		local divider = columns:FindFirstChild("ColDivider")
+		if divider then
+			divider.Visible = not value
+		end
+	end
+
+	function tab:_isStacked(): boolean
+		return stacked
+	end
+
 	-- ── runtime customization ────────────────────────────────────────────────
 	-- Everything the options table sets is also settable later, so a menu can
 	-- react to what it finds (mark the game tab red when the game isn't
@@ -617,7 +783,9 @@ return function(ctx: any, opts: any)
 		icon:Destroy()
 		icon = fresh;
 		(icon :: any).Parent = button
+		squareIcon(icon)
 		iconScale = Create("UIScale", { Parent = icon })
+		tab:_layout(layoutSpec) -- the fresh icon takes the sidebar's current size
 		paint(false)
 	end
 
@@ -648,6 +816,7 @@ return function(ctx: any, opts: any)
 	function tab:SetName(text: string)
 		Log.field("SetName", "text", text, "string")
 		label = text or ""
+		navLabel.Text = label
 		if tipName then
 			tipName.Text = label
 		end

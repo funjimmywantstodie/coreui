@@ -599,6 +599,55 @@ function Info.attach(ctx: any, parent: Instance, spec: any): any
 		end))
 	end
 
+	-- A LONG-PRESS on a watched target pins it too. On touch the 24px glyph is the
+	-- only way in, and the name is the thing a thumb actually lands on — so
+	-- holding the name (~half a second, without moving) opens the description
+	-- exactly like tapping the glyph. Watched per target, in `Watch`, so the
+	-- label the field hands over gets it as well as the glyph.
+	local LONG_PRESS = 0.5
+	local pressSeq = 0
+	local function watchLongPress(target: GuiObject)
+		table.insert(conns, target.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			pressSeq += 1
+			local token = pressSeq
+			local origin = input.Position
+			local moved = false
+			local conn: RBXScriptConnection? = nil
+			conn = input.Changed:Connect(function()
+				-- A finger that travels is scrolling the page, not asking for a
+				-- description; a lift before the delay is a tap, handled elsewhere.
+				if (input.Position - origin).Magnitude > 8 then
+					moved = true
+				end
+				if input.UserInputState == Enum.UserInputState.End
+					or input.UserInputState == Enum.UserInputState.Cancel then
+					pressSeq += 1
+					if conn then
+						conn:Disconnect()
+					end
+				end
+			end)
+			task.delay(LONG_PRESS, function()
+				if conn then
+					conn:Disconnect()
+				end
+				if token ~= pressSeq or moved or pinned then
+					return
+				end
+				pin()
+			end)
+		end))
+	end
+
+	local watch = handle.Watch
+	function handle:Watch(target: GuiObject)
+		watch(handle, target)
+		watchLongPress(target)
+	end
+
 	handle:Watch(hit)
 	table.insert(conns, hit.Activated:Connect(pin))
 

@@ -30,6 +30,10 @@ return function(ctx: any, column: Frame, opts: any, scope: string?)
 	-- children's transforms and suppresses their Rotation, so a chevron laid out
 	-- by one never visually spins. Title + chevron are positioned manually so the
 	-- chevron is free to rotate (matches a bare ImageLabel, which rotates fine).
+	-- The fold caret's whole row is the tap target, so on a phone it's padded out
+	-- to ~40px; the desktop keeps the design's tight header. Per call, re-applied
+	-- when the device answer moves (Context:OnTouch).
+	local headPad = Create.padding(2, 4, 8, 4)
 	local head = Create("TextButton", {
 		Name = "Head",
 		AutoButtonColor = false,
@@ -40,8 +44,16 @@ return function(ctx: any, column: Frame, opts: any, scope: string?)
 		LayoutOrder = 1,
 		Parent = group,
 	}, {
-		Create.padding(2, 4, 8, 4),
+		headPad,
 	})
+	local function fitHead()
+		local touch = ctx:IsTouch()
+		headPad.PaddingTop = UDim.new(0, touch and 12 or 2)
+		headPad.PaddingBottom = UDim.new(0, touch and 12 or 8)
+	end
+	fitHead()
+	local unsubscribeTouch = ctx:OnTouch(fitHead)
+	group.Destroying:Connect(unsubscribeTouch)
 
 	Create("TextLabel", {
 		Name = "Title",

@@ -101,6 +101,15 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			window:SetToggleKey(k)
 		end,
 	})
+	-- Not on a phone: the row describes a key the device can't press, and the
+	-- minimize hint already resolves to the logo tile there. The flag still
+	-- registers (a config round-trips either way); only the row stands down.
+	-- Re-applied when the device answer moves, like everything else that reads it.
+	local function fitToggleKey(touch: boolean)
+		controls.ToggleKey:SetVisible(not touch)
+	end
+	fitToggleKey(window:IsTouch())
+	controls.TouchWatch = window:OnTouch(fitToggleKey)
 	-- The library moved descriptions off the row and behind a hover glyph by
 	-- default, which is a change to how the whole menu reads — so the user gets the
 	-- old look back from here rather than needing the hub author to pass an option.
@@ -530,6 +539,7 @@ function Settings.build(window: any, tab: any, opts: any?): any
 		-- no second way to reach them once this returns.
 		controls.HudMirror = iface.HudMirror
 		controls.HudChanges = iface.HudChanges
+		controls.TouchWatch = iface.TouchWatch
 	end
 
 	local cfgGroup: any = nil

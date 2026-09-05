@@ -326,6 +326,11 @@ return function(opts: any): any
 	})
 	local scale = new("UIScale", { Parent = card })
 	--@lib
+	-- The card slides up for the on-screen keyboard (see the Input block); the
+	-- shadow goes with it.
+	card:GetPropertyChangedSignal("Position"):Connect(function()
+		shadow.Position = card.Position + UDim2.fromOffset(0, 6)
+	end)
 	card:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		local size = card.AbsoluteSize
 		shadow.Size = UDim2.fromOffset(size.X + SHADOW_PAD, size.Y + SHADOW_PAD)
@@ -1209,11 +1214,61 @@ return function(opts: any): any
 				setStatus(nil, true)
 			end
 		end)
+		-- The on-screen keyboard. On a phone, focusing the box raises one over
+		-- the bottom half of the screen — and the card is centred, so the box is
+		-- often under it. The card slides up just far enough to keep the box clear
+		-- and slides back on focus lost. `shifted` is what's applied now, so the
+		-- restore subtracts exactly that. The GUI inset is added to the box's
+		-- measured bottom for the reason Window.lua's own shift gives: over-shifting
+		-- by a topbar is harmless, leaving the box covered isn't. Every read of the
+		-- keyboard is guarded: not every client exposes it, and this is the page
+		-- that has to work when everything else already failed.
+		local shifted = 0
+		local hasFocus = false
+		local function shiftForKeyboard()
+			local keyboardTop = 0
+			pcall(function()
+				if UIS and UIS.OnScreenKeyboardVisible == true then
+					keyboardTop = UIS.OnScreenKeyboardPosition.Y
+				end
+			end)
+			local wanted = 0
+			if hasFocus and keyboardTop > 0 then
+				local inset = 0
+				pcall(function()
+					inset = game:GetService("GuiService"):GetGuiInset().Y
+				end)
+				local bottom = box.AbsolutePosition.Y + box.AbsoluteSize.Y + inset + 12
+				local cardTop = card.AbsolutePosition.Y + inset + shifted
+				wanted = math.clamp(shifted + (bottom - keyboardTop), 0, math.max(0, cardTop - 8))
+			end
+			wanted = math.round(wanted)
+			if wanted == shifted then
+				return
+			end
+			shifted = wanted
+			tw(card, TW.Normal, { Position = UDim2.new(0.5, 0, 0.5, -shifted) })
+		end
+		local function keyboardSoon()
+			task.defer(shiftForKeyboard)
+		end
+		if UIS then
+			for _, prop in { "OnScreenKeyboardVisible", "OnScreenKeyboardPosition" } do
+				pcall(function()
+					table.insert(conns, UIS:GetPropertyChangedSignal(prop):Connect(keyboardSoon))
+				end)
+			end
+		end
+
 		box.Focused:Connect(function()
 			tw(fieldStroke, TW.Fast, { Color = C.accent })
+			hasFocus = true
+			keyboardSoon()
 		end)
 		box.FocusLost:Connect(function(enterPressed)
 			tw(fieldStroke, TW.Fast, { Color = C.border })
+			hasFocus = false
+			keyboardSoon()
 			if enterPressed then
 				submit()
 			end

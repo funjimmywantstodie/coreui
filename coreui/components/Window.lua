@@ -58,6 +58,7 @@ local WINDOW_SCHEMA: Log.Schema = {
 	{ "Descriptions", "string" },
 	{ "MinimizeHint", "boolean" },
 	{ "MinimizeHintStyle", "string" },
+	{ "Touch", "boolean" },
 	{ "OnFlag", "function" },
 	{ "OnFlagChanged", "function" },
 	{ "PersistWindow", "boolean" },
@@ -203,6 +204,11 @@ return function(opts: any)
 	-- version skipped the clamp entirely while maximized, which is how a maximized
 	-- window could end up bigger than the screen it was on).
 	local maximized = false
+	-- Has anyone — the user, a restored record, a host — chosen the geometry? Until
+	-- they have, a phone opens maximized (set once the Context exists, below): the
+	-- inset around a windowed frame is wasted on a screen that small. A saved
+	-- `uranium_window` record still wins, since it arrives through the same setters.
+	local geometryChosen = false
 	-- The size the window wants to be, which is the theme's until someone says
 	-- otherwise (`Window:SetSize`, or a restored `uranium_window` record). It's the
 	-- *unclamped* wish: fitWindow below is what actually reconciles it with the
@@ -211,7 +217,23 @@ return function(opts: any)
 	local baseWidth, baseHeight = M.windowWidth, M.windowHeight
 	-- Below this the sidebar and the two columns stop being a layout.
 	local MIN_W, MIN_H = 420, 320
-	local VIEWPORT_INSET = 24 -- air left around the window at full size
+	-- Air left around the window at full size. A phone viewport is ~360 logical px
+	-- tall, so the desktop's 24 on each side is a tenth of the screen spent on
+	-- nothing; touch keeps a hairline of it.
+	local VIEWPORT_INSET, VIEWPORT_INSET_TOUCH = 24, 8
+	-- The device answer, per call (Context:IsTouch — touch AND no keyboard). The
+	-- Context is built further down, so this reads it lazily; before it exists the
+	-- answer is the engine's own.
+	local ctx: any = nil
+	local function isTouch(): boolean
+		if ctx then
+			return ctx:IsTouch()
+		end
+		return UserInputService.TouchEnabled == true and UserInputService.KeyboardEnabled ~= true
+	end
+	local function viewportInset(): number
+		return if isTouch() then VIEWPORT_INSET_TOUCH else VIEWPORT_INSET
+	end
 	-- The size the window should be right now, reconciling the wish (`baseWidth`/
 	-- `baseHeight`, or "as big as it goes" while maximized) with the viewport.
 	--
@@ -228,8 +250,9 @@ return function(opts: any)
 		if vp.X <= 0 or vp.Y <= 0 then
 			return nil
 		end
-		local availW = math.max(MIN_W, vp.X - VIEWPORT_INSET)
-		local availH = math.max(MIN_H, vp.Y - VIEWPORT_INSET)
+		local inset = viewportInset()
+		local availW = math.max(MIN_W, vp.X - inset)
+		local availH = math.max(MIN_H, vp.Y - inset)
 		if maximized then
 			return UDim2.fromOffset(availW, availH)
 		end
@@ -435,7 +458,7 @@ return function(opts: any)
 		return table.concat(out, " ")
 	end
 
-	Create("TextLabel", {
+	local titleLabel = Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -507,6 +530,11 @@ return function(opts: any)
 	})
 	local searchFade = Fade.new(searchField)
 
+	local winButtonLayout = Create.listLayout({
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 15),
+	})
 	local winButtons = Create("Frame", {
 		Name = "WinButtons",
 		Size = UDim2.fromOffset(0, M.titlebar),
@@ -515,11 +543,7 @@ return function(opts: any)
 		LayoutOrder = 2,
 		Parent = rightCluster,
 	}, {
-		Create.listLayout({
-			FillDirection = Enum.FillDirection.Horizontal,
-			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 15),
-		}),
+		winButtonLayout,
 	})
 
 	local winBtns: { [string]: TextButton } = {}
@@ -561,12 +585,40 @@ return function(opts: any)
 		Parent = main,
 	})
 
+	-- With the status bar hidden (touch — see `applyChrome`) the sidebar is what
+	-- meets the window's rounded bottom-left corner, and `main` clips to a
+	-- RECTANGLE, not to its UICorner. So the sidebar carries a corner of its own
+	-- plus two chrome fills that square off every edge but that one — the same
+	-- trick as the titlebar's SquareFill. Both fills are hidden while the status
+	-- bar is up, and the corner is harmless then (the fills cover it).
+	local sidebarTopFill = Create("Frame", {
+		Name = "SquareTop",
+		Visible = false,
+		Size = UDim2.new(1, 0, 0, M.windowRadius),
+		BackgroundColor3 = colors.chrome,
+		BorderSizePixel = 0,
+	})
+	local sidebarRightFill = Create("Frame", {
+		Name = "SquareRight",
+		Visible = false,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.new(0, M.windowRadius, 1, 0),
+		BackgroundColor3 = colors.chrome,
+		BorderSizePixel = 0,
+	})
+	-- The corner is only PARENTED on touch (applyChrome): with the status bar up
+	-- the sidebar is a plain rectangle and a rounded one would show `bg` at its
+	-- top corners.
+	local sidebarCorner = Create.corner(M.windowRadius)
 	local sidebar = Create("Frame", {
 		Name = "Sidebar",
 		Size = UDim2.new(0, M.sidebar, 1, 0),
 		BackgroundColor3 = colors.chrome,
 		Parent = body,
 	}, {
+		sidebarTopFill,
+		sidebarRightFill,
 		Create("Frame", {
 			Name = "Border",
 			AnchorPoint = Vector2.new(1, 0),
@@ -574,6 +626,7 @@ return function(opts: any)
 			Size = UDim2.new(0, 1, 1, 0),
 			BackgroundColor3 = colors.border_soft,
 			BorderSizePixel = 0,
+			ZIndex = 2,
 		}),
 	})
 
@@ -588,28 +641,65 @@ return function(opts: any)
 	-- height its own buttons need; a plain Frame doesn't sink input either, so
 	-- even if a long rail made the two meet in the middle neither can swallow the
 	-- other's clicks.
-	local function newNavCluster(bottom: boolean): Frame
-		return Create("Frame", {
-			Name = bottom and "NavBottom" or "NavTop",
-			AnchorPoint = bottom and Vector2.new(0, 1) or Vector2.new(0, 0),
-			Position = bottom and UDim2.fromScale(0, 1) or UDim2.fromScale(0, 0),
-			Size = UDim2.new(1, 0, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			Parent = sidebar,
-		}, {
-			bottom and Create.padding(0, 0, 16, 0) or Create.padding(16, 0, 0, 0),
-			Create.listLayout({
-				HorizontalAlignment = Enum.HorizontalAlignment.Center,
-				VerticalAlignment = bottom and Enum.VerticalAlignment.Bottom
-					or Enum.VerticalAlignment.Top,
-				Padding = UDim.new(0, 10),
-			}),
-		})
-	end
-	local navTop = newNavCluster(false)
-	local navBottom = newNavCluster(true)
-	local function navFor(pin: string?): Frame
+	--
+	-- ...which was true until the phone numbers came in. On a 360px viewport the
+	-- body is ~250px, and a menu with four tabs on top and two on the bottom needs
+	-- ~320 — the clusters overlapped and the icons drew over each other, and since
+	-- a plain Frame doesn't sink input, a tap in the overlap went to whichever
+	-- button was on top rather than the one whose icon was visible. `fitNav` below
+	-- measures the two against each other and never lets them meet: it tightens
+	-- the padding and gap first, then the tiles, and if that still isn't enough the
+	-- TOP cluster scrolls (it's a ScrollingFrame, always, with scrolling switched
+	-- on only when it has to be) and ends above the bottom one, which stays put.
+	local NAV_LEVELS = {
+		{ pad = 16, gap = 10, size = M.navButton, icon = M.navIcon }, -- the design
+		{ pad = 6, gap = 4, size = M.navButton, icon = M.navIcon },   -- tighter air
+		{ pad = 6, gap = 4, size = 32, icon = 16 },                   -- smaller tiles
+	}
+	local NAV_SEPARATOR_H = 9 -- components/Tab.lua's NavSeparator
+	local navTopPad = Create.padding(16, 0, 0, 0)
+	local navTopLayout = Create.listLayout({
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Top,
+		Padding = UDim.new(0, 10),
+	})
+	local navTop = Create("ScrollingFrame", {
+		Name = "NavTop",
+		Position = UDim2.fromScale(0, 0),
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 0,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollingEnabled = false,
+		ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
+		Parent = sidebar,
+	}, {
+		navTopPad,
+		navTopLayout,
+	})
+	local navBottomPad = Create.padding(0, 0, 16, 0)
+	local navBottomLayout = Create.listLayout({
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		Padding = UDim.new(0, 10),
+	})
+	local navBottom = Create("Frame", {
+		Name = "NavBottom",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Parent = sidebar,
+	}, {
+		navBottomPad,
+		navBottomLayout,
+	})
+	local function navFor(pin: string?): GuiObject
 		return pin == "bottom" and navBottom or navTop
 	end
 
@@ -717,6 +807,11 @@ return function(opts: any)
 		ZIndex = 100,
 		Parent = main,
 	})
+	local toastLayout = Create.listLayout({
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		Padding = UDim.new(0, 9),
+	})
 	local toasts = Create("Frame", {
 		Name = "Toasts",
 		AnchorPoint = Vector2.new(1, 1),
@@ -726,14 +821,25 @@ return function(opts: any)
 		BackgroundTransparency = 1,
 		Parent = overlay,
 	}, {
-		Create.listLayout({
-			VerticalAlignment = Enum.VerticalAlignment.Bottom,
-			HorizontalAlignment = Enum.HorizontalAlignment.Right,
-			Padding = UDim.new(0, 9),
-		}),
+		toastLayout,
 	})
 
-	local ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
+	ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
+	-- `Touch = true/false` pins the device answer (nil = per call, from
+	-- UserInputService). Testing the phone layout in Studio needs this: its
+	-- emulator reports a touch screen AND a keyboard, which is a touchscreen laptop
+	-- as far as the library can tell.
+	if opts.Touch ~= nil then
+		ctx.Touch = opts.Touch == true
+	end
+	-- For Context:LockScroll — a slider dragged under a thumb holds the page still.
+	ctx.Scroller = content
+	-- A phone opens maximized (see `geometryChosen`). Set directly rather than
+	-- through setMaximized: nothing is on screen yet and there's no record to
+	-- announce. The deferred fitWindow draws it at that size.
+	if isTouch() then
+		maximized = true
+	end
 	-- `Keybinds = false` takes the bind chip off every control that would
 	-- otherwise grow one by default (Toggle). A control that asks for a keybind
 	-- explicitly still gets it — this is the default, not a ban.
@@ -919,10 +1025,198 @@ return function(opts: any)
 		end
 	end))
 
+	-- ── on-screen keyboard ────────────────────────────────────────────────────
+	-- Focusing a TextBox on a phone raises a keyboard over the bottom half of the
+	-- screen — over the config name box, a `Group:Input`, the titlebar search. The
+	-- window slides up just far enough to keep the focused box above it and slides
+	-- back when focus is released. `keyboardShift` is how far it's currently
+	-- pushed, so the restore subtracts exactly that and a drag in between survives.
+	--
+	-- The box's bottom is read off AbsolutePosition PLUS the GUI inset: this
+	-- ScreenGui ignores the inset, and on some clients AbsolutePosition reports as
+	-- though it hadn't (see the minimized hint's drag for the same trap). Adding it
+	-- where it wasn't needed over-shifts by a topbar's height, which is harmless;
+	-- omitting it where it was leaves the box under the keyboard, which isn't.
+	local keyboardShift = 0
+	local KEYBOARD_GAP = 12
+	local function guiInsetY(): number
+		local ok, inset = pcall(function()
+			return Services.GuiService:GetGuiInset().Y
+		end)
+		return (ok and tonumber(inset)) or 0
+	end
+	local function shiftForKeyboard()
+		local okBox, box = pcall(function()
+			return UserInputService:GetFocusedTextBox()
+		end)
+		local focused: any = okBox and box or nil
+		local keyboardTop = 0
+		pcall(function()
+			if UserInputService.OnScreenKeyboardVisible == true then
+				keyboardTop = UserInputService.OnScreenKeyboardPosition.Y
+			end
+		end)
+		local wanted = 0
+		if focused and keyboardTop > 0 and main.Visible and focused:IsDescendantOf(screenGui) then
+			local bottom = focused.AbsolutePosition.Y + focused.AbsoluteSize.Y + guiInsetY() + KEYBOARD_GAP
+			-- Never push the titlebar off the top: the window's resting top-left is
+			-- the shifted one plus what's already applied.
+			local restingTop = topLeft().Y + keyboardShift
+			wanted = math.clamp(keyboardShift + (bottom - keyboardTop), 0, math.max(0, restingTop - 8))
+		end
+		wanted = math.round(wanted)
+		if wanted == keyboardShift then
+			return
+		end
+		local delta = wanted - keyboardShift
+		keyboardShift = wanted
+		local pos = main.Position
+		Tween.play(main, Tween.Slide, {
+			Position = UDim2.new(pos.X.Scale, pos.X.Offset, pos.Y.Scale, pos.Y.Offset - delta),
+		})
+	end
+	-- Deferred: focus lands before the keyboard exists, and a focus release may be
+	-- focus moving to another box — by the next resumption both have settled.
+	local function keyboardSoon()
+		task.defer(shiftForKeyboard)
+	end
+	-- Every hook is guarded: not every client exposes the on-screen keyboard
+	-- properties, and losing the shift is better than losing the window.
+	pcall(function()
+		table.insert(connections, UserInputService.TextBoxFocused:Connect(keyboardSoon))
+		table.insert(connections, UserInputService.TextBoxFocusReleased:Connect(keyboardSoon))
+	end)
+	for _, prop in { "OnScreenKeyboardVisible", "OnScreenKeyboardPosition" } do
+		pcall(function()
+			table.insert(connections, UserInputService:GetPropertyChangedSignal(prop):Connect(keyboardSoon))
+		end)
+	end
+
 	-- ── public API ───────────────────────────────────────────────────────────
 	local tabs = {}
 	local activeIndex = 1
 	local window = {}
+
+	-- ── chrome + sidebar fit ──────────────────────────────────────────────────
+	-- Two layouts of the same frame, picked per call from the device answer
+	-- (`isTouch`): the desktop one is byte-for-byte what it always was, and the
+	-- phone one spends less of a ~360px-tall viewport on chrome. A phone's body is
+	-- 250–280px after the titlebar and status bar; every pixel of chrome comes
+	-- straight out of the sidebar and the content.
+	--
+	--   titlebar   50 → 40
+	--   statusbar  34 → hidden (a clock and a version string are not worth 34px
+	--              of a 280px body; the sidebar squares itself off underneath)
+	--   window buttons  16px glyphs → 36px targets, same footprint
+	--   toasts     bottom-right (where a phone's jump button is) → top-right
+	local TITLEBAR_TOUCH = 40
+	local function chromeHeight(): number
+		if isTouch() then
+			return TITLEBAR_TOUCH
+		end
+		return M.titlebar + M.statusbar
+	end
+	local function applyChrome()
+		local touch = isTouch()
+		local bar = touch and TITLEBAR_TOUCH or M.titlebar
+		titlebar.Size = UDim2.new(1, 0, 0, bar)
+		rightCluster.Size = UDim2.fromOffset(0, bar)
+		winButtons.Size = UDim2.fromOffset(0, bar)
+		titleLabel.TextSize = touch and 14 or 16
+		local hit = touch and 36 or 16
+		winButtonLayout.Padding = UDim.new(0, touch and 2 or 15)
+		for _, btn in winBtns do
+			btn.Size = UDim2.fromOffset(hit, hit)
+		end
+		status.Visible = not touch
+		sidebarCorner.Parent = if touch then sidebar else nil
+		sidebarTopFill.Visible = touch
+		sidebarRightFill.Visible = touch
+		body.Position = UDim2.fromOffset(0, bar)
+		body.Size = UDim2.new(1, 0, 1, -chromeHeight())
+		if touch then
+			toasts.AnchorPoint = Vector2.new(1, 0)
+			toasts.Position = UDim2.new(1, -12, 0, bar + 10)
+			toastLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+		else
+			toasts.AnchorPoint = Vector2.new(1, 1)
+			toasts.Position = UDim2.new(1, -16, 1, -46)
+			toastLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+		end
+	end
+	applyChrome()
+
+	-- Keep the two nav clusters from ever meeting. Everything is computed off the
+	-- LAYOUT size (`main.Size.Y.Offset`, like `layoutSize`) rather than measured
+	-- AbsoluteSizes, so it's deterministic on the frame it runs and doesn't have to
+	-- wait a frame for AutomaticSize to settle.
+	local function fitNav()
+		local sample = tabs[1]
+		if not sample then
+			return
+		end
+		local bodyH = main.Size.Y.Offset - chromeHeight()
+		if bodyH <= 0 then
+			return
+		end
+		local touch = isTouch()
+		local function need(pin: string, level: any, spec: any): number
+			local n, seps = 0, 0
+			for _, tab in tabs do
+				if tab.pin == pin and tab:IsVisible() then
+					n += 1
+					if tab.separator then
+						seps += 1
+					end
+				end
+			end
+			if n == 0 then
+				return 0
+			end
+			return level.pad + n * sample:_tileHeight(spec) + seps * NAV_SEPARATOR_H
+				+ (n + seps - 1) * level.gap
+		end
+		-- The first level both clusters fit at; the last one if none does.
+		local chosen: any = NAV_LEVELS[#NAV_LEVELS]
+		local spec: any = nil
+		for _, level in NAV_LEVELS do
+			-- On touch the label always draws: it wins over the gap, never the icon.
+			local candidate = { size = level.size, icon = level.icon, label = touch }
+			if need("top", level, candidate) + need("bottom", level, candidate) <= bodyH then
+				chosen, spec = level, candidate
+				break
+			end
+		end
+		spec = spec or { size = chosen.size, icon = chosen.icon, label = touch }
+		navTopPad.PaddingTop = UDim.new(0, chosen.pad)
+		navBottomPad.PaddingBottom = UDim.new(0, chosen.pad)
+		navTopLayout.Padding = UDim.new(0, chosen.gap)
+		navBottomLayout.Padding = UDim.new(0, chosen.gap)
+		for _, tab in tabs do
+			tab:_layout(spec)
+		end
+		-- Still short: the top cluster ends above the bottom one and scrolls
+		-- (no scrollbar, drag/wheel). The bottom cluster always stays put.
+		local room = bodyH - need("bottom", chosen, spec)
+		if need("top", chosen, spec) > room then
+			navTop.AutomaticSize = Enum.AutomaticSize.None
+			navTop.Size = UDim2.new(1, 0, 0, math.max(0, room))
+			navTop.ScrollingEnabled = true
+		else
+			navTop.ScrollingEnabled = false
+			navTop.CanvasPosition = Vector2.zero
+			navTop.Size = UDim2.new(1, 0, 0, 0)
+			navTop.AutomaticSize = Enum.AutomaticSize.Y
+		end
+	end
+	-- Every time the window's size moves: fitWindow, maximize, a restore.
+	main:GetPropertyChangedSignal("Size"):Connect(fitNav)
+
+	-- Below this much content width the two columns stack (components/Tab.lua
+	-- `_setStacked`). A phone at 420 wide has ~150px per column after the sidebar
+	-- and the page insets, and every control in it is crushed. The desktop default
+	-- (780 wide → 672 of content) never crosses it.
+	local STACK_BELOW = 600
 	-- The ScreenGui itself, exposed so a host can re-check where it landed (and
 	-- re-parent or re-protect it): the parent is resolved at mount time from
 	-- whatever the executor offers, so it isn't knowable up front. Also on the
@@ -1326,6 +1620,14 @@ return function(opts: any)
 	local hintDragStart = Vector2.zero
 	local hintDragOrigin = Vector2.zero
 	local hintDragMoved = false
+	-- Press feedback and a long-press. The tile is the only route back to the
+	-- menu on a phone, so the press squashes it a touch (a tap that lands has to
+	-- look like it landed), and holding it toggles the bind HUD — the hotbar comes
+	-- up without opening the window. A long-press is not a tap: Activated fires on
+	-- the same release and is told to stand down.
+	local HINT_LONG_PRESS = 0.55
+	local hintPressToken = 0
+	local hintLongPressed = false
 	restoreHint.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
@@ -1337,6 +1639,21 @@ return function(opts: any)
 			hintDragMoved = false
 			hintDragStart = point
 			hintDragOrigin = hintDrawn
+			Tween.play(hintScale, Tween.Press, { Scale = 0.9 })
+			hintPressToken += 1
+			local token = hintPressToken
+			hintLongPressed = false
+			task.delay(HINT_LONG_PRESS, function()
+				if token ~= hintPressToken or not hintDragging or hintDragMoved then
+					return
+				end
+				hintLongPressed = true
+				Tween.play(hintScale, Tween.Spring, { Scale = 1 })
+				local hud = window:GetHud()
+				ctx:User(function()
+					window:SetHudVisible(not (hud ~= nil and hud:IsVisible()))
+				end)
+			end)
 		end
 	end)
 	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
@@ -1360,13 +1677,18 @@ return function(opts: any)
 	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
+			if hintDragging then
+				hintPressToken += 1 -- a lift before the long-press lands cancels it
+				Tween.play(hintScale, Tween.Spring, { Scale = 1 })
+			end
 			hintDragging = false
 			-- The card is a TextButton, so a drag ends in a release that fires
 			-- `Activated` and would reopen the window under the cursor. Deferred
 			-- because that Activated fires on this same release and has to still see
-			-- the flag.
+			-- the flag. Same for the long-press flag.
 			task.defer(function()
 				hintDragMoved = false
+				hintLongPressed = false
 			end)
 		end
 	end))
@@ -1438,7 +1760,8 @@ return function(opts: any)
 	restoreHint.Activated:Connect(function()
 		-- A press that moved the card was a drag, not a click on it (see the drag
 		-- block above) — without this, every drag would end by reopening the window.
-		if hintDragMoved then
+		-- A long-press already did its job (toggled the HUD) and isn't a tap either.
+		if hintDragMoved or hintLongPressed then
 			return
 		end
 		if minimized then
@@ -1497,10 +1820,34 @@ return function(opts: any)
 		ctx:WindowStateChanged()
 	end
 	winBtns.max.Activated:Connect(function()
+		geometryChosen = true
 		ctx:User(function()
 			setMaximized(not maximized)
 		end)
 	end)
+
+	-- ── the device answer moving under us ─────────────────────────────────────
+	-- An executor can run before the input devices have reported themselves, so
+	-- every touch decision above reads `isTouch()` per call — and this is what
+	-- re-runs them when the engine's answer changes after the window was built.
+	-- Also the path `Window:SetTouch` takes.
+	local function touchChanged()
+		ctx:TouchChanged() -- the components' own re-layouts (chips, HUD, groups…)
+		applyChrome()
+		fitWindow()
+		fitNav()
+		applyHintStyle()
+		placeHint(hintPos)
+		-- A phone opens maximized — unless someone already chose the geometry.
+		if isTouch() and not maximized and not geometryChosen then
+			setMaximized(true, false)
+		end
+	end
+	for _, prop in { "TouchEnabled", "KeyboardEnabled" } do
+		pcall(function()
+			table.insert(connections, UserInputService:GetPropertyChangedSignal(prop):Connect(touchChanged))
+		end)
+	end
 
 	-- ── close ────────────────────────────────────────────────────────────────
 	-- Close is a real unload, not a hide: same shrink+fade as minimize, but the
@@ -1547,7 +1894,11 @@ return function(opts: any)
 			if avail <= 0 then
 				avail = content.AbsoluteSize.X
 			end
-			tab.page.Size = UDim2.new(0, math.max(0, avail - CONTENT_PAD_X * 2), 0, 0)
+			local width = math.max(0, avail - CONTENT_PAD_X * 2)
+			tab.page.Size = UDim2.new(0, width, 0, 0)
+			-- Single column on a narrow page — a layout decision made here, once,
+			-- rather than per group (see STACK_BELOW).
+			tab:_setStacked(avail > 0 and width < STACK_BELOW)
 		end
 		content:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitPage)
 		content:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(fitPage)
@@ -1572,11 +1923,13 @@ return function(opts: any)
 			if tab.separator then
 				tab.separator.Parent = cluster
 			end
+			fitNav() -- a tab moving between clusters changes what each needs
 		end
 		mountNav(tab.pin)
 		tab._onPin = mountNav
 
 		table.insert(tabs, tab)
+		fitNav() -- ...as does a new tab (it's in `tabs` now, so the fit sees it)
 		tab.button.Activated:Connect(function()
 			ctx:User(chooseTab, index)
 		end)
@@ -1589,6 +1942,7 @@ return function(opts: any)
 		-- visible tab (and re-open this one if it comes back while it's the active
 		-- index).
 		tab._onVisible = function(visible: boolean)
+			fitNav() -- a hidden tab takes no sidebar room
 			if visible then
 				-- Claim the selection when it's ours OR when nothing visible holds it —
 				-- hiding the last visible tab leaves activeIndex pointing at a hidden
@@ -1809,6 +2163,7 @@ return function(opts: any)
 		end
 		baseWidth = math.max(MIN_W, math.floor(w))
 		baseHeight = math.max(MIN_H, math.floor(h))
+		geometryChosen = true
 		fitWindow()
 		ctx:WindowStateChanged()
 	end
@@ -1818,7 +2173,34 @@ return function(opts: any)
 	end
 
 	function window:SetMaximized(value: boolean, animate: boolean?)
+		geometryChosen = true
 		setMaximized(value ~= false, animate)
+	end
+
+	-- ── settings: the device ──────────────────────────────────────────────────
+	-- "Is this a phone?" as the library decides it: a touch screen AND no keyboard,
+	-- read per call. Everything that lays itself out differently on a phone (the
+	-- chrome, the sidebar, the bind HUD's rows, the chips, the Settings tab) reads
+	-- this, so a host building its own panel can make the same call.
+	function window:IsTouch(): boolean
+		return ctx:IsTouch()
+	end
+
+	-- Pin the answer (`true` / `false`), or `nil` to go back to asking the engine.
+	-- Applied live: the whole window re-lays out. The `Touch` option at build time
+	-- is this, set before anything is drawn.
+	function window:SetTouch(value: boolean?)
+		if value ~= nil and type(value) ~= "boolean" then
+			Log.warn("SetTouch", ("expects true, false or nil, got %s — ignoring."):format(typeof(value)))
+			return
+		end
+		ctx.Touch = value
+		touchChanged()
+	end
+
+	-- `fn(isTouch)` whenever the answer changes. No initial call; read IsTouch.
+	function window:OnTouch(fn: (boolean) -> ()): () -> ()
+		return ctx:OnTouch(fn)
 	end
 
 	-- ── the window-state flag ─────────────────────────────────────────────────
@@ -1840,7 +2222,12 @@ return function(opts: any)
 			window:SetSize(w, h)
 		end,
 		moveTo = moveTo,
-		setMaximized = setMaximized,
+		-- A restored record is a choice too: a phone that saved itself windowed
+		-- must not be re-maximized the moment the input devices report in.
+		setMaximized = function(value: boolean, animate: boolean?)
+			geometryChosen = true
+			setMaximized(value, animate)
+		end,
 		isMaximized = function(): boolean
 			return maximized
 		end,
