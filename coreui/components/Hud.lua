@@ -59,14 +59,24 @@ local Gui = require(script.Parent.Parent.util.Gui)
 
 -- ── desktop ──────────────────────────────────────────────────────────────────
 local WIDTH = 256
-local HEADER_H = 30
-local ROW_H = 24
-local CHIP_H = 18
-local CHIP_MIN_W = 30 -- a one-letter key still reads as a chip, not a dot
+local HEADER_H = 32
+local ROW_H = 26
+local CHIP_H = 20
+local CHIP_MIN_W = 32 -- a one-letter key still reads as a chip, not a dot
 local KEY_W = 104 -- the column the chip is right-aligned in: "RShift hold" plus air
-local STATS_H = 26 -- the readout bar, which is its own card under the panel
-local GAP = 6      -- ...and the air between the two
-local PAD_X = 12
+local STATS_H = 24 -- the readout bar, which is its own card under the panel
+local GAP = 4      -- ...and the air between the two: close enough to read as one unit
+local PAD_X = 12   -- where text starts, in the header, the rows AND the stat bar
+-- A row is a tile with air around it, not a stripe that runs into the panel's
+-- border: the list is inset by this, and a row pads its own text by the rest
+-- (PAD_X - INSET), so the names still line up under the title.
+local INSET = 6
+-- One radius for the panel and the stat bar (they're one unit), a smaller one
+-- for what sits inside them. The old mix (10 / 8 / 7 / 5) was four different
+-- curves in a 256px box, which is a lot of what "looks off" was.
+local RADIUS = 10
+local ROW_RADIUS = 6
+local CHIP_RADIUS = 6
 local MARGIN = 8   -- keep-on-screen inset
 -- ...but only for a panel that has never been dragged. Once the user grabs it
 -- they may shove it OFF the edge and leave a strip behind — see `place`.
@@ -82,12 +92,14 @@ local LIST_PAD = 5 -- the list's own top/bottom inset
 -- than a key nothing can press. The panel is narrower: it's on top of the game
 -- the whole time it's up.
 local WIDTH_TOUCH = 226
-local HEADER_H_TOUCH = 44 -- the caret is the panel's only button; 30px is a mouse target
+local HEADER_H_TOUCH = 44 -- the caret is the panel's only button; 32px is a mouse target
 local ROW_H_TOUCH = 44
 local ROW_GAP_TOUCH = 6
-local PAD_X_TOUCH = 12
-local PILL_W = 54
-local PILL_H = 26
+local PAD_X_TOUCH = 14
+local INSET_TOUCH = 8
+local ROW_RADIUS_TOUCH = 8
+local PILL_W = 50
+local PILL_H = 24
 local HEAD_H_TOUCH = 26
 local MORE_H_TOUCH = 24
 local STATS_H_TOUCH = 32
@@ -106,6 +118,8 @@ type Row = {
 	name: TextLabel,
 	chip: TextLabel,
 	chipStroke: UIStroke,
+	stroke: UIStroke, -- the tile's edge; drawn on touch, where every row is a button
+	corner: UICorner,
 	entry: any,
 	hover: boolean,
 	active: boolean,
@@ -199,7 +213,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		LayoutOrder = 1,
 		Parent = root,
 	}, {
-		Create.corner(10),
+		Create.corner(RADIUS),
 		Create.stroke(colors.border),
 		Create.listLayout(),
 	})
@@ -213,13 +227,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 	}, {
 		-- Round the top corners with the panel, then square off the bottom —
 		-- same trick as the window titlebar.
-		Create.corner(10),
+		Create.corner(RADIUS),
 	})
 	local squareFill = Create("Frame", {
 		Name = "SquareFill",
 		AnchorPoint = Vector2.new(0, 1),
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 0, 10),
+		Size = UDim2.new(1, 0, 0, RADIUS),
 		BackgroundColor3 = colors.chrome,
 		BorderSizePixel = 0,
 		Parent = header,
@@ -233,26 +247,25 @@ return function(ctx: any, parent: Instance, opts: any): any
 		BorderSizePixel = 0,
 		Parent = header,
 	})
-	local rail = Create("Frame", {
-		Name = "Rail",
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, PAD_X, 0.5, 0),
-		Size = UDim2.fromOffset(3, 11),
-		BackgroundColor3 = ctx.Accent,
-		BorderSizePixel = 0,
-		ZIndex = 2,
-		Parent = header,
-	}, {
-		Create.corner(2),
-	})
+	-- The header's mark is a glyph, not the accent rail it used to be. The rail
+	-- was a 3×11 stub of green that belonged to nothing else on screen (the
+	-- window's rail is the sidebar's active-tab mark, in a gutter); a keyboard
+	-- glyph says what the panel is. It is dim at rest and LIT while anything
+	-- listed is live — so a collapsed panel, which is only this header, still
+	-- answers the question the panel exists for.
+	local glyph = Icons.new("keyboard", 14, colors.text_dim)
+	glyph.AnchorPoint = Vector2.new(0, 0.5)
+	glyph.Position = UDim2.new(0, PAD_X, 0.5, 0)
+	glyph.ZIndex = 2;
+	(glyph :: any).Parent = header
 	local title = Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(PAD_X + 10, 0),
-		Size = UDim2.new(1, -(PAD_X + 10 + 30), 1, 0),
+		Position = UDim2.fromOffset(PAD_X + 20, 0),
+		Size = UDim2.new(1, -(PAD_X + 20 + 30), 1, 0),
 		Text = opts.Title or "Keybinds",
 		TextColor3 = colors.text,
-		TextSize = 11,
+		TextSize = 12,
 		FontFace = Theme.Font.Bold,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -304,6 +317,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- still means how many rows EXIST (what "+N more" counts); the height only
 	-- decides how many you see at once.
 	local listLayout = Create.listLayout()
+	local listPad = Create.padding(LIST_PAD, INSET)
 	local list = Create("ScrollingFrame", {
 		Name = "Binds",
 		Size = UDim2.new(1, 0, 0, 0),
@@ -319,14 +333,14 @@ return function(ctx: any, parent: Instance, opts: any): any
 		LayoutOrder = 1,
 		Parent = body,
 	}, {
-		Create.padding(LIST_PAD, 0),
+		listPad,
 		listLayout,
 	})
 
 	-- What the panel says with nothing in it — and, since the list is now only
 	-- what the user asked for, HOW to put something in it. Per device, because
 	-- the answer is a key on one and a pin on the other.
-	local emptyPad = Create.padding(0, PAD_X)
+	local emptyPad = Create.padding(0, PAD_X - INSET)
 	local empty = Create("TextLabel", {
 		Name = "Empty",
 		BackgroundTransparency = 1,
@@ -396,13 +410,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 		LayoutOrder = 2,
 		Parent = root,
 	}, {
-		Create.corner(8),
+		Create.corner(RADIUS),
 		Create.stroke(colors.border),
 		statsPad,
 		Create.listLayout({
 			FillDirection = Enum.FillDirection.Horizontal,
 			VerticalAlignment = Enum.VerticalAlignment.Center,
-			Padding = UDim.new(0, 14),
+			Padding = UDim.new(0, 12),
 		}),
 	})
 
@@ -461,6 +475,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local function fitChrome()
 		local touch = ctx:IsTouch()
 		local padX = touch and PAD_X_TOUCH or PAD_X
+		local inset = touch and INSET_TOUCH or INSET
+		local mark = touch and 16 or 14
 		root.Size = UDim2.fromOffset(touch and WIDTH_TOUCH or WIDTH, 0)
 		listLayout.Padding = UDim.new(0, touch and ROW_GAP_TOUCH or 0)
 		-- Right-aligned on touch so an inset (sub-option) tile steps in from the
@@ -470,10 +486,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 		header.Size = UDim2.new(1, 0, 0, touch and HEADER_H_TOUCH or HEADER_H)
 		caretBtn.Size = UDim2.fromOffset(touch and 40 or 16, touch and 40 or 16)
 		caretBtn.Position = UDim2.new(1, touch and -4 or -10, 0.5, 0)
-		rail.Position = UDim2.new(0, padX, 0.5, 0)
-		title.Position = UDim2.fromOffset(padX + 10, 0)
-		title.TextSize = touch and 12 or 11
-		title.Size = UDim2.new(1, -(padX + 10 + (touch and 48 or 30)), 1, 0)
+		glyph.Size = UDim2.fromOffset(mark, mark)
+		glyph.Position = UDim2.new(0, padX, 0.5, 0)
+		title.Position = UDim2.fromOffset(padX + mark + 6, 0)
+		title.TextSize = touch and 13 or 12
+		title.Size = UDim2.new(1, -(padX + mark + 6 + (touch and 48 or 30)), 1, 0)
+		listPad.PaddingLeft = UDim.new(0, inset)
+		listPad.PaddingRight = UDim.new(0, inset)
 		statsBar.Size = UDim2.new(1, 0, 0, touch and STATS_H_TOUCH or STATS_H)
 		statsPad.PaddingLeft = UDim.new(0, padX)
 		statsPad.PaddingRight = UDim.new(0, padX)
@@ -483,8 +502,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 		empty.Text = touch and "Nothing pinned yet.\nPin a feature from the menu to list it here."
 			or "Nothing bound yet.\nBind a key to a feature to list it here."
 		empty.TextSize = touch and 12 or 11
-		emptyPad.PaddingLeft = UDim.new(0, padX)
-		emptyPad.PaddingRight = UDim.new(0, padX)
+		emptyPad.PaddingLeft = UDim.new(0, padX - inset)
+		emptyPad.PaddingRight = UDim.new(0, padX - inset)
 		empty.Size = UDim2.new(1, 0, 0, touch and ROW_H_TOUCH + 16 or ROW_H * 2)
 		more.Size = UDim2.new(1, 0, 0, touch and MORE_H_TOUCH or MORE_H)
 		more.TextSize = touch and 12 or 10
@@ -607,14 +626,20 @@ return function(ctx: any, parent: Instance, opts: any): any
 			Visible = false,
 			LayoutOrder = index,
 			Parent = list,
-		}, {
-			Create.corner(7),
 		})
+		local corner = Create.corner(ROW_RADIUS)
+		corner.Parent = frame
+		-- Off on a desktop (a readout row has no edge until it's hovered, and then
+		-- the fill is the edge); on a phone every row is a button and the edge is
+		-- what says so.
+		local stroke = Create.stroke(colors.border_soft)
+		stroke.Enabled = false
+		stroke.Parent = frame
 		local name = Create("TextLabel", {
 			Name = "Name",
 			BackgroundTransparency = 1,
-			Position = UDim2.fromOffset(PAD_X, 0),
-			Size = UDim2.new(1, -(PAD_X + KEY_W + PAD_X), 1, 0),
+			Position = UDim2.fromOffset(PAD_X - INSET, 0),
+			Size = UDim2.new(1, -((PAD_X - INSET) * 2 + KEY_W), 1, 0),
 			RichText = true,
 			Text = "",
 			TextColor3 = colors.text_muted,
@@ -632,7 +657,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		local chip = Create("TextLabel", {
 			Name = "Chip",
 			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -PAD_X, 0.5, 0),
+			Position = UDim2.new(1, -(PAD_X - INSET), 0.5, 0),
 			Size = UDim2.fromOffset(0, CHIP_H),
 			AutomaticSize = Enum.AutomaticSize.X,
 			BackgroundColor3 = colors.control,
@@ -640,13 +665,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 			RichText = true,
 			Text = "",
 			TextColor3 = colors.text,
-			TextSize = 10,
+			TextSize = 11,
 			FontFace = Theme.Font.Mono,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = frame,
 		}, {
-			Create.corner(5),
-			Create.padding(0, 7),
+			Create.corner(CHIP_RADIUS),
+			Create.padding(0, 8),
 			Create("UISizeConstraint", { MinSize = Vector2.new(CHIP_MIN_W, CHIP_H) }),
 		}) :: TextLabel
 		local chipStroke = Create.stroke(colors.border)
@@ -656,6 +681,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 			name = name,
 			chip = chip,
 			chipStroke = chipStroke,
+			stroke = stroke,
+			corner = corner,
 			entry = nil,
 			hover = false,
 			active = false,
@@ -678,7 +705,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 
 	local function newHead(): Head
-		local pad = Create.padding(0, 0, 3, PAD_X)
+		local pad = Create.padding(0, 0, 3, PAD_X - INSET)
 		local label = Create("TextLabel", {
 			Name = "Section",
 			BackgroundTransparency = 1,
@@ -717,7 +744,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		head.label.Text = string.upper(text)
 		head.label.Size = UDim2.new(1, 0, 0, (touch and HEAD_H_TOUCH or HEAD_H) + (first and 0 or 6))
 		head.label.TextSize = touch and 10 or 9
-		head.pad.PaddingLeft = UDim.new(0, touch and PAD_X_TOUCH or PAD_X)
+		head.pad.PaddingLeft = UDim.new(0, touch and (PAD_X_TOUCH - INSET_TOUCH) or (PAD_X - INSET))
 		head.label.LayoutOrder = order
 		-- Touch rows are tiles with air between them, so a hairline there lands
 		-- as a stray line in a gap; the caption alone reads as a divider.
@@ -745,7 +772,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 			return keyName
 		end
 		if active then
-			return keyName .. " " .. word -- all knockout on the accent fill
+			return keyName .. " " .. word -- all accent on the lit chip
 		end
 		return ('%s<font color="#%s"> %s</font>'):format(keyName, dimHex, word)
 	end
@@ -756,7 +783,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local function paintRow(row: Row, entry: any, sub: boolean)
 		row.entry = entry
 		local touch = ctx:IsTouch()
-		local padX = touch and PAD_X_TOUCH or PAD_X
+		-- The list is inset from the panel's edge; the row pads its text by the
+		-- rest, so a name lands at PAD_X exactly like the title above it.
+		local inner = (touch and PAD_X_TOUCH or PAD_X) - (touch and INSET_TOUCH or INSET)
 		local rowH = touch and ROW_H_TOUCH or ROW_H
 		local active = entry:GetState() == true
 		local mode = entry:GetMode()
@@ -776,11 +805,14 @@ return function(ctx: any, parent: Instance, opts: any): any
 		row.name.Text = text
 		row.name.TextColor3 = active and colors.text or colors.text_muted
 
-		-- Lit = live, on both devices: accent fill, knockout text, the stroke
-		-- folded into the fill.
-		row.chip.BackgroundColor3 = active and ctx.Accent or colors.control
+		-- Lit = live, on both devices, and lit the way the menu's own BindChip
+		-- and the active nav tile are: accent text and an accent edge on an
+		-- accent-TINTED fill (`ctx.AccentSoft`). Never a solid accent slab — at
+		-- chip size that was the brightest thing on the screen, and a single
+		-- letter sitting in it read as a warning light, not a key.
+		row.chip.BackgroundColor3 = active and ctx.AccentSoft or colors.control
 		row.chipStroke.Color = active and ctx.Accent or colors.border
-		row.chip.Position = UDim2.new(1, -padX, 0.5, 0)
+		row.chip.Position = UDim2.new(1, -inner, 0.5, 0)
 
 		if touch then
 			-- The chip says the STATE, because here the row is the control and the
@@ -793,34 +825,38 @@ return function(ctx: any, parent: Instance, opts: any): any
 				elseif active then "ON"
 				else "OFF"
 			row.chip.Text = word
-			row.chip.TextColor3 = active and colors.knockout or colors.text_dim
-			row.chip.TextSize = 10
+			row.chip.TextColor3 = active and ctx.Accent or colors.text_muted
+			row.chip.TextSize = 11
 			row.chip.FontFace = Theme.Font.Bold
 			row.chip.AutomaticSize = Enum.AutomaticSize.None
 			row.chip.Size = UDim2.fromOffset(PILL_W, PILL_H)
-			row.chip.BackgroundColor3 = active and ctx.Accent or colors.control
-			row.name.Position = UDim2.fromOffset(padX, 0)
-			row.name.Size = UDim2.new(1, -(padX + PILL_W + padX + 8), 1, 0)
+			row.name.Position = UDim2.fromOffset(inner, 0)
+			row.name.Size = UDim2.new(1, -(inner + PILL_W + inner + 8), 1, 0)
 			row.name.TextSize = 13
 			-- Every row is a tile, so the list reads as a column of buttons; a
-			-- running one lifts a surface step. A sub-option's tile is inset from
-			-- the left (the list is right-aligned — fitChrome) rather than its text,
-			-- because at tile sizes a text indent is invisible.
+			-- running one lifts a surface step and firms its edge. A sub-option's
+			-- tile is inset from the left (the list is right-aligned — fitChrome)
+			-- rather than its text, because at tile sizes a text indent is invisible.
 			row.frame.Size = UDim2.new(1, -indent, 0, rowH)
 			row.frame.BackgroundColor3 = active and colors.pop or colors.card
 			row.frame.BackgroundTransparency = 0
+			row.stroke.Enabled = true
+			row.stroke.Color = active and colors.border or colors.border_soft
+			row.corner.CornerRadius = UDim.new(0, ROW_RADIUS_TOUCH)
 		else
 			row.chip.Text = chipTextDesktop(keyName, hasKey, mode, active)
-			row.chip.TextColor3 = active and colors.knockout or colors.text
-			row.chip.TextSize = 10
+			row.chip.TextColor3 = active and ctx.Accent or colors.text
+			row.chip.TextSize = 11
 			row.chip.FontFace = Theme.Font.Mono
 			row.chip.AutomaticSize = Enum.AutomaticSize.X
 			row.chip.Size = UDim2.fromOffset(0, CHIP_H)
-			row.name.Position = UDim2.fromOffset(padX + indent, 0)
-			row.name.Size = UDim2.new(1, -(padX + indent + KEY_W + padX), 1, 0)
+			row.name.Position = UDim2.fromOffset(inner + indent, 0)
+			row.name.Size = UDim2.new(1, -(inner + indent + KEY_W + inner), 1, 0)
 			row.name.TextSize = sub and 11 or 12
 			row.frame.Size = UDim2.new(1, 0, 0, rowH)
 			row.frame.BackgroundColor3 = colors.card
+			row.stroke.Enabled = false
+			row.corner.CornerRadius = UDim.new(0, ROW_RADIUS)
 			paintHover(row)
 		end
 		row.frame.Visible = true
@@ -854,12 +890,16 @@ return function(ctx: any, parent: Instance, opts: any): any
 		blockUsed += 1
 		local block = blockPool[blockUsed]
 		if not block then
-			block = { entries = {}, active = false }
+			block = { entries = {}, active = false, pinned = false }
 			blockPool[blockUsed] = block
 		end
 		table.clear(block.entries)
 		block.entries[1] = entry
 		block.active = entry:GetState() == true
+		-- ROOT only, unlike `active`: a feature with a running sub-option IS
+		-- running, but a pin is something the user put on one specific control,
+		-- and a pinned sub-option is drawn under its parent regardless.
+		block.pinned = entry.IsPinned and entry:IsPinned() == true
 		-- A block's section is its ROOT's, so a pair can't split across one.
 		block.section = (entry.GetSection and entry:GetSection()) or ""
 		return block
@@ -961,13 +1001,27 @@ return function(ctx: any, parent: Instance, opts: any): any
 		-- and the tap that switches a feature on is exactly the event that would
 		-- sort it to the top and slide everything else under the finger. A phone
 		-- list scrolls instead (fitList), so nothing is unreachable for want of it.
-		if not touch and #listed > maxRows then
+		--
+		-- On touch the float is by PIN instead, always — the panel is the hotbar
+		-- and the pin is how a user puts a button on it, so what they placed has
+		-- to be the part that's there without scrolling for it. Safe where the
+		-- active float isn't: nothing in the HUD moves a pin (only the chip's pin
+		-- half, in the menu — components/BindChip.lua), so a tap on a row changes
+		-- `active` and never `pinned`, and the list under the thumb holds still.
+		local floatPinned, floatActive = touch, (not touch) and #listed > maxRows
+		if floatPinned or floatActive then
 			for i = 1, #sSecKeys do
+				-- Within a section's own bucket, never across one: `sHeadAt` is
+				-- built from bucket order below and a block that moved between
+				-- buckets would draw under the wrong header. Stable both halves
+				-- (a two-bucket partition, not `table.sort`, which is unstable),
+				-- so registration order survives inside each.
 				local bucket = sSecBuckets[i]
 				table.clear(sActive)
 				table.clear(sIdle)
 				for _, block in bucket do
-					table.insert(block.active and sActive or sIdle, block)
+					local first = if floatPinned then block.pinned else block.active
+					table.insert(first and sActive or sIdle, block)
 				end
 				table.clear(bucket)
 				for _, block in sActive do
@@ -1048,6 +1102,16 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if shown == 0 then
 			content += empty.Size.Y.Offset
 		end
+		-- The header glyph lights while anything listed is live — the whole
+		-- answer, readable even with the list folded away.
+		local live = false
+		for _, entry in listed do
+			if entry:GetState() == true then
+				live = true
+				break
+			end
+		end
+		Icons.tint(glyph, live and ctx.Accent or colors.text_dim)
 		local rest = #order - shown
 		more.Visible = rest > 0
 		if rest > 0 then
@@ -1060,9 +1124,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 
 	local unsubscribeBinds = binds:Observe(refresh)
-	local unsubscribeAccent = ctx:RegisterAccent(function(accent)
-		rail.BackgroundColor3 = accent
-		refresh() -- the lit chips are the only accent inside the list
+	local unsubscribeAccent = ctx:RegisterAccent(function()
+		refresh() -- the lit chips (and the lit glyph) are the panel's only accent
 	end)
 
 	-- ── position ─────────────────────────────────────────────────────────────

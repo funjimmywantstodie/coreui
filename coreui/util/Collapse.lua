@@ -67,12 +67,18 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 					return
 				end
 				-- Landed on the content's own height: hand tracking back so later
-				-- content changes keep growing the holder.
+				-- content changes keep moving the holder — in BOTH directions. Under
+				-- AutomaticSize the Size property is a MINIMUM, so leaving the
+				-- landed height in it let the holder grow with its content but
+				-- never shrink again: the bind HUD, whose rows come and go, kept
+				-- the height of its tallest-ever list as dead space under a short
+				-- one after any fold/unfold.
 				if watcher then
 					watcher:Disconnect()
 					watcher = nil
 				end
 				activeTween = nil
+				holder.Size = UDim2.new(1, 0, 0, 0)
 				holder.AutomaticSize = Enum.AutomaticSize.Y
 			end)
 		end
@@ -113,8 +119,10 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 		-- explicit boolean, so nothing moves today — but the next one to omit it
 		-- would have got the opposite of what the rest of the codebase taught them.
 		if animate == false then
+			-- Zero either way: collapsed it IS the height, open it's the floor
+			-- AutomaticSize grows from (see the note in expand()).
 			holder.AutomaticSize = value and Enum.AutomaticSize.None or Enum.AutomaticSize.Y
-			holder.Size = UDim2.new(1, 0, 0, value and 0 or content.AbsoluteSize.Y)
+			holder.Size = UDim2.new(1, 0, 0, 0)
 			return
 		end
 

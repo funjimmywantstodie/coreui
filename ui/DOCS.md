@@ -476,9 +476,9 @@ rule):
   ```
   ┌──────────────────────────────┐
   │ GLOBAL                       │
-  │ Auto Parry            [ ON ] │   ← running
   │ Fly                   [ OFF] │   ← pinned, off — tap to turn on
-  │ Aim                   [HOLD] │   ← press and keep pressing
+  │ Aim                   [HOLD] │   ← pinned, press and keep pressing
+  │ Auto Parry            [ ON ] │   ← not pinned, listed because it's running
   └──────────────────────────────┘
   ```
 - **Every listed bind is reachable.** `MaxRows` and `+N more` are a desktop cap;
@@ -486,11 +486,15 @@ rule):
   is drawn and the height cap turns the overflow into a scroll. The list also
   stops at a bit over half the viewport height — the rest of the display is the
   game.
-- **The rows do not reorder.** On a desktop, an over-long list floats what's
-  running to the top. On a phone that would mean the tap that switches a feature
-  on slides the list under your thumb — registration order, always. The panel
-  also rests against the **top** of the screen rather than centred, so a list
-  that grows grows *downward*.
+- **Pinned rows sort above running-only ones**, inside each section, and that is
+  the only reordering a phone's list does. What you pinned is the hotbar; what's
+  merely switched on is listed under it, so turning five things on from the menu
+  can't scatter your buttons through them. Both halves stay in registration
+  order, and a tap on a row never moves it — only the chip's pin half changes a
+  pin, and that's in the menu, not under your thumb. (A desktop does the
+  opposite: an over-long list floats what's *running* to the top, and pins do
+  nothing.) The panel also rests against the **top** of the screen rather than
+  centred, so a list that grows grows *downward*.
 - **Default position** is the right edge, near the top (the desktop's `(16, 140)`
   lands on the left thumbstick). A position you pass, drag to, or restore from a
   config wins over it.

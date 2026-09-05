@@ -957,8 +957,11 @@ Nine things to respect:
   when it changes what the key does. On a phone the row is the control, so the
   chip says the STATE — `ON`/`OFF`, `HOLD`, `TAP`, `ALWAYS` — because "toggle"
   answers nothing a user with no keyboard is asking. Both light the way the
-  control's own BindChip does (accent fill, `knockout` text), so the menu and
-  the panel agree about what live looks like. Touch rows are tiles (`card`,
+  control's own BindChip does (accent text + accent edge on an `AccentSoft`
+  tile — never a solid accent slab, which at chip size was the brightest thing
+  on screen), so the menu and the panel agree about what live looks like. The
+  header's keyboard glyph lights the same way while anything listed is live,
+  so a collapsed panel still answers the question. Touch rows are tiles (`card`,
   `pop` when live, `ROW_GAP_TOUCH` between); desktop rows lift to `card` on
   hover, which is what says they're clickable. Both branches are in `paintRow`.
 - **Rows are grouped by SECTION — the tab they were built under.** With
