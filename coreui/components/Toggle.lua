@@ -151,12 +151,11 @@ return function(ctx: any, opts: any)
 			Compact = true,
 			LayoutOrder = 2,
 			Where = where,
-			-- On a phone the key half is dead weight (nothing can fill it); the
-			-- mode half stays wherever there's a mode to cycle. See BindChip.
-			HideKeyOnTouch = true,
 			-- The toggle's own label is what the bind HUD lists it under, so
 			-- "hold B for aim" appears there without a second declaration.
-			Label = opts.Name,
+			-- `HudLabel` overrides it: a card whose switch is called "Enabled" is
+			-- listed under the card's title instead (components/Controls.lua).
+			Label = opts.HudLabel or opts.Name,
 			-- ...and its Flag is what a sub-option points `Parent` at. Either name
 			-- resolves (util/Bind.lua `Binding:_named`), so a section of sub-toggles
 			-- can say `Parent = "aimbot"` or `Parent = "Aimbot"`.
@@ -165,6 +164,7 @@ return function(ctx: any, opts: any)
 			-- the bind HUD when it's merely switched on — its parent's row speaks for
 			-- it. A key of its own still lists it.
 			Parent = opts.Parent,
+			Section = opts.Section,
 			Hud = opts.Hud,
 			GetState = function()
 				return state

@@ -363,6 +363,10 @@ end
 --   Label      what to call this bind in a bind list / HUD (unnamed = hidden)
 --   Id         name other binds refer to this one by (defaults to Label)
 --   Parent     the Id / Label of the feature this one is a sub-option of
+--   Section    which part of the menu this bind came from (the tab's name),
+--              used by the HUD to group its rows — see `Binding:GetSection`
+--   Pinned     listed in the HUD regardless of key or state — the phone's
+--              equivalent of putting a key on it (see `Binding:IsListed`)
 --   Hud        true / false to force it into or out of that list
 --   Callback   fn(active, info) — info = { Key, Mode, KeyName }
 --   OnChanged  fn(key, mode) — the bind itself changed
@@ -387,6 +391,8 @@ function Bind:Register(opts: any): any
 		_normId = nil :: string?,
 		_normLabel = nil :: string?,
 		parentKey = refKey(opts.Parent),
+		section = (type(opts.Section) == "string" and opts.Section ~= "") and opts.Section or nil,
+		pinned = opts.Pinned == true,
 		hud = opts.Hud,
 		callback = opts.Callback,
 		onChanged = opts.OnChanged,
@@ -639,6 +645,44 @@ function Binding:GetLabel(): string?
 	return self.label
 end
 
+-- Which part of the menu this bind came from — the name of the tab that built
+-- it, threaded down through Tab → Group → Controls, or given directly on
+-- `Window:Bind{ Section = ... }`. Nothing in the router reads it: it exists so
+-- the HUD can group twenty-five rows into "Global" / "This game" / "Settings"
+-- without any menu author declaring a second thing (components/Hud.lua).
+function Binding:GetSection(): string?
+	return self.section
+end
+
+function Binding:SetSection(section: string?)
+	self.section = (type(section) == "string" and section ~= "") and section or nil
+	-- Not structural in the parent/child sense, but the HUD's grouping is derived
+	-- from it and observers repaint off `revision`.
+	self.manager:_changed()
+end
+
+-- Pinned = "list me in the HUD" said outright, rather than implied by a key.
+-- It's the phone's half of the key clause in `IsListed`: nothing on a phone can
+-- ever carry a key, so the chip's key half becomes a pin there
+-- (components/BindChip.lua), and a pinned bind sits in the panel exactly the
+-- way a keyed one does on a desktop — listed while it's off, so it can be
+-- switched on from there. Persisted with the key and mode (`bind` codec).
+function Binding:IsPinned(): boolean
+	return self.pinned == true
+end
+
+function Binding:SetPinned(pinned: boolean, silent: boolean?)
+	pinned = pinned == true
+	if pinned == self.pinned then
+		return
+	end
+	self.pinned = pinned
+	self.manager:_changed()
+	if not silent and self.onChanged then
+		self.onChanged(self.key, self.mode)
+	end
+end
+
 function Binding:SetLabel(label: string?)
 	self.label = (type(label) == "string" and label ~= "") and label or nil
 	self._normLabel = self.label and normalize(self.label) or nil
@@ -719,20 +763,27 @@ function Binding:GetChildren(): { any }
 	return table.clone(self:_children())
 end
 
--- Does this bind belong in a bind list / HUD? Four rules:
+-- Does this bind belong in a bind list / HUD? The panel is "everything you
+-- asked for by name, plus everything running", and that is four rules:
 --   * it needs a name — an unlabeled binding is internal plumbing, and a row
 --     reading "None" tells nobody anything;
 --   * it needs a mode that can actually go live — "None" is a pure key picker
 --     (the Settings tab's Toggle-UI bind), which never activates;
---   * a KEY on it lists it outright — putting a key on something is the user
---     saying they want to be able to find it;
---   * with no key, it lists only while it's ON **and** it isn't a sub-option of
---     something else.
+--   * a KEY on it, or a PIN, lists it outright — either one is the user saying
+--     they want to reach this without opening the menu. The key is the desktop's
+--     way of saying so and the pin is the phone's (nothing there can carry a
+--     key), and the panel treats them identically: listed while it's off, so it
+--     can be switched on from there;
+--   * with neither, it lists only while it's ON **and** it isn't a sub-option
+--     of something else.
 --
--- The key clause is what keeps the panel from being an inventory of the whole
+-- The first clause is what keeps the panel from being an inventory of the whole
 -- menu: since components/Toggle.lua gives *every* toggle a chip, listing the
--- unbound ones would be a wall of "— · toggle" rows burying the handful the user
--- actually bound.
+-- unbound ones would be a wall of idle rows burying the handful the user
+-- actually bound. (It used to do exactly that on a phone, on the theory that
+-- the rows were the only way to fire anything there. They were — and the panel
+-- was every feature in the hub, most of them off, with nothing to say which
+-- ones the user cared about. The pin is that missing signal.)
 --
 -- The "on right now" clause is the other half of the HUD's job. The panel
 -- answers "what's running?", and a feature the user enabled by clicking it is
@@ -746,7 +797,8 @@ end
 -- with Sticky Aim / Wall Check / Auto Fire rows saying nothing the "Aimbot" row
 -- above them didn't. A sub-option is spoken for by its parent, so a keyless one
 -- stays out and the parent row carries the count instead (components/Hud.lua).
--- Put a key on it and it's back — that's the user asking for it by name.
+-- Put a key (or a pin) on it and it's back — that's the user asking for it by
+-- name.
 --
 -- Note this makes an ON sub-option of an OFF parent invisible, which is correct:
 -- a sub-option of a feature that isn't running isn't running either.
@@ -756,27 +808,16 @@ function Binding:IsListed(): boolean
 	if self.hud ~= nil then
 		return self.hud == true
 	end
-	local mode = self.mode
-	if self.label == nil or mode == "None" then
+	if self.label == nil or self.mode == "None" then
 		return false
 	end
-	if Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown then
+	if self.pinned or (Bind.isKey(self.key) and self.key ~= Enum.KeyCode.Unknown) then
 		return true
 	end
 	if self:GetParent() ~= nil then
 		return false
 	end
-	if self:_value() then
-		return true
-	end
-	-- ON A PHONE the panel is the hotbar, not a readout: the key clause above
-	-- keeps out exactly the rows a phone user needs, since nothing there can ever
-	-- have a key. So an idle, unbound, top-level feature lists too (dimmed —
-	-- components/Hud.lua), as long as tapping it does something. Sub-options stay
-	-- rolled up under their parent as before. Read per call, like every other
-	-- touch decision (Context:IsTouch).
-	local ctx = self.manager.ctx
-	return mode ~= "Always" and ctx ~= nil and type(ctx.IsTouch) == "function" and ctx:IsTouch() == true
+	return self:_value()
 end
 
 -- Sub-options that are ON but rolled up into this row (the "+2" the HUD draws).

@@ -436,6 +436,17 @@ Detected:Paragraph({
 	     .. "shows it with tab:SetVisible(true). Everything here is settable at "
 	     .. "runtime: SetName / SetIcon / SetColor / SetStyle / SetDot / SetPin.",
 })
+-- The automatic bind-HUD roll-up: no `Parent` declared anywhere, but the card is
+-- called "Triggerbot" and so is its first switch — so the HUD lists ONE row for
+-- Triggerbot (with a "+n" for whichever sub-options are on) instead of four
+-- equal rows. A card whose first switch is named something else (Movement, up
+-- there) is read as a list of separate features and nothing rolls up.
+local Trigger = ThisGame:CreateGroup({ Title = "Triggerbot", Column = 2 })
+Trigger:Toggle({ Name = "Triggerbot", Flag = "trigger", Desc = "The feature — this is the HUD row." })
+Trigger:Toggle({ Name = "Show FOV", Flag = "trigger_fov" })
+Trigger:Toggle({ Name = "Team Check", Default = true, Flag = "trigger_team" })
+Trigger:Slider({ Name = "Delay (ms)", Min = 0, Max = 250, Default = 40, Flag = "trigger_delay" })
+
 -- Pretend we just recognized the game.
 ThisGame:SetName("Metro Destruction Wars")
 ThisGame:SetVisible(true)

@@ -50,15 +50,63 @@ local COMMON_SCHEMA: Log.Schema = {
 	{ "Callback", "function" },
 	{ "Flag", "string" },
 	{ "FireDefault", "boolean" },
+	-- Which part of the menu this control belongs to, for the bind HUD's row
+	-- grouping (util/Bind.lua `Binding:GetSection`). Inherited from the tab, so
+	-- nothing has to pass it — it's declared here rather than in the two bindable
+	-- components' SCHEMAs because it means the same thing everywhere and a
+	-- non-bindable control that carries one simply ignores it.
+	{ "Section", "string" },
+	-- What the bind HUD calls this control, when that shouldn't be its `Name`.
+	-- The case it exists for is the card written as `Triggerbot / [Enabled] /
+	-- [Show FOV]`: the switch is the feature, but "Enabled" is a useless row in a
+	-- panel listing every feature in the hub. The auto roll-up below fills it in
+	-- with the card's title; a caller can also just say so.
+	{ "HudLabel", "string" },
 }
+
+-- Names a container's *own* switch is written under — the row that means "this
+-- card's feature is on" rather than a sub-option of it. Matched after `norm`.
+local GENERIC_ENABLE: { [string]: boolean } = {
+	enabled = true,
+	enable = true,
+	master = true,
+}
+
+-- Loose name comparison for the auto roll-up: case and punctuation are noise
+-- here ("Trigger Bot" is the "Triggerbot" card's own switch).
+local function norm(s: any): string
+	if type(s) ~= "string" then
+		return ""
+	end
+	return (s:lower():gsub("[^%a%d]", ""))
+end
 
 local Controls = {}
 
 -- `inheritParent` is the bind-HUD parent (util/Bind.lua's tree) a Group or
 -- Section declared for everything inside it — see the note on `mount` below.
-function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
+-- `section` is the other half of that: the tab's name, which the HUD groups its
+-- rows under. Both travel the same way (container → control, explicit wins),
+-- but they answer different questions — `Parent` is "what feature is this part
+-- of", `Section` is "what part of the menu is it in".
+-- `autoTitle` is the container's own title, and it turns on the AUTOMATIC
+-- roll-up: with no `Parent` declared anywhere, a card called "Triggerbot" whose
+-- first switch is "Triggerbot" (or a generic "Enabled") is read as one feature
+-- with sub-options, so the bind HUD lists the feature and rolls "Show FOV",
+-- "Auto Fire" and the rest up into it. A card whose first switch is called
+-- something else ("Misc" → "Infinite Jump") is read as a list of unrelated
+-- features and nothing is rolled up. That title match is the whole safety
+-- interlock: rolling up unconditionally would bury Noclip and Fly under
+-- Infinite Jump, and rolling up never is what made the phone HUD an inventory
+-- of the menu.
+function Controls.new(ctx: any, frame: Frame, inheritParent: any?, section: string?, autoTitle: string?)
 	local items: { { inst: Instance, sep: Frame?, bordered: boolean } } = {}
 	local count = 0
+	-- Auto roll-up state. `autoTitle` is only consulted while nobody declared a
+	-- `Parent`; `autoSettled` records that the first bindable control has been
+	-- seen, so exactly one control ever gets to claim (or refuse) the slot.
+	local auto = (inheritParent == nil) and norm(autoTitle) ~= "" and autoTitle or nil
+	local autoSettled = false
 	-- `Parent = true` on the container: the first bindable control in it is the
 	-- feature, and everything bindable after it is a sub-option of that one. It's
 	-- the "Aimbot / Sticky Aim / Wall Check / Auto Fire" card written the way it's
@@ -135,6 +183,37 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		local activates = kind == "toggle"
 			or (kind == "bind" and opts ~= nil and type(opts.Mode) == "string"
 				and opts.Mode:lower() ~= "none")
+		-- The automatic path, taken only when no `Parent` was declared for this
+		-- container. The first control that can go live either IS the card's
+		-- feature (its name is the card's, or the generic "Enabled") and claims the
+		-- slot, or it isn't — in which case the card is a list and the slot is
+		-- closed for good.
+		if auto ~= nil and bindable and activates and opts ~= nil and opts.Parent == nil then
+			if not autoSettled then
+				autoSettled = true
+				local name = norm(opts.Name)
+				if name ~= "" and (name == norm(auto) or GENERIC_ENABLE[name]) then
+					autoParent = opts.Flag or opts.Name
+					if GENERIC_ENABLE[name] and opts.HudLabel == nil then
+						-- "Enabled" says nothing in a panel of every feature in the hub;
+						-- the card's title is what the user calls this thing.
+						opts = table.clone(opts)
+						opts.HudLabel = auto
+					end
+				else
+					autoParent = false
+				end
+			elseif autoParent then
+				opts = table.clone(opts)
+				opts.Parent = autoParent
+			end
+		elseif auto ~= nil and bindable and opts ~= nil and opts.Parent == nil
+			and autoSettled and autoParent then
+			-- A non-activating bind (a pure key picker) still belongs to the feature.
+			opts = table.clone(opts)
+			opts.Parent = autoParent
+		end
+
 		if bindable and inheritParent ~= nil and inheritParent ~= false
 			and opts ~= nil and opts.Parent == nil then
 			if inheritParent ~= true then
@@ -152,6 +231,15 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 				opts = table.clone(opts)
 				opts.Parent = autoParent
 			end
+		end
+
+		-- ...and the tab this control was built under, which the HUD draws as a
+		-- header over its rows. Unlike `Parent` this needs no resolution and can't
+		-- be claimed by a control — it's just where the row came from — so it's a
+		-- plain inherit-unless-given.
+		if bindable and section ~= nil and opts ~= nil and opts.Section == nil then
+			opts = table.clone(opts)
+			opts.Section = section
 		end
 
 		-- Change notification (Context:OnFlagChanged) hangs off the control's own
@@ -292,6 +380,7 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 			Log.fail("Section", ("options must be a table like { Title = ... }, got %s"):format(typeof(o)))
 		end
 		Log.field(Log.where("Section", o and o.Title), "Parent", o and o.Parent, { "string", "boolean", "table" })
+		Log.field(Log.where("Section", o and o.Title), "Section", o and o.Section, "string")
 		local section, body = Section(ctx, o)
 		place(section, true)
 		-- A section is the natural place to say "everything under here belongs to
@@ -311,11 +400,21 @@ function Controls.new(ctx: any, frame: Frame, inheritParent: any?)
 		if inherit == nil then
 			if inheritParent == true and autoParent ~= nil then
 				inherit = autoParent -- the card's feature, or `false` for "there isn't one"
+			elseif auto ~= nil and autoParent then
+				inherit = autoParent -- ...the same, arrived at automatically (see `auto`)
 			else
 				inherit = inheritParent
 			end
 		end
-		return Controls.new(ctx, body, inherit)
+		-- The section travels straight through: a Section inside a card is still in
+		-- the same tab, and a `Section = "..."` on it overrides for its own subtree.
+		--
+		-- A section under a card that resolved to no feature of its own gets to run
+		-- the same title match on its OWN heading: "Misc" may be a list, but a
+		-- "Triggerbot" section inside it is still one feature with sub-options.
+		local childTitle = (inherit == nil and o ~= nil and type(o.Title) == "string") and o.Title or nil
+		return Controls.new(ctx, body, inherit,
+			(o and type(o.Section) == "string" and o.Section) or section, childTitle)
 	end
 
 	-- Escape hatch: `builder(ctx, frame)` parents whatever it wants into `frame`.

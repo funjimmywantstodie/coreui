@@ -351,12 +351,16 @@ desktop chrome. What the touch branch does, and where:
   `_downTap` flag so a keyboard release can't end a finger's hold). Rows stay
   plain Frames so the panel still drags from them; `root.InputBegan` + an
   8px `SLOP` decides tap vs drag on release, and a drag cancels a Hold. Touch:
-  44px rows, no key column, off/unbound top-level toggles listed dimmed
-  (`Binding:IsListed`'s last clause reads `manager.ctx:IsTouch()`), default
-  position right edge / centred until `hasPos`.
-- **BindChip.lua** — `HideKeyOnTouch` (Toggle passes it) drops the key half and
-  keeps the mode half if switchable; the key half is inert on touch everywhere.
-  Field.lua's `syncMain` skips invisible siblings so the name gets the width.
+  44px tile rows, the chip says the STATE (`ON/OFF/HOLD/TAP/ALWAYS`) instead of
+  a key, a moving press inside the list is the scroll (the header + stat bar
+  drag), default position right edge / near the top until `hasPos`. The rows
+  are what the user **pinned** plus what's running — see the pin below.
+- **BindChip.lua** — on touch the key half is a **pin** (`Binding:SetPinned`,
+  persisted as `pinned` in the `bind` codec): the phone's way of saying "list
+  this in the HUD", which is what a key says on a desktop. A `Mode = "None"`
+  picker has nothing to pin and shows its key, inert. The mode half stays if
+  switchable. Field.lua's `syncMain` skips invisible siblings so the name gets
+  the width.
 - **Slider.lua** — value bubble over the knob and `ctx:LockScroll(true)` for a
   touch drag (`ctx.Scroller` = the content frame; counted).
 - **Controls.lua** — every mounted handle gets `:SetVisible/:IsVisible` (row +
@@ -818,18 +822,23 @@ registry — which already holds every binding — through two additions there:
 activate / destroy) and `Bind:List()`. A binding carries a `Label`, which
 `Keybind` and `Toggle` fill from their own `Name` and `Window:Bind` takes
 directly; `Binding:IsListed()` is the one place the inclusion rule lives — needs
-a label, a `Mode ~= "None"` (a pure key picker never activates), and **a key, or
-a true value with no parent**, with `Hud = true/false` on the control as the
-override. So the panel is *everything bound + every top-level feature running*.
-The key clause is what keeps it short: a HUD that lists every bindable feature in
-the menu is a wall of idle `— · toggle` rows burying the few the user actually
-bound — and it is what makes every-toggle-is-bindable free. The **active** clause
-is the other half of the HUD's premise: it answers "what's on right now?", and a
-keyless feature the user switched on from the menu is on. It used to be scoped to
-`Always` only (which ignores its key by design), which meant minimizing over a
-page of enabled features left the HUD claiming nothing was live. Idle keyless
-binds still drop out, so the list only ever grows by what's actually running;
-`Hud.lua`'s `paintRow` draws the missing key as `—`.
+a label, a `Mode ~= "None"` (a pure key picker never activates), and **a key or
+a pin, or a true value with no parent**, with `Hud = true/false` on the control
+as the override. So the panel is *everything you asked for by name + every
+top-level feature running*. "By name" is a key on a desktop and a **pin** on a
+phone (`Binding:IsPinned/SetPinned`, set from the chip's key half on touch —
+BindChip.lua — and persisted as `pinned` in the `bind` codec); the two are the
+same clause and the panel treats them identically, listed while off so the row
+is how it gets switched on. That clause is what keeps it short: a HUD that lists
+every bindable feature in the menu is a wall of idle rows burying the few the
+user actually bound — and it is what makes every-toggle-is-bindable free. **A
+phone used to get exactly that wall** (every idle top-level toggle, dimmed, on
+the theory that the rows were the only way to fire one there); the pin is the
+signal that was missing, and the touch clause in `IsListed` is gone. The
+**active** clause is the other half of the HUD's premise: it answers "what's on
+right now?", and a keyless feature the user switched on from the menu is on.
+Idle keyless binds drop out, so the list only ever grows by what's actually
+running; `Hud.lua`'s chip reads `on` for a row with no key.
 
 **The parent clause is what stops that second half from being its own flood.**
 Bindings form a shallow tree: a control declares `Parent = "<feature>"` (matched
@@ -842,11 +851,24 @@ carries instead; a sub-option with its own key is still listed, indented under
 its parent (`Hud.lua`'s `paintRow(row, entry, sub)` — the rows are grouped into
 parent+children *blocks* first so the `MaxRows` sort can't separate them). An ON
 sub-option of an OFF parent is invisible, which is the right answer: it isn't
-running either. `Controls.new(ctx, frame, inheritParent)` is the sugar —
+running either. `Controls.new(ctx, frame, inheritParent, section, autoTitle)` is the sugar —
 `CreateGroup{ Parent = "aimbot" }` / `Section{ Parent = ... }` scope a whole
 container, and `Parent = true` means "the first bindable control here is the
 feature", which is the shape those cards are already written in. Only `toggle` /
 `bind` kinds take part.
+
+**...and with no `Parent` anywhere, `autoTitle` does it automatically.** Nobody
+declares this stuff, so switching a card on put the whole card in the panel:
+`Triggerbot`, `Show FOV`, `Team Check`, `FOV Size` as four equal rows. Group/Section hand their own title
+down, and the FIRST activating control in the container either **is** that
+feature (its `Name` normalizes to the title, or is the generic `Enabled` /
+`Enable` / `Master`) and claims the slot, or it isn't — and then the slot is shut
+for good. That title match is the entire safety interlock, and it must stay:
+rolling up unconditionally buries Noclip and Fly under Infinite Jump in a `Misc`
+card, which is a worse failure than the one this fixes. The generic-name case
+also sets `HudLabel` to the card's title, since a HUD row reading `Enabled` says
+nothing; `Toggle`/`Keybind` pass `Label = opts.HudLabel or opts.Name`.
+`HudLabel` is in `COMMON_SCHEMA` (it means the same thing on every control).
 
 **Two invariants hold that tree up — break either and it fails quietly.**
 
@@ -873,8 +895,87 @@ The Settings panel's own switches (Notifications, Keybind HUD, Auto Load) pass
 game, and the default rule (keyless + on = listed) would otherwise put "Keybind
 HUD" in the keybind HUD for every user.
 
-Seven things to respect:
+Nine things to respect:
 
+- **On touch the panel never reorders, never truncates, and never re-centres.**
+  Those three are one bug wearing three hats: on a phone a row is a *button* the
+  user is aiming a thumb at, so anything that moves a row is the tap landing on
+  the wrong feature. So (a) the active-first over-cap sort in `refresh` is
+  desktop-only — a desktop row is a readout nobody is pointing at; (b) `shown` is
+  every listed bind rather than `MaxRows` of them, because a row that isn't drawn
+  is a feature a phone user cannot reach at all (`MaxRows` and `+N more` are a
+  desktop cap; the height budget below is the touch one, and it scrolls); and (c)
+  `defaultPos` anchors near the TOP instead of vertically centring, and
+  `latchDefault` freezes the derived default the first time the panel is painted
+  with rows in it, so the list only grows downward. A centred default re-derives
+  its Y from `root.AbsoluteSize` on every repaint, which means every registration,
+  every activation and every tab finishing its build slid the whole hotbar.
+- **The list is capped by HEIGHT, not by row count, and it scrolls.** `MaxRows`
+  was the only cap, and on a desktop it was a fair proxy — ten 22px rows is
+  276px in a 1080 viewport. On a phone the same ten rows are 44px, which is
+  528px of HUD against a 360px landscape viewport: `place`'s clamp collapses
+  (both ends land on `MARGIN`), so the panel pins to the top and the last rows,
+  the `+N more` line and the whole FPS bar are off the bottom of the screen.
+  `Binds` is a `ScrollingFrame` whose `Size` and `CanvasSize` `fitList` writes
+  by hand from the sum `refresh` just laid out, against the viewport `place`
+  clamps against. Sized on the CONTENT on purpose: `Collapse.wrap` drives the
+  holder's height and must stay the only writer of that one. `MaxRows` still
+  means "how many rows exist", so the `+N more` contract is unchanged — height
+  only decides how many you see at once. Two
+  details that are load-bearing: `more` moved OUT of the scroll area (the line
+  that says there's more must never be the part you can't see), and the touch
+  budget is additionally capped at `TOUCH_SHARE` of the viewport, because `root`
+  is `Active` and every pixel of panel is a pixel that stops handing presses
+  through to the game. **`AutomaticSize` + `AutomaticCanvasSize` on the same
+  axis of a ScrollingFrame is a documented conflict and draws nothing** — the
+  first cut of this shipped that and the panel simply didn't appear. `refresh`
+  already knows what it laid out, so `fitList` writes `Size` and `CanvasSize`
+  from that sum; nothing here is measured, so nothing can disagree.
+- **The panel may be tucked off the edge, but only if someone placed it.**
+  `place`'s clamp concedes a `peek` strip (44px touch / 28px desktop) instead of
+  the whole panel once `hasPos` — a drag, `SetPosition`, `X`/`Y`, a restored
+  record, which is what makes a tuck persist. A 226px hotbar over a 360px
+  landscape viewport is a third of the screen and collapsing it takes the rows
+  away, which on a phone *are* the feature. The top edge concedes nothing: the
+  header is the only part a phone's panel drags by (a moving press in the list
+  is the list's scroll), so a panel tucked up past it can't be pulled back;
+  downward it stops with the header showing. Nothing automatic may tuck — a
+  default or a rotation still lands the whole panel on screen.
+- **A press that stays put is a tap; one that moves is a drag. Nothing is on a
+  timer.** The same rule the window's titlebar has, with one exception: inside
+  a *phone's* list a moving press is the ScrollingFrame's scroll, so there the
+  panel drags by the header and the stat bar. A long press used to grab the
+  panel (`HOLD_DRAG`, 0.32s, with a squeeze) — and a thumb resting on a toggle
+  for a third of a second was moving the hotbar instead of flipping the switch,
+  which read as "the rows don't work". Don't bring it back. `beginGesture` is
+  connected to BOTH `root` and the list (one press can reach both, and a
+  ScrollingFrame may take the gesture), deduped on the InputObject; a press that
+  becomes a drag or a scroll ends any Hold it started.
+- **A row is one name and ONE chip, and the chip is the same instance on both
+  devices.** On a desktop it's the key in mono — `F`, `E hold`, `F tap`,
+  `always`, or `on` for a keyless running feature; the mode word only appears
+  when it changes what the key does. On a phone the row is the control, so the
+  chip says the STATE — `ON`/`OFF`, `HOLD`, `TAP`, `ALWAYS` — because "toggle"
+  answers nothing a user with no keyboard is asking. Both light the way the
+  control's own BindChip does (accent fill, `knockout` text), so the menu and
+  the panel agree about what live looks like. Touch rows are tiles (`card`,
+  `pop` when live, `ROW_GAP_TOUCH` between); desktop rows lift to `card` on
+  hover, which is what says they're clickable. Both branches are in `paintRow`.
+- **Rows are grouped by SECTION — the tab they were built under.** With
+  twenty-five rows the panel is every feature in the hub in registration order,
+  from unrelated places, and nothing said which was which. The grouping already
+  existed as the sidebar, so `Binding:GetSection` carries the tab's *name*
+  (Tab → Group → `Controls.new`'s 4th arg → `opts.Section` on bindable controls;
+  `Window:Bind{ Section = }` for a headless one) and the HUD draws a dim header
+  per section in first-appearance order — which is registration order, which is
+  tab order, so it needs no reach into Window's tab list. Headers only draw when
+  there's more than one section, the unheaded bucket (`""`) draws none, headers
+  are **pooled like the rows**, and the over-cap active-first sort runs *within*
+  a bucket so nothing floats past a header into a section it didn't come from.
+  A block (parent + rolled-up children) is filed under its ROOT's section, so a
+  pair can't split across one. Note the tab's `Section` is its display `Name`,
+  deliberately not the `scope` used for persisted group keys — that one is frozen
+  at creation so configs on disk keep resolving.
 - **It's on top, so it wins the press.** Roblox hands `InputBegan` to every
   non-sinking object under the pointer, not just the topmost — so grabbing the
   HUD where it overlapped the titlebar started the HUD's drag *and* the window's,
@@ -901,10 +1002,10 @@ Seven things to respect:
   layout's `GAP` goes with it.
 - **Rows are pooled and repainted in place.** The registry notifies on every
   press — a Hold key down/up must not build instances.
-- **One accent element per row.** The live dot is it; an active row lifts to
-  `card` rather than tinting accent, so a screen full of active binds still reads
-  as a list. Same reason the panel is a miniature of the window (chrome header
-  over `bg`, one border, matching radius) instead of a differently-styled box.
+- **One accent element per row.** The chip is it — no dot, no tinted row — so
+  a screen full of active binds still reads as a list. Same reason the panel is
+  a miniature of the window (chrome header over `bg`, one border, matching
+  radius) instead of a differently-styled box.
 - **The paint is re-run when the panel is revealed** (`fade:To(…, 0, refresh)`).
   A row that changed state while hidden had its transparency driven by
   `util/Fade.lua`'s snapshot, not by its own paint, so the fill is stale until

@@ -49,11 +49,12 @@ return function(ctx: any, opts: any)
 		Where = where,
 		-- The field's own label is what the bind HUD lists it under. A picker
 		-- (Mode = "None") never activates, so it stays out of the HUD regardless.
-		Label = opts.Name,
+		Label = opts.HudLabel or opts.Name,
 		-- `Id` is what sub-options name this bind by; `Parent` makes this one a
 		-- sub-option of another feature (util/Bind.lua's tree).
 		Id = opts.Flag,
 		Parent = opts.Parent,
+		Section = opts.Section,
 		Hud = opts.Hud,
 		-- Picker mode has no activation, so `Callback` keeps its original
 		-- "the key changed" meaning there and only there.

@@ -904,6 +904,9 @@ return function(ctx: any, opts: any)
 		-- `Parent` scopes every bindable control in the card to one feature for the
 		-- bind HUD: a name, or `true` to mean "the first bindable control here".
 		Log.field("CreateGroup", "Parent", groupOpts and groupOpts.Parent, { "string", "boolean", "table" })
+		-- `Section` overrides which HUD header this card's binds sit under; by
+		-- default they inherit the tab's own name.
+		Log.field("CreateGroup", "Section", groupOpts and groupOpts.Section, "string")
 		-- Column is 1 (left) or 2 (right). A stray value (e.g. Column = 3, or a
 		-- string) would silently land the group in the left column — warn and
 		-- fall back so the author knows their column choice was ignored.
@@ -913,7 +916,11 @@ return function(ctx: any, opts: any)
 				("Column must be 1 (left) or 2 (right), got %s — using column 1."):format(tostring(column)))
 		end
 		local target = (column == 2) and col2 or col1
-		local handle = Group(ctx, target, groupOpts or {}, scope)
+		-- `label`, not `scope`: the HUD header is a thing the user reads, so it's
+		-- the tab's display name (and it follows `SetName`'s *initial* value the
+		-- same way the flyout does — see the note on `scope` above for why the two
+		-- identities aren't the same one).
+		local handle = Group(ctx, target, groupOpts or {}, scope, label)
 		table.insert(groups, handle)
 		return handle
 	end

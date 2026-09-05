@@ -12,7 +12,12 @@ local Controls = require(script.Parent.Controls)
 -- `scope` is the tab's identity, threaded down from components/Tab.lua: a group
 -- is only unique *within* a tab, and the pair is what the window's persisted
 -- collapse map is keyed on (see Context:RegisterGroup).
-return function(ctx: any, column: Frame, opts: any, scope: string?)
+--
+-- `section` is the tab's *name* — what the bind HUD groups this card's binds
+-- under. Deliberately not `scope`: that one is frozen at creation so configs on
+-- disk keep resolving (SetName doesn't re-key it), and a HUD header wants the
+-- name the user actually sees on the tab.
+return function(ctx: any, column: Frame, opts: any, scope: string?, section: string?)
 	local colors = Theme.Colors
 	local collapsed = opts.Collapsed == true
 
@@ -98,7 +103,12 @@ return function(ctx: any, column: Frame, opts: any, scope: string?)
 	-- `Parent` on the card makes every bindable control inside it a sub-option of
 	-- that feature for the bind HUD (util/Bind.lua's tree) — a group of Aimbot
 	-- options says it once here rather than on every toggle.
-	local handle: any = Controls.new(ctx, card, opts.Parent)
+	-- The card's own title is handed down as the auto roll-up hint (see
+	-- Controls.new): with no explicit `Parent`, a "Triggerbot" card whose first
+	-- switch is Triggerbot rolls its sub-options up into that one HUD row.
+	local handle: any = Controls.new(ctx, card, opts.Parent,
+		(type(opts.Section) == "string" and opts.Section ~= "") and opts.Section or section,
+		(opts.Parent == nil and type(opts.Title) == "string") and opts.Title or nil)
 
 	-- Everything the titlebar search needs to filter this group, handed over as
 	-- direct references.

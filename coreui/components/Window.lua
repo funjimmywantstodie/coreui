@@ -76,6 +76,14 @@ local BIND_SCHEMA: Log.Schema = {
 	{ "Label", "string" },
 	{ "Id", "string" },
 	{ "Parent", { "string", "table" } },
+	-- Which HUD header this bind sits under. A control gets one from its tab for
+	-- free (components/Controls.lua); a bare `Window:Bind` has no tab behind it,
+	-- so it says so here or falls in with the unheaded rows.
+	{ "Section", "string" },
+	-- Listed in the HUD outright, off or on — the phone's key (util/Bind.lua
+	-- `Binding:IsPinned`). A control's chip sets this from a tap; a headless
+	-- bind has no chip, so it says so here.
+	{ "Pinned", "boolean" },
 	{ "Hud", "boolean" },
 }
 

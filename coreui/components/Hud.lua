@@ -2,42 +2,44 @@
 -- components/Hud.lua — the floating bind HUD: a small draggable panel that
 -- answers "what's on right now?" without opening the menu.
 --
--- It reads util/Bind.lua's registry directly (`Bind:Observe` → `Bind:List`), so
--- it isn't a second list anyone has to maintain: every Toggle, every
--- activation-mode `Keybind` control and every `Window:Bind` shows up the moment
--- it has a key on it *or* is switched on, and lights while it's live. The
--- controls pass the `Label` from their own `Name`, so nothing has to be declared
--- twice.
+-- It reads util/Bind.lua's registry directly (`Bind:Observe` → `Bind:Entries`),
+-- so it isn't a second list anyone has to maintain. The panel is exactly:
 --
--- What it deliberately does NOT show is every bindable feature in the menu:
--- that's a wall of unbound, idle rows that buries the few you actually use. The
--- inclusion rule lives in `Binding:IsListed` — a key, or currently active and
--- not a sub-option of something else — so the panel is "everything bound, plus
--- every top-level feature running".
+--     everything you asked for by name  +  every top-level feature running
 --
--- That last clause is the roll-up. Bindings form a shallow tree (a control
--- declares `Parent = "<feature>"`, or inherits one from its Group / Section),
--- because turning Aimbot on means turning on the handful of sub-options that
--- make it work — and listing each of those as its own row said nothing the
--- "Aimbot" row above them didn't. A rolled-up sub-option shows as a `+n` count
--- on its parent instead; one the user put a key on is listed anyway, indented
--- under that parent, because a key is them asking for it by name.
+-- "Asked for by name" is a KEY on a desktop and a PIN on a phone — the chip's
+-- key half becomes a pin there (components/BindChip.lua) — and the panel treats
+-- the two identically: listed while off, so the row is how you switch it on.
+-- The rule itself lives in `Binding:IsListed`; the roll-up (`Parent`, `+n`) in
+-- the same file. Nothing else is listed. A phone used to get every idle toggle
+-- in the menu on the theory that the rows were the only way to fire one; they
+-- were, and the panel was an inventory of the hub with nothing to say which
+-- rows the user cared about.
 --
--- Three deliberate shapes here:
+-- A ROW IS ONE NAME AND ONE CHIP, and the chip is the row's one accent element:
+--
+--     desktop   Auto Parry              [ F ]        the key (and the mode, when
+--               Aim Assist              [ E hold ]   it isn't a plain toggle)
+--               ESP                     [ always ]
+--               Infinite Jump           [ on ]       running, never keyed
+--     phone     Auto Parry              [ ON  ]      the STATE, because there
+--               Aim Assist              [ HOLD ]     the row is the control
+--
+-- Lit accent while the bind is live, exactly like the chip on the control it
+-- came from. A row does what its mode says — tap flips a Toggle, tap fires a
+-- Press, holding a Hold row holds it — on both devices; a desktop row is just
+-- also a readout of which key does that.
+--
+-- Three shapes worth knowing before touching this:
 --
 --  * It's a SIBLING of the window frame, not a child. Minimizing the window (or
---    the toggle key) has to leave the HUD up — being able to read your binds
---    with the menu closed is the entire point — but it still lives in the
---    window's ScreenGui, so it dies with it and needs no teardown of its own
---    beyond its input connections.
---  * The FPS / ping readout is its OWN card under the panel, not a row inside
---    it — it isn't a bind and it doesn't come from the registry. Being outside
---    the collapsing body is the point: fold the binds away and the numbers stay.
+--    the toggle key) has to leave the HUD up — reading your binds with the menu
+--    closed is the entire point — but it still lives in the window's ScreenGui,
+--    so it dies with it.
+--  * The FPS / ping readout is its OWN card under the panel: it isn't a bind
+--    and it survives the collapse, which is the state you most want numbers in.
 --  * Rows are POOLED and repainted in place. The registry notifies on every
 --    press, so a Hold key down/up must not churn instances.
---  * One accent element per row (the live dot). An active row lifts to `card`
---    instead of tinting accent, so a screen full of active binds still reads as
---    a list rather than a wall of green.
 
 local Services = require(script.Parent.Parent.util.Services)
 
@@ -55,31 +57,63 @@ local Collapse = require(script.Parent.Parent.util.Collapse)
 local Log = require(script.Parent.Parent.util.Log)
 local Gui = require(script.Parent.Parent.util.Gui)
 
-local WIDTH = 248
+-- ── desktop ──────────────────────────────────────────────────────────────────
+local WIDTH = 256
 local HEADER_H = 30
-local ROW_H = 22
+local ROW_H = 24
+local CHIP_H = 18
+local CHIP_MIN_W = 30 -- a one-letter key still reads as a chip, not a dot
+local KEY_W = 104 -- the column the chip is right-aligned in: "RShift hold" plus air
 local STATS_H = 26 -- the readout bar, which is its own card under the panel
 local GAP = 6      -- ...and the air between the two
 local PAD_X = 12
-local NAME_X = 26
-local KEY_W = 110 -- right column: "RShift · always" in 11px mono, with room to spare
-local MARGIN = 8  -- keep-on-screen inset
-local SUB_X = 12  -- how far a sub-option's row is indented under its parent
--- ON A PHONE the rows are the hotbar — the only way to fire a bind at all — so
--- they're thumb-sized, and the key column goes: `—` / `RShift` is noise on a
--- device with nothing to press, so the mode word sits alone on the right and the
--- name gets the width. Desktop keeps every number above.
+local MARGIN = 8   -- keep-on-screen inset
+-- ...but only for a panel that has never been dragged. Once the user grabs it
+-- they may shove it OFF the edge and leave a strip behind — see `place`.
+local PEEK = 28       -- the strip that must stay reachable on a desktop
+local PEEK_TOUCH = 44 -- ...and on a phone, where the strip is a thumb target
+local SUB_X = 12   -- a sub-option's row steps in this far under its parent
+local HEAD_H = 18  -- a section header ("GLOBAL", "THIS GAME")
+local MORE_H = 16  -- the "+N more" line, which sits BELOW the scroll area
+local LIST_PAD = 5 -- the list's own top/bottom inset
+-- ── phone ────────────────────────────────────────────────────────────────────
+-- The rows are the hotbar — the only way to fire a bind at all — so they're
+-- thumb-sized tiles with air between them, and the chip says the STATE rather
+-- than a key nothing can press. The panel is narrower: it's on top of the game
+-- the whole time it's up.
+local WIDTH_TOUCH = 226
+local HEADER_H_TOUCH = 44 -- the caret is the panel's only button; 30px is a mouse target
 local ROW_H_TOUCH = 44
-local PAD_X_TOUCH = 16
-local KEY_W_TOUCH = 52
+local ROW_GAP_TOUCH = 6
+local PAD_X_TOUCH = 12
+local PILL_W = 54
+local PILL_H = 26
+local HEAD_H_TOUCH = 26
+local MORE_H_TOUCH = 24
+local STATS_H_TOUCH = 32
+-- The panel is a readout, not the screen. `root` is `Active`, so every pixel of
+-- panel is a pixel that stops handing presses through to the game under it.
+local TOUCH_SHARE = 0.62
 -- How far a press may travel and still be a tap. Beyond it the gesture is a
--- drag of the panel, and a Hold it started is let go.
+-- drag of the panel (or, inside a phone's list, a scroll) and a Hold it started
+-- is let go.
 local SLOP = 8
 
--- One pooled bind row: dot (live marker) · name · "KEY · mode". `entry` is what
--- the row was last painted with — the tap handler is bound once per row and
--- looks up what it's bound to at tap time.
-type Row = { frame: Frame, dot: Frame, name: TextLabel, key: TextLabel, entry: any }
+-- One pooled row. `entry` is what it was last painted with — the press handler
+-- is bound once per row and looks up what it's bound to at press time.
+type Row = {
+	frame: Frame,
+	name: TextLabel,
+	chip: TextLabel,
+	chipStroke: UIStroke,
+	entry: any,
+	hover: boolean,
+	active: boolean,
+}
+
+-- One pooled section header. The padding is held onto because the indent is
+-- device-dependent and this is a plain label in a UIListLayout.
+type Head = { label: TextLabel, pad: UIPadding, line: Frame }
 
 -- The name label is RichText (for the dim "+2" roll-up count), and a label is
 -- whatever the menu author called their feature — so it has to be escaped, or a
@@ -107,8 +141,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 
 	local maxRows = math.max(1, math.floor(tonumber(opts.MaxRows) or 10))
 	-- `Stats = false` drops the whole readout row; Fps/Ping drop one each. The row
-	-- also hides itself when nothing is in it, so turning both off (and never
-	-- calling SetStat) doesn't leave an empty strip and a hairline behind.
+	-- also hides itself when nothing is in it.
 	local showStats = opts.Stats ~= false
 	local showFps = showStats and opts.Fps ~= false
 	local showPing = showStats and opts.Ping ~= false
@@ -118,11 +151,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local destroyed = false
 
 	-- Built up front (its methods are filled in at the bottom) so the drag and
-	-- collapse handlers below can reach `handle.OnChange` — the hook Window fans
-	-- out to `Window:OnHudChanged`, which is how the HUD's flag gets a change
-	-- notification. Everything the HUD persists (where it is, whether it's folded,
-	-- whether it's up) moves without a control callback anywhere in sight, so
-	-- there'd otherwise be nothing to hang one on.
+	-- collapse handlers can reach `handle.OnChange` — the hook Window fans out to
+	-- `Window:OnHudChanged`, which is how the HUD's flag gets a change
+	-- notification: everything the HUD persists moves without a control callback
+	-- anywhere in sight.
 	local handle: any = {}
 	local function changed()
 		if handle.OnChange then
@@ -131,12 +163,11 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 
 	-- ── root ─────────────────────────────────────────────────────────────────
-	-- Two cards stacked in one draggable unit: the bind panel, and the FPS/ping
-	-- readout as its own bar beneath it. `root` is transparent — it exists to own
+	-- Two cards stacked in one draggable unit. `root` is transparent — it owns
 	-- the position, the drag, the fade and the entrance scale for both at once.
 	local root = Create("Frame", {
-		-- Neutral name: the HUD is a direct child of the ScreenGui, so it's as
-		-- visible to a walk of the tree as the window itself (util/Gui.lua).
+		-- Neutral name: a direct child of the ScreenGui is as visible to a walk of
+		-- the tree as the window itself (util/Gui.lua).
 		Name = Gui.rname(),
 		Position = UDim2.fromOffset(tonumber(opts.X) or 16, tonumber(opts.Y) or 140),
 		Size = UDim2.fromOffset(WIDTH, 0),
@@ -144,11 +175,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 		BackgroundTransparency = 1,
 		Visible = false, -- revealed below, so the fade snapshots a finished panel
 		ZIndex = 10,
-		-- The panel floats over the window and over the game, so it swallows the
-		-- presses that land on it rather than letting them through to whatever is
-		-- underneath — the window's own titlebar buttons included. See the drag
-		-- priority registration further down, which is the half of this the window
-		-- consults explicitly.
+		-- Floats over the window and the game, so it swallows the presses that
+		-- land on it. See the drag-priority registration further down, which is
+		-- the half of this the window consults explicitly.
 		Active = true,
 		Parent = parent,
 	}, {
@@ -160,7 +189,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 
 	-- ── panel ────────────────────────────────────────────────────────────────
 	-- A miniature of the window: chrome header over a bg body, one border, same
-	-- radius. It reads as part of the same UI without being a second window.
+	-- radius.
 	local panel = Create("Frame", {
 		Name = "Panel",
 		Size = UDim2.new(1, 0, 0, 0),
@@ -183,10 +212,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 		Parent = panel,
 	}, {
 		-- Round the top corners with the panel, then square off the bottom —
-		-- same trick as the window titlebar (util note in Window.lua).
+		-- same trick as the window titlebar.
 		Create.corner(10),
 	})
-
 	local squareFill = Create("Frame", {
 		Name = "SquareFill",
 		AnchorPoint = Vector2.new(0, 1),
@@ -205,7 +233,6 @@ return function(ctx: any, parent: Instance, opts: any): any
 		BorderSizePixel = 0,
 		Parent = header,
 	})
-
 	local rail = Create("Frame", {
 		Name = "Rail",
 		AnchorPoint = Vector2.new(0, 0.5),
@@ -218,13 +245,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 	}, {
 		Create.corner(2),
 	})
-
 	local title = Create("TextLabel", {
 		Name = "Title",
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(NAME_X - 4, 0),
-		Size = UDim2.new(1, -(NAME_X + 26), 1, 0),
-		Text = opts.Title or "Active Binds",
+		Position = UDim2.fromOffset(PAD_X + 10, 0),
+		Size = UDim2.new(1, -(PAD_X + 10 + 30), 1, 0),
+		Text = opts.Title or "Keybinds",
 		TextColor3 = colors.text,
 		TextSize = 11,
 		FontFace = Theme.Font.Bold,
@@ -233,9 +259,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 		ZIndex = 2,
 		Parent = header,
 	})
-
-	-- The caret is positioned by hand, not laid out: a UIListLayout suppresses
-	-- child Rotation, and this one spins 180° when the panel collapses.
+	-- Positioned by hand, not laid out: a UIListLayout suppresses child Rotation,
+	-- and the caret spins 180° when the panel collapses.
 	local caretBtn = Create("TextButton", {
 		Name = "Caret",
 		AutoButtonColor = false,
@@ -247,8 +272,6 @@ return function(ctx: any, parent: Instance, opts: any): any
 		ZIndex = 2,
 		Parent = header,
 	})
-	-- "chev" (up) at rest, spun 180° when collapsed — the same direction and the
-	-- same Tween.Spin the group / section headers use.
 	local caret = Icons.new("chev", 14, colors.text_dim)
 	caret.AnchorPoint = Vector2.new(0.5, 0.5)
 	caret.Position = UDim2.fromScale(0.5, 0.5);
@@ -270,40 +293,67 @@ return function(ctx: any, parent: Instance, opts: any): any
 		Create.listLayout(),
 	})
 
-	local list = Create("Frame", {
+	-- The list SCROLLS, and it is capped by HEIGHT rather than by row count —
+	-- ten 44px phone rows are 528px against a 360px landscape viewport, and the
+	-- panel would otherwise pin to the top with its tail off the screen.
+	--
+	-- Sized by hand: `AutomaticSize` and `AutomaticCanvasSize` on the SAME axis
+	-- of a ScrollingFrame is a documented conflict and draws nothing. `refresh`
+	-- placed every row itself, so `fitList` writes the frame and canvas heights
+	-- from that sum; nothing is measured, so nothing can disagree. `MaxRows`
+	-- still means how many rows EXIST (what "+N more" counts); the height only
+	-- decides how many you see at once.
+	local listLayout = Create.listLayout()
+	local list = Create("ScrollingFrame", {
 		Name = "Binds",
 		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollingEnabled = false, -- turned on by fitList only when it overflows
+		ScrollBarThickness = 0,
+		ScrollBarImageColor3 = colors.scroll,
+		ScrollBarImageTransparency = 0.4,
+		ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
 		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
 		LayoutOrder = 1,
 		Parent = body,
 	}, {
-		Create.padding(5, 0),
-		Create.listLayout(),
+		Create.padding(LIST_PAD, 0),
+		listLayout,
 	})
 
+	-- What the panel says with nothing in it — and, since the list is now only
+	-- what the user asked for, HOW to put something in it. Per device, because
+	-- the answer is a key on one and a pin on the other.
+	local emptyPad = Create.padding(0, PAD_X)
 	local empty = Create("TextLabel", {
 		Name = "Empty",
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, ROW_H),
-		Text = "Nothing bound yet",
+		Size = UDim2.new(1, 0, 0, ROW_H * 2),
+		Text = "",
 		TextColor3 = colors.text_dim,
 		TextSize = 11,
+		TextWrapped = true,
 		FontFace = Theme.Font.Regular,
 		LayoutOrder = 1000,
 		Parent = list,
+	}, {
+		emptyPad,
 	})
+	-- OUTSIDE the scroll area, pinned under it: the line that says there's more
+	-- than you can see must never itself be the part you can't see.
 	local more = Create("TextLabel", {
 		Name = "More",
 		Visible = false,
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 16),
+		Size = UDim2.new(1, 0, 0, MORE_H),
 		Text = "",
 		TextColor3 = colors.text_dim,
 		TextSize = 10,
 		FontFace = Theme.Font.Regular,
-		LayoutOrder = 1001,
-		Parent = list,
+		LayoutOrder = 2,
+		Parent = body,
 	})
 
 	local holder, setCollapsedHeight = Collapse.wrap(body, opts.Collapsed == true)
@@ -311,14 +361,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 	holder.Parent = panel
 
 	-- Collapsed, the header IS the whole panel, so its bottom corners have to
-	-- round with it. ClipsDescendants clips to a RECTANGLE, not to the UICorner
-	-- shape (see the same note in Window.lua), so the square chrome fill would
-	-- otherwise poke past the panel's rounded bottom corners as two little nubs
-	-- with the divider hairline drawn straight across them. Hiding both hands the
-	-- corners back to the header's own UICorner, which matches the panel's radius.
-	-- The hide waits out the collapse tween (the header's bottom isn't the panel's
-	-- bottom until then); the show has to be immediate, before the body slides in
-	-- behind it.
+	-- round with it. ClipsDescendants clips to a RECTANGLE, not to the UICorner,
+	-- so the square chrome fill would poke past the panel's rounded bottom as two
+	-- nubs. Hiding it hands the corners back to the header's own UICorner. The
+	-- hide waits out the collapse tween; the show is immediate.
 	local squareToken = 0
 	local function setHeaderSquared(square: boolean, after: number?)
 		squareToken += 1
@@ -339,12 +385,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 	setHeaderSquared(opts.Collapsed ~= true)
 
 	-- ── stat bar ─────────────────────────────────────────────────────────────
-	-- FPS / ping is NOT a row inside the bind list: it isn't a bind, it doesn't
-	-- come from the registry, and stuffing it above the rows behind a hairline
-	-- made it read as a strange first entry. It's its own card below the panel —
-	-- a sibling of it, not a child — which also means COLLAPSING the panel leaves
-	-- the readout up. That's the state you want it in most: binds folded away,
-	-- frames and ping still on screen.
+	-- Its own card below the panel, a sibling rather than a child, so collapsing
+	-- the binds leaves the readout up.
+	local statsPad = Create.padding(0, PAD_X)
 	local statsBar = Create("Frame", {
 		Name = "Stats",
 		Visible = false,
@@ -355,7 +398,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 	}, {
 		Create.corner(8),
 		Create.stroke(colors.border),
-		Create.padding(0, PAD_X),
+		statsPad,
 		Create.listLayout({
 			FillDirection = Enum.FillDirection.Horizontal,
 			VerticalAlignment = Enum.VerticalAlignment.Center,
@@ -364,13 +407,11 @@ return function(ctx: any, parent: Instance, opts: any): any
 	})
 
 	-- `key` is the trailing unit label AND the identity, so SetStat("FPS", …)
-	-- updates the same pill every tick and a caller's SetStat("Coins", "1.2k")
-	-- just appends another one.
+	-- updates the same pill every tick and SetStat("Coins", "1.2k") appends one.
 	local statLabels: { [string]: TextLabel } = {}
 	local statOrder = 0
-	-- An empty bar is no bar at all: `Stats = false`, or both readouts off and
-	-- nothing added by hand, and it disappears — the root's list layout skips
-	-- invisible children, so the gap under the panel goes with it.
+	-- An empty bar is no bar at all — the root's list layout skips invisible
+	-- children, so the gap under the panel goes with it.
 	local function syncStatsRow()
 		statsBar.Visible = showStats and next(statLabels) ~= nil
 	end
@@ -394,7 +435,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				RichText = true,
 				Text = "",
 				TextColor3 = colors.text,
-				TextSize = 11,
+				TextSize = ctx:IsTouch() and 12 or 11,
 				FontFace = Theme.Font.Mono,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				LayoutOrder = statOrder,
@@ -414,20 +455,99 @@ return function(ctx: any, parent: Instance, opts: any): any
 		setStat("MS", "—")
 	end
 
+	-- ── device layout ────────────────────────────────────────────────────────
+	-- Everything that isn't a row, re-laid out when the device answer moves
+	-- (Context:OnTouch). Rows re-lay themselves out in `paintRow`.
+	local function fitChrome()
+		local touch = ctx:IsTouch()
+		local padX = touch and PAD_X_TOUCH or PAD_X
+		root.Size = UDim2.fromOffset(touch and WIDTH_TOUCH or WIDTH, 0)
+		listLayout.Padding = UDim.new(0, touch and ROW_GAP_TOUCH or 0)
+		-- Right-aligned on touch so an inset (sub-option) tile steps in from the
+		-- LEFT — see paintRow. Every full-width row is `(1, 0)` either way.
+		listLayout.HorizontalAlignment = touch and Enum.HorizontalAlignment.Right
+			or Enum.HorizontalAlignment.Left
+		header.Size = UDim2.new(1, 0, 0, touch and HEADER_H_TOUCH or HEADER_H)
+		caretBtn.Size = UDim2.fromOffset(touch and 40 or 16, touch and 40 or 16)
+		caretBtn.Position = UDim2.new(1, touch and -4 or -10, 0.5, 0)
+		rail.Position = UDim2.new(0, padX, 0.5, 0)
+		title.Position = UDim2.fromOffset(padX + 10, 0)
+		title.TextSize = touch and 12 or 11
+		title.Size = UDim2.new(1, -(padX + 10 + (touch and 48 or 30)), 1, 0)
+		statsBar.Size = UDim2.new(1, 0, 0, touch and STATS_H_TOUCH or STATS_H)
+		statsPad.PaddingLeft = UDim.new(0, padX)
+		statsPad.PaddingRight = UDim.new(0, padX)
+		for _, label in statLabels do
+			label.TextSize = touch and 12 or 11
+		end
+		empty.Text = touch and "Nothing pinned yet.\nPin a feature from the menu to list it here."
+			or "Nothing bound yet.\nBind a key to a feature to list it here."
+		empty.TextSize = touch and 12 or 11
+		emptyPad.PaddingLeft = UDim.new(0, padX)
+		emptyPad.PaddingRight = UDim.new(0, padX)
+		empty.Size = UDim2.new(1, 0, 0, touch and ROW_H_TOUCH + 16 or ROW_H * 2)
+		more.Size = UDim2.new(1, 0, 0, touch and MORE_H_TOUCH or MORE_H)
+		more.TextSize = touch and 12 or 10
+	end
+	fitChrome()
+
 	-- ── rows ─────────────────────────────────────────────────────────────────
 	local rows: { Row } = {}
+	-- ...and the section headers between them, pooled for the same reason.
+	local heads: { Head } = {}
 
-	-- ── tapping a row ────────────────────────────────────────────────────────
+	-- The height the list gets, and whether that means it scrolls. `content` is
+	-- what `refresh` just laid out, in pixels. The budget is the viewport minus
+	-- everything the panel is obliged to draw around the list, read off the same
+	-- `parent.AbsoluteSize` that `place` clamps against.
+	local latchDefault: () -> () = function() end -- assigned once positioning exists
+	local lastContent = 0
+	local function fitList(content: number?)
+		if destroyed then
+			return
+		end
+		lastContent = content or lastContent
+		local touch = ctx:IsTouch()
+		local vp = (parent :: any).AbsoluteSize
+		-- No viewport yet (an executor can run before one reports) means no budget
+		-- to clamp to: draw the whole list rather than one row of it.
+		local budget = lastContent
+		if vp and vp.Y > 0 then
+			budget = vp.Y - MARGIN * 2 - (touch and HEADER_H_TOUCH or HEADER_H)
+			if more.Visible then
+				budget -= touch and MORE_H_TOUCH or MORE_H
+			end
+			if statsBar.Visible then
+				budget -= GAP + (touch and STATS_H_TOUCH or STATS_H)
+			end
+			if touch then
+				budget = math.min(budget, vp.Y * TOUCH_SHARE)
+			end
+			-- One row plus the inset is the floor: a zero-height list would leave a
+			-- header with nothing under it.
+			budget = math.max(budget, (touch and ROW_H_TOUCH or ROW_H) + LIST_PAD * 2)
+		end
+		local height = math.floor(math.min(lastContent, budget))
+		list.Size = UDim2.new(1, 0, 0, height)
+		list.CanvasSize = UDim2.new(0, 0, 0, math.ceil(lastContent))
+		-- Scrolling only when there's something to scroll to. Off, a swipe inside
+		-- the list does nothing and the press stays a tap.
+		local overflow = lastContent > height + 0.5
+		list.ScrollingEnabled = overflow
+		list.ScrollBarThickness = overflow and 3 or 0
+	end
+
+	-- ── operating a row ──────────────────────────────────────────────────────
 	-- A row is a plain Frame, deliberately: a TextButton would sink the press and
-	-- the panel could no longer be dragged from its rows. So the row only records
-	-- that it was pressed, and the drag machinery below (which sees every press on
-	-- `root`, rows included) decides on release whether that was a tap or a drag.
+	-- the panel could no longer be dragged from its rows on a desktop. So the row
+	-- only records that it was pressed, and the gesture machinery below (which
+	-- sees every press on `root`) decides on release whether that was a tap.
 	--
 	--   Toggle   tap flips it          Press   tap fires it once
 	--   Hold     down = key down, lift = key up — including a lift that slid off
-	--            the row (the release listener is UserInputService's, not the
-	--            row's) and a press that became a drag
-	--   Always   inert
+	--            the row (the release listener is UserInputService's) and a press
+	--            that became a drag or a scroll
+	--   Always   inert — it's on; change the mode from the menu
 	--
 	-- Every activation goes through `ctx:User`, so a host watching OnFlagChanged
 	-- sees a row tap as `source = "user"`, exactly like the key.
@@ -467,6 +587,16 @@ return function(ctx: any, parent: Instance, opts: any): any
 		end)
 	end
 
+	-- Only the row's background moves on hover, so it isn't a full repaint. A
+	-- live row keeps its fill either way; an idle one lifts to `card` under the
+	-- pointer, which is what says the row is something you can click.
+	local function paintHover(row: Row)
+		if ctx:IsTouch() then
+			return
+		end
+		row.frame.BackgroundTransparency = (row.hover or row.active) and 0 or 1
+	end
+
 	local function newRow(index: number): Row
 		local frame = Create("Frame", {
 			Name = "Bind",
@@ -478,24 +608,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 			LayoutOrder = index,
 			Parent = list,
 		}, {
-			Create.corner(6),
-		})
-		local dot = Create("Frame", {
-			Name = "Dot",
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, PAD_X, 0.5, 0),
-			Size = UDim2.fromOffset(6, 6),
-			BackgroundColor3 = colors.border,
-			BorderSizePixel = 0,
-			Parent = frame,
-		}, {
-			Create.corner(999),
+			Create.corner(7),
 		})
 		local name = Create("TextLabel", {
 			Name = "Name",
 			BackgroundTransparency = 1,
-			Position = UDim2.fromOffset(NAME_X, 0),
-			Size = UDim2.new(1, -(NAME_X + KEY_W + PAD_X), 1, 0),
+			Position = UDim2.fromOffset(PAD_X, 0),
+			Size = UDim2.new(1, -(PAD_X + KEY_W + PAD_X), 1, 0),
 			RichText = true,
 			Text = "",
 			TextColor3 = colors.text_muted,
@@ -505,92 +624,211 @@ return function(ctx: any, parent: Instance, opts: any): any
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = frame,
 		}) :: TextLabel
-		local key = Create("TextLabel", {
-			Name = "Key",
-			BackgroundTransparency = 1,
+		-- The chip is ONE instance — a label with a fill — and it's the same chip
+		-- on both devices: a mono key on a desktop, a bold state word on a phone.
+		-- It is the row's one accent element, and it lights the way the control's
+		-- own BindChip does, so the panel and the menu agree about what "live"
+		-- looks like.
+		local chip = Create("TextLabel", {
+			Name = "Chip",
 			AnchorPoint = Vector2.new(1, 0.5),
 			Position = UDim2.new(1, -PAD_X, 0.5, 0),
-			Size = UDim2.new(0, KEY_W, 1, 0),
+			Size = UDim2.fromOffset(0, CHIP_H),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundColor3 = colors.control,
+			BorderSizePixel = 0,
 			RichText = true,
 			Text = "",
-			TextColor3 = colors.text_dim,
-			TextSize = 11,
+			TextColor3 = colors.text,
+			TextSize = 10,
 			FontFace = Theme.Font.Mono,
-			TextXAlignment = Enum.TextXAlignment.Right,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = frame,
+		}, {
+			Create.corner(5),
+			Create.padding(0, 7),
+			Create("UISizeConstraint", { MinSize = Vector2.new(CHIP_MIN_W, CHIP_H) }),
 		}) :: TextLabel
-		local row: Row = { frame = frame, dot = dot, name = name, key = key, entry = nil }
+		local chipStroke = Create.stroke(colors.border)
+		chipStroke.Parent = chip
+		local row: Row = {
+			frame = frame,
+			name = name,
+			chip = chip,
+			chipStroke = chipStroke,
+			entry = nil,
+			hover = false,
+			active = false,
+		}
 		frame.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch then
 				rowPressed(row)
 			end
 		end)
+		frame.MouseEnter:Connect(function()
+			row.hover = true
+			paintHover(row)
+		end)
+		frame.MouseLeave:Connect(function()
+			row.hover = false
+			paintHover(row)
+		end)
 		return row
 	end
 
-	-- `sub` = this row's parent is on screen right above it, so it draws indented
-	-- with a smaller dot: a bound sub-option reads as belonging to the feature
-	-- over it rather than as another top-level thing that's running.
+	local function newHead(): Head
+		local pad = Create.padding(0, 0, 3, PAD_X)
+		local label = Create("TextLabel", {
+			Name = "Section",
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, HEAD_H),
+			Text = "",
+			TextColor3 = colors.text_dim,
+			TextSize = 9,
+			FontFace = Theme.Font.Bold,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Bottom, -- sits ON the rows below it
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Visible = false,
+			Parent = list,
+		}, {
+			pad,
+		}) :: TextLabel
+		-- A hairline under the caption, so a header reads as the LID of the block
+		-- below it rather than as another row of words.
+		local line = Create("Frame", {
+			Name = "Line",
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.fromScale(0, 1),
+			Size = UDim2.new(1, 0, 0, 1),
+			BackgroundColor3 = colors.border_soft,
+			BorderSizePixel = 0,
+			Parent = label,
+		})
+		return { label = label, pad = pad, line = line }
+	end
+
+	-- Not RichText, unlike a row's name: a section is a tab's name with nothing
+	-- interpolated into it. Upper-cased because at 9px dim it has to read as a
+	-- divider and not as another bind.
+	local function paintHead(head: Head, text: string, order: number, first: boolean)
+		local touch = ctx:IsTouch()
+		head.label.Text = string.upper(text)
+		head.label.Size = UDim2.new(1, 0, 0, (touch and HEAD_H_TOUCH or HEAD_H) + (first and 0 or 6))
+		head.label.TextSize = touch and 10 or 9
+		head.pad.PaddingLeft = UDim.new(0, touch and PAD_X_TOUCH or PAD_X)
+		head.label.LayoutOrder = order
+		-- Touch rows are tiles with air between them, so a hairline there lands
+		-- as a stray line in a gap; the caption alone reads as a divider.
+		head.line.Visible = not touch
+		head.label.Visible = true
+	end
+
+	-- What the desktop chip says. The key, first; the mode after it only when
+	-- the mode changes what the key does (a plain toggle needs no word); and for
+	-- a row listed without a key, the state — it's there because it's running,
+	-- or because it was pinned or forced in, and "on"/"off" is the honest label.
+	local dimHex = colors.text_dim:ToHex()
+	local function chipTextDesktop(keyName: string, hasKey: boolean, mode: string, active: boolean): string
+		if mode == "Always" then
+			return "always"
+		end
+		local word = if mode == "Hold" then "hold" elseif mode == "Press" then "tap" else nil
+		if not hasKey then
+			if active then
+				return "on"
+			end
+			return word or "off"
+		end
+		if not word then
+			return keyName
+		end
+		if active then
+			return keyName .. " " .. word -- all knockout on the accent fill
+		end
+		return ('%s<font color="#%s"> %s</font>'):format(keyName, dimHex, word)
+	end
+
+	-- `sub` = this row's parent is on screen right above it, so it draws stepped
+	-- in: a bound sub-option reads as belonging to the feature over it rather
+	-- than as another top-level thing that's running.
 	local function paintRow(row: Row, entry: any, sub: boolean)
 		row.entry = entry
 		local touch = ctx:IsTouch()
-		local rowH = touch and ROW_H_TOUCH or ROW_H
 		local padX = touch and PAD_X_TOUCH or PAD_X
-		local nameX = padX + (NAME_X - PAD_X)
-		local keyW = touch and KEY_W_TOUCH or KEY_W
+		local rowH = touch and ROW_H_TOUCH or ROW_H
 		local active = entry:GetState() == true
+		local mode = entry:GetMode()
 		local keyName = Bind.name(entry:GetKey())
-		local unbound = keyName == "None"
-		if unbound then
-			-- Idle unbound rows are filtered out by Binding:IsListed (except on a
-			-- phone — see below), so this is a keyless bind that's currently ON (an
-			-- "Always", or a toggle switched on from the menu) or a `Hud = true`
-			-- override. The em dash is the honest answer to "what key?" — there
-			-- isn't one, it's running anyway.
-			keyName = "—"
-		end
-		-- On a phone an OFF, unbound feature is listed too, as something to tap —
-		-- dimmed, so the list still reads as "what's on" at a glance.
-		local idle = unbound and not active
+		local hasKey = keyName ~= "None"
 		local indent = sub and SUB_X or 0
+		row.active = active
+
 		local text = escape(entry:GetLabel() or "Bind")
-		-- Sub-options that are on but rolled up into this row. The count is the
-		-- whole point of the roll-up: "Aimbot +3" says the feature is running with
-		-- more than its bare minimum on, without spending three rows saying it.
+		-- Sub-options that are on but rolled up into this row: "Aimbot +3" says
+		-- the feature is running with more than its bare minimum on, without
+		-- spending three rows saying it.
 		local extra = entry.CountActive and entry:CountActive() or 0
 		if extra > 0 then
-			text ..= ('<font color="#%s"> +%d</font>'):format(colors.text_dim:ToHex(), extra)
+			text ..= ('<font color="#%s"> +%d</font>'):format(dimHex, extra)
 		end
-		row.frame.Size = UDim2.new(1, 0, 0, rowH)
 		row.name.Text = text
-		row.name.TextSize = touch and 13 or 12
-		row.name.Position = UDim2.fromOffset(nameX + indent, 0)
-		row.name.Size = UDim2.new(1, -(nameX + indent + keyW + padX), 1, 0)
-		row.name.TextColor3 = active and colors.text or (idle and colors.text_dim or colors.text_muted)
+		row.name.TextColor3 = active and colors.text or colors.text_muted
+
+		-- Lit = live, on both devices: accent fill, knockout text, the stroke
+		-- folded into the fill.
+		row.chip.BackgroundColor3 = active and ctx.Accent or colors.control
+		row.chipStroke.Color = active and ctx.Accent or colors.border
+		row.chip.Position = UDim2.new(1, -padX, 0.5, 0)
+
 		if touch then
-			row.key.Text = entry:GetMode():lower()
+			-- The chip says the STATE, because here the row is the control and the
+			-- question is "is this on, and what happens if I tap it?":
+			--   Toggle   ON / OFF       Hold   HOLD       Press   TAP
+			--   Always   ALWAYS — on, and the row can't change that
+			local word = if mode == "Hold" then "HOLD"
+				elseif mode == "Press" then "TAP"
+				elseif mode == "Always" then "ALWAYS"
+				elseif active then "ON"
+				else "OFF"
+			row.chip.Text = word
+			row.chip.TextColor3 = active and colors.knockout or colors.text_dim
+			row.chip.TextSize = 10
+			row.chip.FontFace = Theme.Font.Bold
+			row.chip.AutomaticSize = Enum.AutomaticSize.None
+			row.chip.Size = UDim2.fromOffset(PILL_W, PILL_H)
+			row.chip.BackgroundColor3 = active and ctx.Accent or colors.control
+			row.name.Position = UDim2.fromOffset(padX, 0)
+			row.name.Size = UDim2.new(1, -(padX + PILL_W + padX + 8), 1, 0)
+			row.name.TextSize = 13
+			-- Every row is a tile, so the list reads as a column of buttons; a
+			-- running one lifts a surface step. A sub-option's tile is inset from
+			-- the left (the list is right-aligned — fitChrome) rather than its text,
+			-- because at tile sizes a text indent is invisible.
+			row.frame.Size = UDim2.new(1, -indent, 0, rowH)
+			row.frame.BackgroundColor3 = active and colors.pop or colors.card
+			row.frame.BackgroundTransparency = 0
 		else
-			row.key.Text = ('%s<font color="#%s"> · %s</font>')
-				:format(keyName, colors.text_dim:ToHex(), entry:GetMode():lower())
+			row.chip.Text = chipTextDesktop(keyName, hasKey, mode, active)
+			row.chip.TextColor3 = active and colors.knockout or colors.text
+			row.chip.TextSize = 10
+			row.chip.FontFace = Theme.Font.Mono
+			row.chip.AutomaticSize = Enum.AutomaticSize.X
+			row.chip.Size = UDim2.fromOffset(0, CHIP_H)
+			row.name.Position = UDim2.fromOffset(padX + indent, 0)
+			row.name.Size = UDim2.new(1, -(padX + indent + KEY_W + padX), 1, 0)
+			row.name.TextSize = sub and 11 or 12
+			row.frame.Size = UDim2.new(1, 0, 0, rowH)
+			row.frame.BackgroundColor3 = colors.card
+			paintHover(row)
 		end
-		row.key.Position = UDim2.new(1, -padX, 0.5, 0)
-		row.key.Size = UDim2.new(0, keyW, 1, 0)
-		row.key.TextColor3 = active and colors.text or colors.text_dim
-		row.dot.Position = UDim2.new(0, padX + indent, 0.5, 0)
-		row.dot.Size = sub and UDim2.fromOffset(4, 4) or UDim2.fromOffset(6, 6)
-		row.dot.BackgroundColor3 = active and ctx.Accent or colors.border
-		row.dot.BackgroundTransparency = idle and 0.5 or 0
-		row.frame.BackgroundTransparency = active and 0 or 1
 		row.frame.Visible = true
 	end
 
-	-- Scratch state for `refresh`, cleared and refilled rather than reallocated.
-	-- The repaint runs on every registry edge — a Hold key down and up is two, and
-	-- a re-key, a mode cycle, a register and a destroy each raise one — so six
-	-- fresh tables plus one per block was garbage produced on the input thread, in
-	-- a function whose entire premise is that it doesn't churn instances.
+	-- ── refresh ──────────────────────────────────────────────────────────────
+	-- Scratch state, cleared and refilled rather than reallocated: the repaint
+	-- runs on every registry edge, on the input thread.
 	local sListed: { any } = {}
 	local sIsListed: { [any]: boolean } = {}
 	local sBlocks: { any } = {}
@@ -599,9 +837,17 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local sSubRow: { [any]: boolean } = {}
 	local sActive: { any } = {}
 	local sIdle: { any } = {}
-	-- ...and the blocks with them. A block is `{ entries, active }`; the pool hands
-	-- back the same tables every repaint and `blockUsed` is the high-water mark for
-	-- this pass, so nothing beyond it is read.
+	-- Section grouping: keys in first-appearance order (registration order,
+	-- which is tab-build order), the reverse lookup, one bucket of blocks per
+	-- key. `""` is the unheaded bucket.
+	local sSecKeys: { string } = {}
+	local sSecIndex: { [string]: number } = {}
+	local sSecBuckets: { { any } } = {}
+	local sHeadAt: { [number]: string } = {} -- the section that STARTS at row i
+	-- A block is `{ entries, active, section }` — a parent and the sub-options
+	-- drawn under it, kept together through the sort so an indented row can
+	-- never land under an unrelated bind. Pooled; `blockUsed` is the high-water
+	-- mark for this pass.
 	local blockPool: { any } = {}
 	local blockUsed = 0
 	local function takeBlock(entry: any): any
@@ -614,13 +860,13 @@ return function(ctx: any, parent: Instance, opts: any): any
 		table.clear(block.entries)
 		block.entries[1] = entry
 		block.active = entry:GetState() == true
+		-- A block's section is its ROOT's, so a pair can't split across one.
+		block.section = (entry.GetSection and entry:GetSection()) or ""
 		return block
 	end
 
-	-- The parent of `entry`, but only if that parent is itself on screen — a bound
-	-- sub-option whose feature isn't listed has nothing to sit under. Hoisted out
-	-- of `refresh` because it closes over `sIsListed`, which is now stable: built
-	-- inside, it was one more closure allocated per activation edge.
+	-- The parent of `entry`, but only if that parent is itself on screen — a
+	-- bound sub-option whose feature isn't listed has nothing to sit under.
 	local function parentOf(entry: any): any?
 		local parent = entry.GetParent and entry:GetParent() or nil
 		return (parent and sIsListed[parent]) and parent or nil
@@ -636,9 +882,11 @@ return function(ctx: any, parent: Instance, opts: any): any
 		table.clear(sBlockOf)
 		table.clear(sOrder)
 		table.clear(sSubRow)
+		table.clear(sSecKeys)
+		table.clear(sSecIndex)
+		table.clear(sHeadAt)
 		blockUsed = 0
-		-- `Entries`, not `List`: nothing in this walk registers or destroys a
-		-- binding, so the copy `List` makes is pure garbage here.
+		-- `Entries`, not `List`: nothing in this walk mutates the registry.
 		for _, entry in binds:Entries() do
 			if entry:IsListed() then
 				table.insert(listed, entry)
@@ -646,24 +894,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 			end
 		end
 
-		-- Gather each listed bind under its parent, if that parent made the list
-		-- too. A bound sub-option whose feature isn't on screen (nothing switched
-		-- on, no key on the parent) is its own top-level row — there's nothing for
-		-- it to sit under, and hiding it would lose a key the user chose.
-		--
-		-- Blocks keep parent and children together through the cap sort below, so
-		-- an indented row can never end up under an unrelated bind (or, worse, be
-		-- the row that got cut).
-		--
+		-- Gather each listed bind under its parent, if that parent is listed too.
 		-- TWO passes, because one pass silently depended on registration order: a
-		-- child seen before its parent found no block to join, opened its own, and
-		-- then the parent opened a second one — so the two drew as unrelated
-		-- top-level rows and the roll-up count went missing. Parent-first is what
-		-- `Parent = true` on a card produces, but an explicit `Parent = "aimbot"`
-		-- is free to name a feature built in a later group, and did.
+		-- child seen before its parent opened its own block, then the parent
+		-- opened a second one, and the pair drew as two unrelated rows.
 		local blocks, blockOf = sBlocks, sBlockOf
 		table.clear(blocks)
-		-- Roots first, in registration order — that's the order of the panel.
 		for _, entry in listed do
 			if not parentOf(entry) then
 				local block = takeBlock(entry)
@@ -671,14 +907,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 				table.insert(blocks, block)
 			end
 		end
-		-- ...then everything that sits under one of them, attached to its nearest
-		-- ancestor that owns a block. The tree is documented as shallow, so that
-		-- ancestor is normally just the parent — but walking up rather than reading
-		-- `blockOf[parent]` once keeps this independent of the order pass 2 happens
-		-- to visit a deeper chain in, and flattening a deep chain into its root's
-		-- block is what the renderer draws anyway (one level of indent). The hop
-		-- bound is the cycle guard: `Parent` is matched by name, so nothing stops a
-		-- menu from pointing two binds at each other.
+		-- ...then everything under one of them, attached to its nearest ancestor
+		-- that owns a block. The hop bound is the cycle guard: `Parent` is matched
+		-- by name, so nothing stops a menu from pointing two binds at each other.
 		for _, entry in listed do
 			if not blockOf[entry] then
 				local block: any = nil
@@ -702,127 +933,255 @@ return function(ctx: any, parent: Instance, opts: any): any
 			end
 		end
 
+		-- Filed under the part of the menu each came from (`Binding:GetSection`
+		-- — the tab's name, so no menu author declares a thing).
+		for _, block in blocks do
+			local key: string = block.section or ""
+			local index = sSecIndex[key]
+			if not index then
+				index = #sSecKeys + 1
+				sSecKeys[index] = key
+				sSecIndex[key] = index
+				local bucket = sSecBuckets[index]
+				if not bucket then
+					bucket = {}
+					sSecBuckets[index] = bucket
+				end
+				table.clear(bucket)
+			end
+			table.insert(sSecBuckets[index], block)
+		end
+
+		local touch = ctx:IsTouch()
 		-- Under the cap, rows stay in registration order so nothing jumps around
 		-- while you read it. Over the cap, what's LIVE has to be the part you can
-		-- see, so active binds float to the top (relative order preserved).
+		-- see, so active blocks float to the top of their section.
 		--
-		-- Partitioned through two scratch lists and written back into `blocks`
-		-- rather than rebound to a fresh array: `blocks` IS the scratch table, and
-		-- pointing the local somewhere else would leave it holding the pooled
-		-- blocks from the previous repaint.
-		if #listed > maxRows then
-			table.clear(sActive)
-			table.clear(sIdle)
-			for _, block in blocks do
-				table.insert(block.active and sActive or sIdle, block)
-			end
-			table.clear(blocks)
-			for _, block in sActive do
-				table.insert(blocks, block)
-			end
-			for _, block in sIdle do
-				table.insert(blocks, block)
+		-- NOT ON TOUCH. There the rows are buttons the user is aiming a thumb at,
+		-- and the tap that switches a feature on is exactly the event that would
+		-- sort it to the top and slide everything else under the finger. A phone
+		-- list scrolls instead (fitList), so nothing is unreachable for want of it.
+		if not touch and #listed > maxRows then
+			for i = 1, #sSecKeys do
+				local bucket = sSecBuckets[i]
+				table.clear(sActive)
+				table.clear(sIdle)
+				for _, block in bucket do
+					table.insert(block.active and sActive or sIdle, block)
+				end
+				table.clear(bucket)
+				for _, block in sActive do
+					table.insert(bucket, block)
+				end
+				for _, block in sIdle do
+					table.insert(bucket, block)
+				end
 			end
 		end
 
 		local order, subRow = sOrder, sSubRow
-		for _, block in blocks do
-			for i, entry in block.entries do
-				table.insert(order, entry)
-				subRow[entry] = i > 1
+		for i = 1, #sSecKeys do
+			local first = true
+			for _, block in sSecBuckets[i] do
+				for j, entry in block.entries do
+					table.insert(order, entry)
+					subRow[entry] = j > 1
+					if first then
+						sHeadAt[#order] = sSecKeys[i]
+						first = false
+					end
+				end
 			end
 		end
 
-		local shown = math.min(#order, maxRows)
+		-- One section on screen is no grouping at all — the common case.
+		local showHeads = #sSecKeys > 1
+		local rowH = touch and ROW_H_TOUCH or ROW_H
+		local headH = touch and HEAD_H_TOUCH or HEAD_H
+		local gap = touch and ROW_GAP_TOUCH or 0
+		-- `MaxRows` is a DESKTOP cap: past ten rows a readout stops being one. On
+		-- a phone a row that isn't drawn is a feature the user cannot reach, so
+		-- every listed bind is drawn and the height budget turns the rest into a
+		-- scroll.
+		local shown = touch and #order or math.min(#order, maxRows)
+		-- `content` is summed as we go: it's what `fitList` sizes the frame and
+		-- canvas from, and every number in it is one this loop just wrote.
+		local slot, headsUsed, content = 0, 0, LIST_PAD * 2
 		for i = 1, shown do
+			local section = showHeads and sHeadAt[i] or nil
+			if section ~= nil and section ~= "" then
+				headsUsed += 1
+				local head = heads[headsUsed]
+				if not head then
+					head = newHead()
+					heads[headsUsed] = head
+				end
+				slot += 1
+				local isFirst = headsUsed == 1 and i == 1
+				paintHead(head, section, slot, isFirst)
+				content += headH + (isFirst and 0 or 6)
+				if slot > 1 then
+					content += gap
+				end
+			end
 			local row = rows[i]
 			if not row then
 				row = newRow(i)
 				rows[i] = row
 			end
 			paintRow(row, order[i], subRow[order[i]] == true)
+			slot += 1
+			row.frame.LayoutOrder = slot
+			content += rowH
+			if slot > 1 then
+				content += gap
+			end
 		end
 		for i = shown + 1, #rows do
 			rows[i].frame.Visible = false
 			rows[i].entry = nil -- a hidden row can't be tapped into a stale bind
 		end
+		for i = headsUsed + 1, #heads do
+			heads[i].label.Visible = false
+		end
 		empty.Visible = shown == 0
+		if shown == 0 then
+			content += empty.Size.Y.Offset
+		end
 		local rest = #order - shown
 		more.Visible = rest > 0
-		-- Only formatted when it's actually on screen: the overflow line is empty
-		-- in the overwhelmingly common case, and this runs on every key edge.
 		if rest > 0 then
 			more.Text = ("+%d more"):format(rest)
+		end
+		fitList(content)
+		if shown > 0 then
+			latchDefault()
 		end
 	end
 
 	local unsubscribeBinds = binds:Observe(refresh)
 	local unsubscribeAccent = ctx:RegisterAccent(function(accent)
 		rail.BackgroundColor3 = accent
-		refresh() -- the live dots are the only accent inside the list
+		refresh() -- the lit chips are the only accent inside the list
 	end)
 
-	-- ── position + drag ──────────────────────────────────────────────────────
-	-- Offset-only position, rounded to whole pixels: the panel is small and full
-	-- of 11px text, and a half-pixel origin is exactly what makes that text look
-	-- soft (see Window.lua's snapToPixels).
+	-- ── position ─────────────────────────────────────────────────────────────
+	-- Offset-only, whole pixels: the panel is small and full of 11px text, and a
+	-- half-pixel origin is what makes that text look soft.
 	--
 	-- Until someone puts it somewhere (an `X`/`Y` option, a drag, SetPosition, a
 	-- restored flag) the panel rests at a DEFAULT that depends on the device: the
-	-- desktop's (16, 140), or on a phone the right edge, vertically centred — the
-	-- desktop spot lands on the left thumbstick, and the right-hand strip is the
-	-- one most games leave empty. A saved position always wins over either.
+	-- desktop's (16, 140), or on a phone the right edge near the top — the
+	-- desktop spot lands on the left thumbstick. Near the TOP, not centred: the
+	-- panel's height is whatever the registry lists, and a centred panel slides
+	-- every time that changes, under the thumb that caused it.
 	local hasPos = tonumber(opts.X) ~= nil or tonumber(opts.Y) ~= nil
 	local pos = Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
 	local function defaultPos(): Vector2
 		local vp = (parent :: any).AbsoluteSize
 		local size = root.AbsoluteSize
 		if ctx:IsTouch() and vp and vp.X > 0 then
-			return Vector2.new(vp.X - size.X - MARGIN, (vp.Y - size.Y) / 2)
+			return Vector2.new(vp.X - size.X - MARGIN, math.round(vp.Y * 0.14))
 		end
 		return Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
 	end
+	-- Once derived against a panel with rows in it the default is frozen — it
+	-- becomes a position like any other, and `place`'s clamp still applies.
+	local defaultLatched = false
+	-- The panel may be TUCKED off the edge, and on a phone that's the point of
+	-- being able to move it at all: a 226px hotbar over a 360px landscape
+	-- viewport is a third of the screen, and the only thing a user could do
+	-- about it was collapse it (which takes the rows away — the rows ARE the
+	-- feature there). So the clamp keeps a `peek` strip on screen instead of the
+	-- whole panel: push it out to the left or right and a grab strip stays
+	-- behind, wide enough to be a thumb target, to pull it back with.
+	--
+	-- Two rules, both of them about being able to get it back:
+	--  * The strip is only conceded to a panel someone has PLACED (`hasPos`) —
+	--    a drag, `SetPosition`, `X`/`Y`, or a restored record, which is what
+	--    makes a tuck survive a reload. A panel that has never been placed
+	--    lands whole on screen, so no default and no rotation can tuck one on
+	--    the user's behalf.
+	--  * The top edge concedes nothing, so the ceiling is unchanged. The header
+	--    is the only part of a phone's panel that drags (a moving press in the
+	--    list is the list's scroll), and tucking UP takes the header off first
+	--    — the strip left behind would be rows, which scroll instead of
+	--    dragging, and the panel could not be pulled back. Tucking down leads
+	--    with the header, so it's safe, and it's the direction a hotbar in the
+	--    way actually wants to go.
 	local function place(p: Vector2?)
 		local target: Vector2 = p or defaultPos()
 		local vp = (parent :: any).AbsoluteSize
 		local size = root.AbsoluteSize
 		if vp and vp.X > 0 and size.X > 0 then
-			target = Vector2.new(
-				math.clamp(target.X, MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)),
-				math.clamp(target.Y, MARGIN, math.max(MARGIN, vp.Y - size.Y - MARGIN))
-			)
+			local peek = if ctx:IsTouch() then PEEK_TOUCH else PEEK
+			local loX, hiX = MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)
+			local loY, hiY = MARGIN, math.max(MARGIN, vp.Y - size.Y - MARGIN)
+			if hasPos then
+				local head = if ctx:IsTouch() then HEADER_H_TOUCH else HEADER_H
+				local strip = math.min(peek, size.X)
+				loX = math.min(loX, strip - size.X)
+				hiX = math.max(hiX, vp.X - strip)
+				-- Down to a header, never past it: that's the handle back.
+				hiY = math.max(hiY, vp.Y - math.min(head, size.Y))
+			end
+			target = Vector2.new(math.clamp(target.X, loX, hiX), math.clamp(target.Y, loY, hiY))
 		end
 		pos = Vector2.new(math.round(target.X), math.round(target.Y))
 		root.Position = UDim2.fromOffset(pos.X, pos.Y)
 	end
-	-- Re-place from the default while nobody has chosen a spot, from `pos` after.
+	-- Re-fit first: the list's ceiling comes off the viewport too, and the clamp
+	-- would otherwise run against the size the panel had before the screen moved.
 	local function replace()
-		place(hasPos and pos or nil)
+		fitList()
+		place((hasPos or defaultLatched) and pos or nil)
 	end
 	replace()
-	-- A viewport (or a collapse) that shrinks under the panel would otherwise
-	-- leave it hanging off an edge with nothing to grab.
-	table.insert(connections, (parent :: any):GetPropertyChangedSignal("AbsoluteSize"):Connect(replace))
+	-- Deferred: the default reads `root.AbsoluteSize`, and the rows the caller is
+	-- still building haven't been measured on this frame.
+	local latchToken = 0
+	latchDefault = function()
+		if hasPos or defaultLatched then
+			return
+		end
+		latchToken += 1
+		local token = latchToken
+		task.defer(function()
+			if destroyed or hasPos or defaultLatched or token ~= latchToken then
+				return
+			end
+			if root.AbsoluteSize.Y <= 0 then
+				return
+			end
+			place(nil)
+			defaultLatched = true
+		end)
+	end
+	-- A viewport change (rotation, resized window) invalidates a latched default:
+	-- the edge and the fraction it was derived from both moved.
+	table.insert(connections, (parent :: any):GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		defaultLatched = false
+		replace()
+		latchDefault()
+	end))
 	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(replace)
-	-- The device answer moving (Context:OnTouch): rows re-lay out, the listing rule
-	-- changes (Binding:IsListed), and an unplaced panel moves to the other default.
+	-- The device answer moving (Context:OnTouch): chrome and rows re-lay out, the
+	-- listing rule's meaning changes, and an unplaced panel moves to the other
+	-- default.
 	local unsubscribeTouch = ctx:OnTouch(function()
+		fitChrome()
+		defaultLatched = false
 		refresh()
 		replace()
+		latchDefault()
 	end)
 
-	-- Both cards drag as one unit — the handle is `root`, so the stat bar and the
-	-- gap between them are grabbable too (the rows and pills are plain labels, so
-	-- input reaches it through them). Only the caret button is a click target.
-	local dragging = false
-	local dragStart = Vector2.zero
-	local dragOrigin = pos
-	local dragMoved = false
+	-- ── drag + tap ───────────────────────────────────────────────────────────
 	-- The HUD is on top, so a press on it is the HUD's and nothing else's. The
-	-- window's titlebar asks this before it starts its own drag: `Active` above is
-	-- the engine's half of that, but the titlebar is a plain Frame dragging off
-	-- `InputBegan`, and two drags fighting over one mouse for a whole gesture is
-	-- not a failure worth leaving to hit-test order (util/Context.lua).
+	-- window's titlebar asks this before it starts its own drag: `Active` is the
+	-- engine's half, but the titlebar is a plain Frame dragging off `InputBegan`,
+	-- and two drags fighting over one mouse is not worth leaving to hit-test
+	-- order (util/Context.lua).
 	local unsubscribeDrag = ctx:RegisterDragPriority(function(point: Vector2): boolean
 		if not root.Visible then
 			return false
@@ -831,15 +1190,53 @@ return function(ctx: any, parent: Instance, opts: any): any
 		return point.X >= origin.X and point.X <= origin.X + size.X
 			and point.Y >= origin.Y and point.Y <= origin.Y + size.Y
 	end)
-	root.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragMoved = false
-			dragStart = Vector2.new(input.Position.X, input.Position.Y)
-			dragOrigin = pos
+
+	-- One rule, and it is the same rule the window has: a press that stays put
+	-- is a tap on whatever it landed on, a press that moves is a drag of the
+	-- panel. The one exception is a phone's list, where a press that moves is
+	-- the ScrollingFrame's scroll — the panel moves by its header and stat bar
+	-- there, which are always on screen and never scroll. Nothing waits on a
+	-- timer: a long press used to grab the panel, and a thumb resting on a
+	-- toggle for a third of a second was dragging the hotbar instead of flipping
+	-- the switch.
+	local dragging = false
+	local dragStart = Vector2.zero
+	local dragOrigin = pos
+	local dragMoved = false
+	local gestureInput: InputObject? = nil
+	local gestureInList = false
+	local scrolling = false
+	local function grab()
+		dragMoved = true
+		hasPos = true -- the user has an opinion about where it goes now
+		pressedRow = nil
+	end
+	local function beginGesture(input: InputObject, inList: boolean)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
 		end
+		-- The list is inside `root`, so one press reaches both handlers. Whichever
+		-- lands first opens the gesture; the other only adds what it knows.
+		if gestureInput == input then
+			gestureInList = gestureInList or inList
+			return
+		end
+		gestureInput = input
+		gestureInList = inList
+		dragging = true
+		dragMoved = false
+		scrolling = false
+		dragStart = Vector2.new(input.Position.X, input.Position.Y)
+		dragOrigin = pos
+	end
+	root.InputBegan:Connect(function(input)
+		beginGesture(input, false)
 	end)
+	list.InputBegan:Connect(function(input)
+		beginGesture(input, true)
+	end)
+
 	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
 		if not dragging then
 			return
@@ -847,13 +1244,16 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
 			local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
-			if not dragMoved and math.abs(delta.X) + math.abs(delta.Y) > SLOP then
-				dragMoved = true
-				hasPos = true -- the user has an opinion about where it goes now
-				-- A press that became a drag was never a tap — and a Hold it started
-				-- has to let go, or the feature runs for as long as the panel is held.
+			if not dragMoved and not scrolling and math.abs(delta.X) + math.abs(delta.Y) > SLOP then
+				-- A press that moved was never a tap — and a Hold it started has to
+				-- let go, or the feature runs for as long as the panel is held.
 				pressedRow = nil
 				endHold()
+				if gestureInList and ctx:IsTouch() then
+					scrolling = true -- the ScrollingFrame's, not ours
+				else
+					grab()
+				end
 			end
 			-- The panel only moves once the gesture is a drag: a thumb that wobbles
 			-- 3px on a tap must not nudge the hotbar it's tapping.
@@ -867,9 +1267,14 @@ return function(ctx: any, parent: Instance, opts: any): any
 			or input.UserInputType == Enum.UserInputType.Touch then
 			local wasDragging = dragging
 			dragging = false
-			-- Announced on RELEASE, not per frame: `place` runs on every mouse move
-			-- and the position is part of the HUD's persisted record, so a host
-			-- writing on every change would write sixty times a second across a drag.
+			if gestureInput == input then
+				gestureInput = nil
+			end
+			gestureInList = false
+			scrolling = false
+			-- Announced on RELEASE, not per frame: the position is part of the HUD's
+			-- persisted record, and a host writing on every change would write
+			-- sixty times a second across a drag.
 			if wasDragging and dragMoved then
 				ctx:User(changed)
 			end
@@ -882,11 +1287,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 			else
 				endHold()
 			end
-			-- Clear the drag flag here rather than only in the caret's handler. The
-			-- caret is a TextButton and sinks input, so a click on it never reaches
-			-- root.InputBegan to reset the flag — after any drag of the panel, the
-			-- NEXT caret click would be swallowed as "that was a drag". Deferred
-			-- because Activated fires on this same release and has to still see it.
+			-- The caret is a TextButton and sinks input, so a click on it never
+			-- reaches root.InputBegan to reset the flag — after any drag, the NEXT
+			-- caret click would be swallowed as "that was a drag". Deferred because
+			-- Activated fires on this same release and has to still see it.
 			task.defer(function()
 				dragMoved = false
 			end)
@@ -894,11 +1298,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end))
 
 	-- ── FPS / ping ───────────────────────────────────────────────────────────
-	-- One connection, sampled twice a second: a per-frame label write would cost
-	-- more than the whole rest of the HUD, and a jittering number is unreadable
-	-- anyway. Skipped entirely while hidden — but NOT while collapsed: the bar is
-	-- its own card outside the collapsing body and stays on screen, so it has to
-	-- keep counting.
+	-- One connection, sampled twice a second: a per-frame label write costs more
+	-- than the whole rest of the HUD, and a jittering number is unreadable.
+	-- Skipped while hidden — but NOT while collapsed: the bar stays on screen.
 	local visible = opts.Visible ~= false
 	local collapsed = opts.Collapsed == true
 	if showFps or showPing then
@@ -918,8 +1320,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 				setStat("FPS", tostring(fps))
 			end
 			if showPing then
-				-- Not every executor/place exposes the network stats item, so this
-				-- degrades to a dash rather than erroring every half second.
+				-- Not every executor/place exposes the network stats item.
 				local ok, ms = pcall(function()
 					return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
 				end)
@@ -944,16 +1345,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 			return
 		end
 		value = value ~= false
-		-- Already there, and the panel agrees — nothing to do. Without this,
-		-- `Window:SetHudVisible(true)` on a HUD that's already up replayed the whole
-		-- entrance (fade to invisible, scale to 0.94, pop back) and announced a
-		-- visibility change that hadn't happened, which the settings switch and any
-		-- host watching OnHudVisible both had to filter out on their own.
-		--
-		-- `root.Visible` is part of the test on purpose rather than `value ==
-		-- visible` alone: the deferred first reveal at the bottom of this file calls
-		-- SetVisible(true) precisely when `visible` is *already* true (it comes from
-		-- the options) and the panel is still hidden, and that call has to go through.
+		-- Already there, and the panel agrees — nothing to do. `root.Visible` is
+		-- part of the test on purpose: the deferred first reveal at the bottom of
+		-- this file calls SetVisible(true) precisely when `visible` is already
+		-- true and the panel is still hidden, and that call has to go through.
 		if value == visible and root.Visible == value then
 			return
 		end
@@ -961,19 +1356,15 @@ return function(ctx: any, parent: Instance, opts: any): any
 		if value then
 			root.Visible = true
 			-- Repaint once the fade lands: rows that changed state while the panel
-			-- was hidden were driven by the fade's snapshot, not by their own paint,
-			-- so their fill is stale until the snapshot is released at alpha 0.
+			-- was hidden were driven by the fade's snapshot, not by their own paint.
 			if animate == false then
 				fade:Set(0)
 				panelScale.Scale = 1
 				refresh()
 			else
-				-- Back to rest FIRST, which releases the snapshot the hide left held.
-				-- Rows registered while the panel was hidden aren't in that snapshot, so
-				-- without this they sit fully opaque while everything around them fades
-				-- in. Set(0) restores the old rows to their own resting transparencies
-				-- and drops the cache; the Set(1) below then re-reads a tree that
-				-- includes the new rows.
+				-- Back to rest FIRST, which releases the snapshot the hide left held:
+				-- rows registered while hidden aren't in it and would sit fully
+				-- opaque while everything around them fades in.
 				fade:Set(0)
 				fade:Set(1)
 				panelScale.Scale = 0.94
@@ -1016,8 +1407,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		collapsed = value
 		setCollapsedHeight(collapsed, animate ~= false)
 		setHeaderSquared(not collapsed, (collapsed and animate ~= false) and Tween.Slide.Time or 0)
-		-- `animate = false` (a config load) has to snap the caret too, or the panel
-		-- restores collapsed while its arrow spins into place a beat later.
+		-- `animate = false` (a config load) has to snap the caret too.
 		if animate == false then
 			caret.Rotation = collapsed and 180 or 0
 		else
@@ -1073,8 +1463,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 			handle:SetVisible(value.Visible == true, false)
 		end
 		-- A record that only moved the panel gets no notification from the setters
-		-- above (`place` isn't one of them), and a host mirroring the HUD needs to
-		-- hear about a restore either way. Deduped downstream by value.
+		-- above, and a host mirroring the HUD needs to hear about a restore either
+		-- way. Deduped downstream by value.
 		changed()
 	end
 
@@ -1113,10 +1503,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 	end
 	-- Reveal on a deferred pass: the fade has to snapshot a finished panel, and
 	-- the caller's controls (and therefore its binds) are usually still being
-	-- built at this point.
-	-- `not root.Visible` so a caller that already showed it on this frame
-	-- (Window:SetHudVisible, which builds and shows in one go) doesn't get the
-	-- entrance played twice.
+	-- built at this point. `not root.Visible` so a caller that already showed it
+	-- on this frame doesn't get the entrance played twice.
 	if visible then
 		task.defer(function()
 			if not destroyed and visible and not root.Visible then

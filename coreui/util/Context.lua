@@ -378,12 +378,18 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 	-- A bind is a key AND a mode (Toggle / Hold / Press / Always / None), so it
 	-- persists as a pair via the handle's GetFlag/SetFlag. Configs written before
 	-- modes existed hold a bare key name, so decode still accepts a plain string.
+	-- `pinned` (the phone's "list me in the HUD" — util/Bind.lua `IsPinned`) is
+	-- written only when set, so a desktop config keeps the shape it always had.
 	bind = {
 		encode = function(v)
 			if typeof(v) == "EnumItem" then
 				return { key = Bind.name(v), mode = "None" }
 			elseif type(v) == "table" then
-				return { key = Bind.name(v.Key), mode = v.Mode or "None" }
+				local record: any = { key = Bind.name(v.Key), mode = v.Mode or "None" }
+				if v.Pinned == true then
+					record.pinned = true
+				end
+				return record
 			end
 			return { key = "None", mode = "None" }
 		end,
@@ -391,7 +397,7 @@ local Codec: { [string]: { encode: (any) -> any, decode: (any) -> any } } = {
 			if type(v) == "string" then
 				return { Key = Bind.parse(v) }
 			elseif type(v) == "table" then
-				return { Key = Bind.parse(v.key), Mode = v.mode }
+				return { Key = Bind.parse(v.key), Mode = v.mode, Pinned = v.pinned == true }
 			end
 			return { Key = Bind.parse(v) } -- anything unrecognized parses to Unknown
 		end,

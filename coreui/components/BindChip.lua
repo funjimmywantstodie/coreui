@@ -26,6 +26,21 @@
 -- bindable from the UI — it's how you operate the menu (and the chip) — but
 -- `handle:Set(Enum.UserInputType.MouseButton1)` still works for a caller that
 -- really wants it.
+--
+-- ON A PHONE the key half is a PIN instead:
+--
+--     ┌──────┬──────┐
+--     │  📌  │ hold │
+--     └──────┴──────┘
+--
+-- Nothing a phone user can press will ever land in a key half, so it used to be
+-- hidden there — and with it went the only way of saying "I want to reach this
+-- feature without opening the menu", which is what a key IS on a desktop. The
+-- bind HUD then had no signal to list by and fell back to listing every idle
+-- toggle in the menu. The pin is that signal (util/Bind.lua `Binding:IsPinned`):
+-- a pinned bind sits in the HUD's list exactly the way a keyed one does, off or
+-- on, and the HUD's row is how it gets switched. A pure key picker (`Mode =
+-- "None"`) has nothing to pin, so its key half just shows the key, inert.
 
 local Services = require(script.Parent.Parent.util.Services)
 
@@ -34,6 +49,7 @@ local UserInputService = Services.UserInputService
 local Create = require(script.Parent.Parent.util.Create)
 local Theme = require(script.Parent.Parent.Theme)
 local Bind = require(script.Parent.Parent.util.Bind)
+local Icons = require(script.Parent.Parent.Icons)
 
 -- Mouse buttons the click-to-bind UI will capture. MB1 is left out on purpose
 -- (see the header) — it stays the "operate the UI" button.
@@ -154,26 +170,28 @@ return function(ctx: any, opts: any): (Frame, any)
 	end
 
 	-- ── touch ────────────────────────────────────────────────────────────────
-	-- On a device with no keyboard the key half can never be filled: nothing the
-	-- user can press will ever land in it. `HideKeyOnTouch` (a Toggle's chip)
-	-- drops it and keeps only the mode half, wherever there's more than one mode
-	-- to cycle — the row gets the chip's width back, and a phone can still put
-	-- Aim Key on hold / toggle / always. Without a mode half the chip goes
-	-- entirely. A Keybind control's chip keeps its key half on screen (it's the
-	-- control's whole body) but it's INERT — tapping it used to arm listening,
-	-- and on a phone nothing ends that but a tap elsewhere. Per call, like every
-	-- touch decision, and re-applied when the device answer moves.
-	local hideKeyOnTouch = opts.HideKeyOnTouch == true
+	-- On a device with no keyboard the key half can never be filled, so it turns
+	-- into the PIN (see the header): a glyph that lights when the bind is pinned
+	-- to the HUD, tapped to flip it. A pure picker (`Mode = "None"`) has nothing
+	-- to pin — it never activates, so it never lists — and keeps showing its key,
+	-- INERT: tapping it used to arm listening, and on a phone nothing ends that
+	-- but a tap elsewhere. Per call, like every touch decision, and re-applied
+	-- when the device answer moves.
+	local pinnable = mode ~= "None"
+	local pinIcon = Icons.new("pin", compact and 12 or 14, colors.text_dim)
+	pinIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	pinIcon.Position = UDim2.fromScale(0.5, 0.5)
+	pinIcon.Visible = false;
+	(pinIcon :: any).Parent = keyBtn
+	local keyMinSize = keyBtn:FindFirstChildOfClass("UISizeConstraint") :: UISizeConstraint
+	local showPin = false
 	local function applyTouch()
-		local hideKey = hideKeyOnTouch and ctx:IsTouch()
-		keyBtn.Visible = not hideKey
-		if divider then
-			divider.Visible = not hideKey
-		end
-		chip.Visible = not (hideKey and modeBtn == nil)
+		showPin = pinnable and ctx:IsTouch()
+		pinIcon.Visible = showPin
+		-- The pin half is a square-ish tap target, not a column for a key name.
+		keyMinSize.MinSize = Vector2.new(showPin and (compact and 32 or 40) or keyMin, height)
+		paint()
 	end
-	applyTouch()
-	local unsubscribeTouch = ctx:OnTouch(applyTouch)
 
 	local function overChip(): boolean
 		return hovered[keyBtn] == true or (modeBtn ~= nil and hovered[modeBtn] == true)
@@ -184,6 +202,7 @@ return function(ctx: any, opts: any): (Frame, any)
 		Mode = mode,
 		Modes = modes,
 		Default = opts.Default,
+		Pinned = opts.Pinned,
 		Where = where,
 		-- What the bind HUD calls this bind (components/Hud.lua). The consumers
 		-- pass their control's own `Name`, so nothing is declared twice.
@@ -193,6 +212,10 @@ return function(ctx: any, opts: any): (Frame, any)
 		-- the call site already wrote down.
 		Id = opts.Id,
 		Parent = opts.Parent,
+		-- Which part of the menu this bind came from, so the HUD can head its rows
+		-- with it. Inherited from the tab by components/Controls.lua; nobody writes
+		-- it by hand.
+		Section = opts.Section,
 		Hud = opts.Hud,
 		GetState = opts.GetState,
 		Callback = opts.OnActivate,
@@ -212,7 +235,12 @@ return function(ctx: any, opts: any): (Frame, any)
 			keyBtn.TextColor3 = ctx.Accent
 			stroke.Color = ctx.Accent
 		else
-			keyBtn.Text = Bind.name(binding:GetKey())
+			-- The pin half carries no text; the glyph is the whole label, lit while
+			-- the bind is pinned.
+			keyBtn.Text = showPin and "" or Bind.name(binding:GetKey())
+			if showPin then
+				Icons.tint(pinIcon, binding:IsPinned() and ctx.Accent or colors.text_dim)
+			end
 			-- An active bind (held, or toggled on) lights up, so a Hold key reads as
 			-- live while it's down without anything else on the row moving.
 			local active = binding:GetState()
@@ -239,6 +267,10 @@ return function(ctx: any, opts: any): (Frame, any)
 	local unsubscribeAccent = ctx:RegisterAccent(function()
 		paint()
 	end)
+	-- Wired here rather than where `applyTouch` is defined: it paints, and the
+	-- binding it paints from is only registered above.
+	applyTouch()
+	local unsubscribeTouch = ctx:OnTouch(applyTouch)
 
 	-- ── rebind ───────────────────────────────────────────────────────────────
 	-- The arming listener lives on UserInputService, so it outlives the chip's
@@ -275,7 +307,15 @@ return function(ctx: any, opts: any): (Frame, any)
 			return -- already armed; a left click on the chip is a no-op, not a bind
 		end
 		if ctx:IsTouch() then
-			return -- no keyboard to listen for (see the touch block above)
+			-- No keyboard to listen for. The half is the pin here (see the touch
+			-- block above) — a tap flips it — or, on a picker, nothing at all.
+			if showPin then
+				ctx:User(function()
+					binding:SetPinned(not binding:IsPinned())
+				end)
+				paint()
+			end
+			return
 		end
 		listening = true
 		-- Claim key capture so the window's toggle-key listener (and every other
@@ -402,16 +442,26 @@ return function(ctx: any, opts: any): (Frame, any)
 	function handle:SetEnabled(enabled: boolean)
 		binding:SetEnabled(enabled)
 	end
-	-- Config save/load: a bind is a key AND a mode, so it persists as both rather
-	-- than through the plain :Get()/:Set() pair (util/Context.lua `bind` codec).
+	-- Pinned to the bind HUD (the phone's key — see the header). Settable from
+	-- code on any device; the chip only draws the pin on touch.
+	function handle:IsPinned(): boolean
+		return binding:IsPinned()
+	end
+	function handle:SetPinned(pinned: boolean)
+		binding:SetPinned(pinned)
+		paint()
+	end
+	-- Config save/load: a bind is a key AND a mode (and a pin), so it persists as
+	-- a record rather than through the plain :Get()/:Set() pair (util/Context.lua
+	-- `bind` codec).
 	function handle:GetFlag(): any
-		return { Key = binding:GetKey(), Mode = binding:GetMode() }
+		return { Key = binding:GetKey(), Mode = binding:GetMode(), Pinned = binding:IsPinned() }
 	end
 	function handle:SetFlag(value: any)
 		if typeof(value) == "EnumItem" then
 			binding:SetKey(value)
 		elseif type(value) == "table" then
-			-- Both halves land silently and ONE notification covers the record. Left
+			-- Every half lands silently and ONE notification covers the record. Left
 			-- to themselves, SetKey reports the pre-load mode and SetMode reports
 			-- again — and SetMode no-ops (so reports nothing) when the saved mode
 			-- already matches, which is the common case. The Settings tab's picker
@@ -424,6 +474,10 @@ return function(ctx: any, opts: any): (Frame, any)
 			end
 			if value.Mode ~= nil then
 				binding:SetMode(value.Mode, true)
+				changed = true
+			end
+			if value.Pinned ~= nil then
+				binding:SetPinned(value.Pinned == true, true)
 				changed = true
 			end
 			if changed and binding.onChanged then

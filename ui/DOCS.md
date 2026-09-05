@@ -208,8 +208,8 @@ What changes, nothing of which is visible on a desktop:
 | Sliders | value in the box | also in a **bubble over the knob** while dragged, and a horizontal drag doesn't scroll the page |
 | Keyboard | — | the window **slides up** to keep a focused box above the on-screen keyboard and back on focus lost |
 | Toasts | bottom-right | **top-right**, and a tap dismisses one (that works on a desktop too) |
-| Bind chips | key + mode | a toggle's chip drops its **key half** (nothing can ever fill it) and keeps the mode half; a Keybind control's key half is inert |
-| Bind HUD | a readout | a **hotbar** — see [Bind HUD](#bind-hud) |
+| Bind chips | key + mode | the **key half is a pin** (nothing can ever fill it with a key): tap to pin the feature to the HUD; a key picker's key half is inert |
+| Bind HUD | keys, rows clickable | the chip says the **state** and the rows are the buttons — see [Bind HUD](#bind-hud) |
 | Minimized | the card | the logo tile; **long-press** it to toggle the HUD without opening the window |
 | Settings | full | no **Toggle UI** key row |
 
@@ -353,18 +353,26 @@ which needs no window at all.
 ### Bind HUD
 
 A small draggable panel that answers *"what's on right now?"* without opening the
-menu — every bind you've named plus everything currently switched on, with its
-key and mode, lit while it's live, plus FPS and ping.
+menu. It is exactly two things:
+
+> **everything you asked for by name** — a **key** on a desktop, a **pin** on a
+> phone — **plus every top-level feature that's running.**
+
+Each row is a name and one chip. On a desktop the chip is the **key** (with the
+mode after it when the mode changes what the key does); on a phone, where nothing
+can press a key, it's the **state**. Either way it lights in the accent while the
+bind is live, exactly like the chip on the control it came from — and tapping
+the row does what the mode says, on both devices.
 
 ```
 ┌────────────────────────────────┐
-│ ▍ Active Binds               ⌃ │   drag anywhere · caret collapses it
+│ ▍ Keybinds                   ⌃ │   drag it · caret collapses it
 ├────────────────────────────────┤
-│ ● Auto Parry         F · toggle│   ← lit: running right now
-│ ○ Aim Assist         E · hold  │
-│ ● Aimbot +3          X · always│   ← +3 sub-options on, rolled up
-│  ◦ Wall Check        V · toggle│   ← a sub-option you gave a key
-│ ● Infinite Jump      — · toggle│   ← on, but never bound to a key
+│ Auto Parry              [ F ]  │   ← lit: running right now
+│ Aim Assist         [ E hold ]  │   hold E
+│ Aimbot +3           [ always ] │   ← on, +3 sub-options rolled up
+│   Wall Check            [ V ]  │   ← a sub-option you gave a key
+│ Infinite Jump          [ on ]  │   ← on, never bound to a key
 └────────────────────────────────┘
 ┌────────────────────────────────┐
 │ 142 FPS   38 MS                │   ← its own bar: stays up when collapsed
@@ -375,16 +383,42 @@ The readout is a **separate card**, not a row in the list — it isn't a bind, a
 keeping it outside the panel means collapsing the binds away (the caret) leaves
 your frames and ping on screen. Both cards drag as one.
 
+**Rows do what their mode says.** A click or tap on a `Toggle` row flips it, on a
+`Press` row fires it once; press-and-hold a `Hold` row holds it and lifting
+releases it — including a finger that slides off the row. An `Always` row is on
+and stays on (change its mode from the menu). It reaches `OnFlagChanged` as
+`source = "user"`, exactly like the key. A press that **stays put is a tap; one
+that moves drags the panel** — the same rule the window has, with nothing on a
+timer. (Inside a phone's list a moving press scrolls it instead; the panel drags
+by its header and the FPS bar there.)
+
+**It can be tucked off the screen edge.** Drag the panel past the left or right
+edge and it keeps going — a grab strip (44px on a phone, 28px on a desktop)
+stays behind to pull it back with, so a hotbar that's in the way can be parked
+against the edge instead of collapsed away. Downward it stops with its header
+showing; upward it stops at the top edge, because the header is the part you
+drag and a panel tucked past it could not be recovered. Only a panel *someone
+placed* may be tucked — a drag, `SetPosition`, `X`/`Y`, or a restored config
+(so a tuck survives a reload). Defaults and screen rotations always land the
+whole panel on screen.
+
+**The list is capped by height and scrolls.** `MaxRows` says how many rows
+*exist* on a desktop (and therefore what `+N more` counts); how many you see at
+once is whatever fits between the panel header and the bottom of the screen, so
+the panel never runs off the edge of a small window or a phone. Past that the
+bind list scrolls — the `+N more` line sits *below* the scroll area, so the line
+telling you there's more is never itself the part you can't see.
+
 It's **off by default**. Turn it on with `Hud = true` at build time, from the
 Settings tab's *Keybind HUD* switch, or in code:
 
 ```lua
 Uranium:CreateWindow({ Hud = true })      -- defaults
 Uranium:CreateWindow({ Hud = {            -- or tune it
-    Title    = "Active Binds",  -- header text     (default "Active Binds")
-    X        = 16,              -- offset from the left  (default 16; on a phone: the right edge, centred)
+    Title    = "Keybinds",      -- header text     (default "Keybinds")
+    X        = 16,              -- offset from the left  (default 16; on a phone: the right edge, near the top)
     Y        = 140,             -- offset from the top   (default 140)
-    MaxRows  = 10,              -- rows before "+N more" (default 10)
+    MaxRows  = 10,              -- desktop only: rows before "+N more" (default 10)
     Visible  = true,            -- start shown           (default true)
     Collapsed = false,          -- start collapsed to the header (default false)
     Stats    = true,            -- the FPS / ping bar    (default true)
@@ -394,25 +428,24 @@ Uranium:CreateWindow({ Hud = {            -- or tune it
 ```
 
 **You don't register anything with it.** It reads the same keybind router the
-controls use, so a feature appears the moment it has a key on it **or** is
-switched on — as long as it has a name to be listed under:
+controls use, so a feature appears the moment it has a key or a pin on it **or**
+is switched on — as long as it has a name to be listed under:
 
 | Where the bind comes from | What the HUD calls it |
 | --- | --- |
-| `Group:Toggle{ Name = "Aim" }`, once it's enabled or bound to a key | the toggle's `Name` |
+| `Group:Toggle{ Name = "Aim" }`, once it's enabled, keyed or pinned | the toggle's `Name` |
 | `Group:Keybind{ Name = "Sprint", Mode = "Hold" }` | the keybind's `Name` |
 | `Window:Bind({ Key = ..., Mode = "Toggle", Label = "Fly" })` | its `Label` |
 
-So the panel is **everything you bound + every top-level feature that's
-running**. A keyless feature you turned on from the menu lists with a `—` where
-its key would be: there isn't one, and it's running anyway. Turn it back off and
-the row goes.
+A keyless feature you turned on from the menu lists with `on` where its key
+would be: there isn't one, and it's running anyway. Turn it back off and the row
+goes.
 
 Four things stay out, so it stays a short list rather than an inventory of the
 whole menu:
 
-- **anything that's off and has no key on it** — an idle unbound feature is a
-  `— · toggle` row that tells you nothing, and since [every toggle carries a
+- **anything that's off and has neither a key nor a pin** — an idle unbound
+  feature is a row that tells you nothing, and since [every toggle carries a
   chip](#toggle) a hub full of them would bury the binds you set;
 - **sub-options of a feature that's on** — see below;
 - a bind with **no name** (nothing to call it);
@@ -422,31 +455,89 @@ whole menu:
 Pass `Hud = true` / `Hud = false` on any of the three sources above to override
 all of it.
 
-#### On a phone: the HUD is the hotbar
+#### On a phone: pin it
 
-A phone has no keys, so the rows are the only way to fire a bind at all — and
-they're built for a thumb (see [On a phone](#on-a-phone) for the device rule):
+A phone has no keys, so the chip's key half becomes a **pin**
+([Keybind on a Toggle](#keybind-on-a-toggle)): tap it on any bindable control
+and that feature sits in the HUD exactly the way a keyed one does on a desktop —
+listed while it's **off**, so the row is how you switch it on with the menu
+closed. Unpin it and it lists only while it's running, like everything else. The
+pin persists with the key and mode in the control's `<flag>_key` flag, so a
+saved config restores the hotbar.
 
-- **Rows fire the bind.** A tap on a `Toggle` row flips it, on a `Press` row
-  fires it once; press-and-hold a `Hold` row holds it and lifting releases it —
-  including a finger that slides off the row, and a press that turns into a
-  drag of the panel. An `Always` row is inert. A sub-option's row fires its own
-  bind. It reaches `OnFlagChanged` as `source = "user"`, exactly like the key.
-- **Thumb-sized rows** (44px), and **no key column**: `—` / `RShift` is noise
-  on a device with nothing to press, so the mode word sits alone on the right
-  and the name gets the width.
-- **Off, unbound top-level toggles are listed too**, dimmed — the first rule in
-  the list above keeps out exactly the rows a phone user needs. Sub-options
-  still roll up under their parent, and `MaxRows` / `+N more` still cap it.
-- **Drag vs tap.** The panel still drags from anywhere; a press that travels
-  more than ~8px is a drag and fires nothing.
-- **Default position** is the right edge, vertically centred (the desktop's
-  `(16, 140)` lands on the left thumbstick). A position you pass, drag to, or
-  restore from a config wins over it.
-- The minimized **logo tile** toggles the HUD on a **long-press**, so the hotbar
+The rows are built for a thumb (see [On a phone](#on-a-phone) for the device
+rule):
+
+- **Thumb-sized tiles** (44px, with air between them) and a **state chip** on
+  the right instead of the key: `ON` / `OFF` for a switch, `HOLD` for a hold
+  bind, `TAP` for a one-shot, `ALWAYS` for a bind pinned on. A running row lights
+  its chip in the accent and lifts a surface step:
+
+  ```
+  ┌──────────────────────────────┐
+  │ GLOBAL                       │
+  │ Auto Parry            [ ON ] │   ← running
+  │ Fly                   [ OFF] │   ← pinned, off — tap to turn on
+  │ Aim                   [HOLD] │   ← press and keep pressing
+  └──────────────────────────────┘
+  ```
+- **Every listed bind is reachable.** `MaxRows` and `+N more` are a desktop cap;
+  on a phone the row is the only way to switch a feature on at all, so every one
+  is drawn and the height cap turns the overflow into a scroll. The list also
+  stops at a bit over half the viewport height — the rest of the display is the
+  game.
+- **The rows do not reorder.** On a desktop, an over-long list floats what's
+  running to the top. On a phone that would mean the tap that switches a feature
+  on slides the list under your thumb — registration order, always. The panel
+  also rests against the **top** of the screen rather than centred, so a list
+  that grows grows *downward*.
+- **Default position** is the right edge, near the top (the desktop's `(16, 140)`
+  lands on the left thumbstick). A position you pass, drag to, or restore from a
+  config wins over it.
+- The minimized **logo tile** toggles the HUD on a **long-press**, so the panel
   comes up without opening the window.
 
-The same rows work with a mouse; nothing above changes what a desktop shows.
+#### Sections — which part of the menu a row came from
+
+With twenty-odd rows the panel is every feature in the hub in the order it was
+built, and those come from unrelated places: the tools that work in any game, the
+ones that only exist because of the game you're in, the preferences. The HUD
+groups them under a dim header each, **in the order the tabs were created**:
+
+```
+┌────────────────────────────────┐
+│ ▍ Active Binds               ⌃ │
+├────────────────────────────────┤
+│ GLOBAL                         │
+│ ● Auto Parry         F · toggle│
+│ ○ Fly                — · toggle│
+│ THIS GAME                      │
+│ ● Aimbot +3          X · always│
+│  ◦ Wall Check        V · toggle│
+└────────────────────────────────┘
+```
+
+**Nothing is declared for this.** A control's section is the **name of the tab**
+it was built under, threaded down through the tab → group → control the same way
+[`Parent`](#sub-options-parent) is. Headers only appear when there is **more than
+one** section on screen; a section with no rows draws nothing.
+
+Override it per card or per control with `Section`, and give a headless
+`Window:Bind` one the same way (it has no tab behind it, so without one it sits
+with the unheaded rows at the top):
+
+```lua
+local tab = Window:CreateTab({ Name = "Global", Icon = "globe" })
+tab:CreateGroup({ Title = "Movement" })                      -- section "Global"
+tab:CreateGroup({ Title = "Local", Section = "This game" })  -- ...or say otherwise
+
+Window:Bind({ Key = Enum.KeyCode.F, Label = "Fly", Mode = "Toggle", Section = "Global" })
+```
+
+A parent and the sub-options rolled up under it never split across a header, and
+when a desktop list is over `MaxRows` the active binds float to the top
+**within** their own section rather than jumping into another one. (On touch
+nothing is reordered at all — see the phone notes above.)
 
 #### Sub-options (`Parent`)
 
@@ -469,6 +560,34 @@ space-insensitively (`"aimbot"`, `"Aimbot"` and `"aim bot"` all find it), so it'
 a name you already wrote down. A handle works too (`Parent = aimbotToggle`), and
 a name that resolves to nothing is simply ignored — the control stays top-level
 rather than disappearing.
+
+**You usually don't have to say any of this.** With no `Parent` anywhere, a card
+whose **first switch shares the card's title** is read as one feature with
+sub-options, and everything bindable after it in that card rolls up into it:
+
+```lua
+local G = Tab:CreateGroup({ Title = "Triggerbot" })
+G:Toggle({ Name = "Triggerbot", Flag = "trigger" })  -- the feature — the HUD row
+G:Toggle({ Name = "Show FOV" })                      -- rolled up
+G:Toggle({ Name = "Team Check" })                    -- rolled up
+```
+
+A switch called `Enabled` (or `Enable` / `Master`) counts as the card's own too,
+and is listed under the **card's title** rather than under the word "Enabled":
+
+```lua
+local G = Tab:CreateGroup({ Title = "Triggerbot" })
+G:Toggle({ Name = "Enabled", Flag = "trigger" })     -- the HUD row says "Triggerbot"
+```
+
+The title match is the safety catch. A card called `Misc` whose first switch is
+`Infinite Jump` is a **list of unrelated features**, not one feature with
+sub-options — nothing rolls up there, and Noclip and Fly keep their own rows. A
+section inside such a card gets the same treatment on its own heading.
+
+Override any of it explicitly: `HudLabel = "..."` on a control renames its HUD
+row, `Hud = true` / `Hud = false` forces one in or out, and `Parent` (below) says
+outright which feature a control belongs to.
 
 Declare it **once for a whole card or section** instead of per line:
 
@@ -872,6 +991,8 @@ local Group = Tab:CreateGroup({
     Id        = nil,        -- stable identity for persisted state (default: Title)
     Parent    = nil,        -- bind-HUD feature every control here belongs to
                             -- (a name, or `true` = the first bindable control)
+    Section   = nil,        -- bind-HUD header these binds sit under
+                            -- (default: the tab's Name — see Bind HUD § Sections)
 })
 ```
 
@@ -929,6 +1050,9 @@ All controls below are methods on a **Group** or **Section** surface.
 - **`FireDefault = true`** — run `Callback` once at construction with the value
   the control was built at, so a feature's state is applied by the same line that
   declares it.
+- **`Section`** — which bind-HUD header this control's bind sits under. Inherited
+  from the tab (and overridable on the card), so nothing normally passes it —
+  see [Sections](#sections--which-part-of-the-menu-a-row-came-from).
 - **`Flag = "id"`** — registers the control for config save/load. The value is
   captured on `SaveConfig` and restored on `LoadConfig` / auto-load. See
   [Config & flags](#config--flags). Only stateful controls support flags
@@ -1313,15 +1437,19 @@ the convention hubs were already writing by hand, so derived names match the
 configs people have already saved. An explicit `KeybindFlag` still wins.
 
 `handle.Bind` exposes the chip's handle (`:Get()` / `:Set(key)` / `:GetMode()` /
-`:SetMode(m)`), or is `nil` on a toggle that opted out.
+`:SetMode(m)` / `:IsPinned()` / `:SetPinned(b)`), or is `nil` on a toggle that
+opted out.
 
-**On a phone the chip drops its key half.** Nothing the user can press will ever
-fill it, so it goes, and the row gets the width back. The **mode half stays**
-wherever there's more than one mode to cycle (`Aim Key` can still go `hold →
-toggle → always`, which is what the [HUD's rows](#on-a-phone-the-hud-is-the-hotbar)
-honour); a chip with a single mode disappears entirely. A saved key still
-round-trips through the flag — it just isn't drawn. `Keybinds = false` on the
-window puts nothing new on a phone.
+**On a phone the chip's key half is a pin.** Nothing the user can press will
+ever fill a key half, so instead it shows a pin glyph: tap it and the feature is
+**pinned to the [bind HUD](#on-a-phone-pin-it)** — listed there while it's off,
+so it can be switched on with the menu closed — and the glyph lights in the
+accent. Tap again to unpin. It's the phone's equivalent of putting a key on
+something, and it persists with the key and mode (`{ key, mode, pinned }` in the
+`<flag>_key` flag). The **mode half stays** wherever there's more than one mode
+to cycle, so `Aim Key` can still go `hold → toggle → always`, which is what the
+HUD's rows honour. A saved key still round-trips through the flag — it just
+isn't drawn. `Keybinds = false` on the window puts nothing new on a phone.
 
 ### Dropdown (single select)
 
