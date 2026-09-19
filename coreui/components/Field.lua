@@ -161,8 +161,15 @@ function Field.new(ctx: any, opts: { Name: string?, Desc: string? }, stack: bool
 
 				local slot = info.Slot
 				local function placeGlyph()
-					local room = title.AbsoluteSize.X
-					local x = title.TextBounds.X + GLYPH_GAP
+					-- Layout pixels, because that's what `slot.Position` is written in
+					-- (util/Scale.lua). BOTH reads are measured ones: `TextBounds` is
+					-- physical like every `Absolute*` property, because the engine
+					-- scales the text it draws and reports the bounds of what it drew.
+					-- Taking it for layout px put the glyph *inside* the title at any
+					-- scale below 1 — the title is wider in layout px than the bounds
+					-- said, so the glyph parked short of the end of the word.
+					local room = ctx:LayoutSize(title).X
+					local x = ctx:ToLayout(title.TextBounds.X) + GLYPH_GAP
 					if room > 0 then
 						-- A wrapped title reports its widest line, which is ~the label
 						-- width, so this parks the glyph in the reserved gutter instead of
@@ -209,16 +216,20 @@ function Field.new(ctx: any, opts: { Name: string?, Desc: string? }, stack: bool
 		-- control (added by the caller into `row`) lands flush right. Width is
 		-- the row minus every sibling's measured width and the gap to each.
 		syncMain = function()
+			-- Measured widths, in the layout pixels `block.Size` is written in: the
+			-- row and its children are drawn through the global UIScale and ROW_GAP
+			-- isn't, so mixing the two would hand the name block a width off by the
+			-- scale factor (util/Scale.lua).
 			local used, others = 0, 0
 			for _, child in row:GetChildren() do
 				-- Visible siblings only: the layout skips a hidden one (a bind chip
 				-- stood down on touch), so the name block gets its width back too.
 				if child:IsA("GuiObject") and child ~= block and child.Visible then
-					used += child.AbsoluteSize.X
+					used += ctx:LayoutSize(child).X
 					others += 1
 				end
 			end
-			local avail = row.AbsoluteSize.X - used - others * ROW_GAP
+			local avail = ctx:LayoutSize(row).X - used - others * ROW_GAP
 			block.Size = UDim2.new(0, math.max(0, avail), 0, 0)
 		end
 		row:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncMain)

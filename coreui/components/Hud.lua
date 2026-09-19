@@ -370,7 +370,9 @@ return function(ctx: any, parent: Instance, opts: any): any
 		Parent = body,
 	})
 
-	local holder, setCollapsedHeight = Collapse.wrap(body, opts.Collapsed == true)
+	local holder, setCollapsedHeight = Collapse.wrap(body, opts.Collapsed == true, function()
+		return ctx:GetScale()
+	end)
 	holder.LayoutOrder = 2
 	holder.Parent = panel
 
@@ -527,7 +529,12 @@ return function(ctx: any, parent: Instance, opts: any): any
 		end
 		lastContent = content or lastContent
 		local touch = ctx:IsTouch()
-		local vp = (parent :: any).AbsoluteSize
+		-- The viewport in LAYOUT pixels (util/Scale.lua): every height below it is
+		-- compared against — the header, the rows, the stat bar — is a design
+		-- number written as an offset, and at scale 1.5 the raw viewport is half
+		-- again too generous. That miscount is a panel whose last rows and whole
+		-- FPS bar are off the bottom of a phone.
+		local vp = ctx:Viewport()
 		-- No viewport yet (an executor can run before one reports) means no budget
 		-- to clamp to: draw the whole list rather than one row of it.
 		local budget = lastContent
@@ -1141,8 +1148,8 @@ return function(ctx: any, parent: Instance, opts: any): any
 	local hasPos = tonumber(opts.X) ~= nil or tonumber(opts.Y) ~= nil
 	local pos = Vector2.new(tonumber(opts.X) or 16, tonumber(opts.Y) or 140)
 	local function defaultPos(): Vector2
-		local vp = (parent :: any).AbsoluteSize
-		local size = root.AbsoluteSize
+		local vp = ctx:Viewport()
+		local size = ctx:LayoutSize(root)
 		if ctx:IsTouch() and vp and vp.X > 0 then
 			return Vector2.new(vp.X - size.X - MARGIN, math.round(vp.Y * 0.14))
 		end
@@ -1174,8 +1181,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 	--    way actually wants to go.
 	local function place(p: Vector2?)
 		local target: Vector2 = p or defaultPos()
-		local vp = (parent :: any).AbsoluteSize
-		local size = root.AbsoluteSize
+		-- Both in layout pixels, which is what `root.Position` is written in — and
+		-- what `pos` (the persisted one) therefore means at any scale.
+		local vp = ctx:Viewport()
+		local size = ctx:LayoutSize(root)
 		if vp and vp.X > 0 and size.X > 0 then
 			local peek = if ctx:IsTouch() then PEEK_TOUCH else PEEK
 			local loX, hiX = MARGIN, math.max(MARGIN, vp.X - size.X - MARGIN)
@@ -1235,6 +1244,17 @@ return function(ctx: any, parent: Instance, opts: any): any
 		fitChrome()
 		defaultLatched = false
 		refresh()
+		replace()
+		latchDefault()
+	end)
+	-- The scale moving is a viewport change as far as this panel is concerned: it
+	-- has the same number of physical pixels and fewer layout ones to spend them
+	-- on, so the height budget and the clamp both move. `root.AbsoluteSize` does
+	-- change with the scale, so `replace` would eventually run off its own signal —
+	-- but not the re-derived default, and not before a frame had been drawn with
+	-- the panel hanging off the edge.
+	local unsubscribeScale = ctx:OnScale(function()
+		defaultLatched = false
 		replace()
 		latchDefault()
 	end)
@@ -1306,7 +1326,10 @@ return function(ctx: any, parent: Instance, opts: any): any
 		end
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
-			local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+			-- Physical pointer delta → the layout offsets the panel is placed in.
+			-- SLOP is compared after the conversion for the same reason the touch
+			-- targets are sized in layout px: it's a distance on the design grid.
+			local delta = (Vector2.new(input.Position.X, input.Position.Y) - dragStart) / ctx:GetScale()
 			if not dragMoved and not scrolling and math.abs(delta.X) + math.abs(delta.Y) > SLOP then
 				-- A press that moved was never a tap — and a Hold it started has to
 				-- let go, or the feature runs for as long as the panel is held.
@@ -1544,6 +1567,7 @@ return function(ctx: any, parent: Instance, opts: any): any
 		unsubscribeAccent()
 		unsubscribeDrag()
 		unsubscribeTouch()
+		unsubscribeScale()
 		endHold() -- a Hold the finger still has down must not outlive the panel
 		root:Destroy()
 	end

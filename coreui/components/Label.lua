@@ -53,7 +53,8 @@ return function(ctx: any, opts: any)
 		Parent = row,
 	})
 	local function fitValue()
-		local keyW = keyLabel.AbsoluteSize.X
+		-- Layout px (util/Scale.lua): measured width, written back as an offset.
+		local keyW = ctx:LayoutSize(keyLabel).X
 		valueLabel.Size = UDim2.new(1, -(keyW > 0 and keyW + GAP or 0), 0, 0)
 	end
 	keyLabel:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitValue)

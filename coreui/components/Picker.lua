@@ -320,7 +320,8 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 			local label = countLabel
 			if label then
 				local function fitSearch()
-					local reserve = label.AbsoluteSize.X
+					-- Layout px: measured sibling, offset written back (util/Scale.lua).
+					local reserve = ctx:LayoutSize(label).X
 					searchField.Size = UDim2.new(1, if reserve > 0 then -(reserve + 12) else 0, 1, 0)
 				end
 				label:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitSearch)
@@ -341,13 +342,15 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		if not row then
 			return
 		end
-		local width = row.AbsoluteSize.X
+		-- Layout px throughout: the chips are POSITIONED by hand (a UIListLayout
+		-- can't wrap), so every width here is written back as an offset.
+		local width = ctx:LayoutSize(row).X
 		if width <= 0 then
 			return
 		end
 		local x, y = 0, 0
 		for _, chip in chipButtons do
-			local w = math.ceil(chip.button.AbsoluteSize.X)
+			local w = math.ceil(ctx:LayoutSize(chip.button).X)
 			if w <= 0 then
 				w = 48 -- not measured yet; its own AbsoluteSize signal re-runs this
 			end
@@ -715,7 +718,7 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 				return
 			end
 			local reserve = 8 + THUMB + 10 + 8
-			local rightW = holder.AbsoluteSize.X
+			local rightW = ctx:LayoutSize(holder).X
 			if rightW > 0 then
 				reserve += rightW + 10
 			end
@@ -894,7 +897,10 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 	-- row evenly instead of leaving a ragged gutter: `TileSize` is the width a
 	-- tile aims for, not one it always gets.
 	local function measure(): boolean
-		local width = math.floor(viewport.AbsoluteSize.X) - PAD * 2 - SCROLL_W
+		-- The canvas, the cell sizes and every cell Position below are layout px —
+		-- the whole gallery is laid out by hand, so the measured viewport is
+		-- converted once, here (util/Scale.lua).
+		local width = math.floor(ctx:LayoutSize(viewport).X) - PAD * 2 - SCROLL_W
 		if width < 40 then
 			return false -- not laid out yet; the AbsoluteSize signal comes back
 		end
@@ -930,7 +936,9 @@ return function(ctx: any, opts: any): (Frame, any, boolean)
 		local stride = cellH + GAP
 		local top = viewport.CanvasPosition.Y
 		local firstRow = math.max(1, math.floor((top - PAD) / stride) + 1 - OVERSCAN)
-		local lastRow = math.min(rowCount, math.ceil((top + viewport.AbsoluteSize.Y - PAD) / stride) + OVERSCAN)
+		-- CanvasPosition is in the canvas's own (layout) units, so the viewport
+		-- height it's added to has to be as well.
+		local lastRow = math.min(rowCount, math.ceil((top + ctx:LayoutSize(viewport).Y - PAD) / stride) + OVERSCAN)
 		-- Scrolling fires CanvasPosition every frame, and most of those frames are
 		-- still showing the same rows.
 		if not force and firstRow == firstMounted and lastRow == lastMounted then

@@ -139,7 +139,9 @@ return function(ctx: any, column: Frame, opts: any, scope: string?, section: str
 
 	-- A clipping holder owns the body's height so collapse/expand slides the panel
 	-- open/closed instead of snapping its visibility.
-	local holder, setCollapsed = Collapse.wrap(card, collapsed)
+	local holder, setCollapsed = Collapse.wrap(card, collapsed, function()
+		return ctx:GetScale()
+	end)
 	holder.LayoutOrder = 3
 	holder.Parent = shell
 

@@ -275,9 +275,13 @@ return function(ctx: any, opts: any)
 			return
 		end
 		local overlay = ctx.overlay
-		local o, os = overlay.AbsolutePosition, overlay.AbsoluteSize
-		local b, bs = button.AbsolutePosition, button.AbsoluteSize
-		local ts = frame.AbsoluteSize
+		-- Measured in physical pixels, placed in layout ones: every read here is
+		-- divided by the global scale on the way in, so the gap and the margin stay
+		-- the design's rather than shrinking as the UI grows (util/Scale.lua).
+		local k = 1 / ctx:GetScale()
+		local o, os = overlay.AbsolutePosition * k, overlay.AbsoluteSize * k
+		local b, bs = button.AbsolutePosition * k, button.AbsoluteSize * k
+		local ts = frame.AbsoluteSize * k
 		if os.X <= 0 then
 			return
 		end

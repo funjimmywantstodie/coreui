@@ -30,6 +30,10 @@ export type Context = typeof(setmetatable(
 		Keybinds: boolean,
 		Descriptions: string,
 		Touch: boolean?,
+		-- The global UI scale (util/Scale.lua), installed by Window. A context
+		-- built without one (a test harness) has none, which is why every read
+		-- goes through GetScale/Viewport/LayoutSize below rather than the field.
+		_uiScale: any,
 		Scroller: ScrollingFrame?,
 		_scrollLocks: number,
 		_touchWatchers: Signal.Signal<boolean>,
@@ -106,6 +110,10 @@ function Context.new(theme: any, overlay: Frame, accent: Color3): Context
 		-- `CreateWindow{ Touch = true/false }` pins the device answer; nil = ask
 		-- UserInputService per call. See IsTouch.
 		Touch = nil,
+		-- The global UI scale. Set by Window right after this (UseScale); until
+		-- then — and forever, for a Context built without a window — every scale
+		-- read answers 1, which is the library exactly as it always was.
+		_uiScale = nil,
 		-- The window's content ScrollingFrame, for LockScroll. Set by Window.
 		Scroller = nil,
 		_scrollLocks = 0,
@@ -188,6 +196,66 @@ function Context:TouchChanged()
 	self._touchWatchers:FireGuarded(function(err)
 		Log.warn("OnTouch", tostring(err))
 	end, touch)
+end
+
+-- ── Scale ────────────────────────────────────────────────────────────────────
+-- The global UI scale (util/Scale.lua) and the coordinate space it defines.
+-- Window installs the object; everything else reads it through these three, so
+-- a component never has to know whether a window exists or whether a scale was
+-- ever set — without one they answer 1, the raw viewport and the raw measurement,
+-- which is the library byte for byte as it was before any of this.
+--
+-- The rule the three of them exist to make cheap: **anything you MEASURE comes
+-- back in physical pixels, anything you WRITE is in layout pixels**, and they
+-- differ by exactly the scale. A number that crosses from one to the other
+-- without passing through here lands `scale`× off — which at 1.0 is invisible,
+-- and on the phones this feature exists for is a panel hanging off the bottom of
+-- the screen.
+function Context:UseScale(scale: any)
+	self._uiScale = scale
+end
+
+function Context:GetScale(): number
+	local scale = self._uiScale
+	return if scale then scale:Get() else 1
+end
+
+-- The viewport in LAYOUT pixels — what a clamp that writes offsets wants. Never
+-- `screenGui.AbsoluteSize`, which stays the raw viewport whatever the scale is.
+function Context:Viewport(): Vector2
+	local scale = self._uiScale
+	if scale then
+		return scale:Viewport()
+	end
+	local overlay: any = self.overlay
+	return if overlay then overlay.AbsoluteSize else Vector2.zero
+end
+
+-- An instance's measured size, in the units you write its Size/Position in.
+function Context:LayoutSize(inst: GuiObject): Vector2
+	local value = self:GetScale()
+	local size = inst.AbsoluteSize
+	return if value > 0 and value ~= 1 then Vector2.new(size.X / value, size.Y / value) else size
+end
+
+-- The same conversion for a measured NUMBER — a `UIListLayout`'s
+-- `AbsoluteContentSize`, a `TextLabel`'s `TextBounds`, an on-screen keyboard's
+-- Y. Every property Roblox spells "Absolute", and `TextBounds` besides, is in
+-- physical pixels: the engine scales the text it renders, so the bounds it
+-- reports scale with it.
+function Context:ToLayout(n: number): number
+	local value = self:GetScale()
+	return if value > 0 then n / value else n
+end
+
+-- `fn(scale)` whenever it changes — no initial call, like OnTouch. Everything
+-- that laid itself out against the viewport re-runs off this.
+function Context:OnScale(fn: (number) -> ()): () -> ()
+	local scale = self._uiScale
+	if not scale then
+		return function() end
+	end
+	return scale:OnChange(fn)
 end
 
 -- ── Scroll lock ──────────────────────────────────────────────────────────────
@@ -943,11 +1011,17 @@ function Context:AnchorTo(menu: GuiObject, anchor: GuiObject): () -> ()
 	local MARGIN = 8
 	local GAP = 6
 	local function place()
-		local o = self.overlay.AbsolutePosition
-		local os = self.overlay.AbsoluteSize
-		local a = anchor.AbsolutePosition
-		local asz = anchor.AbsoluteSize
-		local msz = menu.AbsoluteSize
+		-- Everything here is MEASURED (physical px) and the position written at the
+		-- bottom is in LAYOUT px, so every read is divided by the scale on the way
+		-- in — including the two margins, which are then the same 8px of layout the
+		-- rest of the menu is spaced with rather than 8 physical px that shrink as
+		-- the UI grows. See Context:GetScale.
+		local k = 1 / self:GetScale()
+		local o = self.overlay.AbsolutePosition * k
+		local os = self.overlay.AbsoluteSize * k
+		local a = anchor.AbsolutePosition * k
+		local asz = anchor.AbsoluteSize * k
+		local msz = menu.AbsoluteSize * k
 
 		local x = a.X - o.X
 		x = math.clamp(x, MARGIN, math.max(MARGIN, os.X - msz.X - MARGIN))

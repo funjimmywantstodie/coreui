@@ -163,6 +163,7 @@ local Window = Uranium:CreateWindow({
     MinimizeHint = true,                     -- click-to-reopen card (default true)
     MinimizeHintStyle = "auto",              -- "auto" / "card" / "logo" (default "auto")
     Touch        = nil,                      -- pin the phone layout on/off (default: per device, see below)
+    Scale        = nil,                      -- pin the UI scale, 0.75–2.0 (default: auto, per device)
     OnFlag       = function(name, kind) end, -- called as each Flag registers (see Config & flags)
     OnFlagChanged = function(name, value, kind, source) end, -- ...and as each one changes
     PersistWindow = true,                    -- persist position/size/tab/folded groups (default true)
@@ -186,6 +187,50 @@ info glyph), `"inline"` (a second line of prose under the name) or `"both"`. See
 
 The window is draggable by its titlebar, has minimize / maximize / close
 buttons and a search field in the titlebar (filters the active tab as you type).
+
+### UI scale
+
+Everything the library draws goes through one `UIScale` — the window, the bind
+HUD, the minimized card, popovers, flyouts, toasts and the
+[status page](#screen-status-page). `Scale` pins it; left alone it's **auto**,
+resolved from the device and re-resolved whenever the device answer or the
+viewport moves.
+
+```lua
+Uranium:CreateWindow({ Scale = 1.5 })      -- pin it; nil (the default) is auto
+Window:GetScale()                          -- → the number in force right now
+Window:SetScale(1.25)                      -- pin, live. nil hands it back to auto
+Window:IsAutoScale()                       -- → is it being resolved, or was it pinned?
+Window:OnScale(function(scale) end)        -- → unsub; fires when it changes. No initial call
+```
+
+Auto is the half that matters, because ~97% of sessions are phones and a phone
+reports a viewport of roughly **1200×560**. The window is therefore never
+*cramped* there — it's the opposite: the content clears every width threshold in
+the library, so a phone gets the full two-column desktop layout at desktop
+metrics on a six-inch screen. The [phone layout](#on-a-phone) fixes the *shapes*;
+nothing in it makes 11px type bigger than 11px. So:
+
+* a **desktop is always 1.0** — nothing about a monitor needs fixing;
+* a **touch device** is scaled so its short side is worth ~840 layout pixels, in
+  5% steps, capped at 1.6 — a phone lands at **1.5**, a tablet back at 1.0;
+* auto never picks a scale that stops a 420×320 window fitting on the screen.
+
+The user can override it from the built-in Settings tab (**Interface → UI
+Scale**, persisted as `uranium_scale`), or you can place `controls.Scale`
+yourself — see [Built-in Settings tab](#built-in-settings-tab).
+
+**Every coordinate in the public API is in layout pixels**, at every scale:
+`GetSize`/`SetSize`, `GetPosition`/`SetPosition`, the HUD's `X`/`Y` and the whole
+`uranium_window` record. That's deliberate — it's what makes a saved record
+portable, so a window saved at 1.0 is the same window at 1.5 rather than one that
+shrinks every time the setting moves. Physical pixels (what `AbsoluteSize` and
+`InputObject.Position` report) are `layout × scale`; if you're doing that
+arithmetic yourself in a `Group:Custom` block, `Window:GetScale()` is the
+conversion.
+
+`Drawing.new` overlays (ESP, tracers, an FOV circle) are not GuiObjects and no
+`UIScale` reaches them — those stay the host's to size.
 
 ### On a phone
 
@@ -212,6 +257,7 @@ What changes, nothing of which is visible on a desktop:
 | Bind HUD | keys, rows clickable | the chip says the **state** and the rows are the buttons — see [Bind HUD](#bind-hud) |
 | Minimized | the card | the logo tile; **long-press** it to toggle the HUD without opening the window |
 | Settings | full | no **Toggle UI** key row |
+| Scale | 1.0 | **auto-scaled** (1.5 on a phone, 1.0 on a tablet) — see [UI scale](#ui-scale) |
 
 ```lua
 Uranium:CreateWindow({ Touch = true })   -- force the phone layout (Studio's emulator reports a keyboard)
@@ -298,9 +344,13 @@ Uranium:Unload()                     -- tear down the live window; true if there
 | `Window:OnHudVisible(fn)` → `unsub` | Mirror the HUD's visibility. Fires now + on every change. |
 | `Window:OnHudChanged(fn)` → `unsub` | Fires whenever anything the HUD *persists* moves (dragged, folded, shown). No argument, no initial call. |
 | `Window:GetPosition()` / `:SetPosition(x, y)` | The window's top-left in screen pixels. Setting clamps on-screen. |
-| `Window:GetSize()` / `:SetSize(w, h)` | Its layout size. Setting is still clamped to the viewport. |
+| `Window:GetSize()` / `:SetSize(w, h)` | Its layout size, in layout pixels at any [UI scale](#ui-scale). Setting is still clamped to the viewport. |
 | `Window:IsMaximized()` / `:SetMaximized(bool, animate?)` | The maximize state. |
 | `Window:GetSelected()` → `number` | Which tab is open (1-based). |
+| `Window:GetScale()` → `number` | The global UI scale in force. See [UI scale](#ui-scale). |
+| `Window:SetScale(n?)` → `number` | Pin the scale (0.75–2.0, clamped), or `nil` to hand it back to auto. Applied live; returns the number in force afterwards. |
+| `Window:IsAutoScale()` → `bool` | Is the scale resolved from the device, or was it pinned? (The number alone can't say — auto is 1.0 on every desktop.) |
+| `Window:OnScale(fn)` → `unsub` | `fn(scale)` whenever it changes. No initial call. |
 | `Window:IsTouch()` → `bool` | Is the phone layout in force — a touch screen and no keyboard, read now. See [On a phone](#on-a-phone). |
 | `Window:SetTouch(bool?)` | Pin the phone layout on / off, or `nil` to ask the engine again. Applied live. |
 | `Window:OnTouch(fn)` → `unsub` | `fn(isTouch)` whenever that answer changes. No initial call. |
@@ -661,6 +711,7 @@ local page = Uranium:Screen({
     Dismissable = true,                         -- default true (Esc + a × button)
     OnClose     = function(page, how) end,      -- fires once — see below
     Parent      = someInstance,                 -- same meaning as CreateWindow.Parent
+    Scale       = nil,                          -- pin the page's scale, 0.75–2.0 (default: auto)
     Input       = nil,                          -- a text entry block — see below
     Actions     = {
         { Label = "Reload", Icon = "refresh-cw", Primary = true,
@@ -668,6 +719,12 @@ local page = Uranium:Screen({
     },
 })
 ```
+
+`Scale` is the page's half of [UI scale](#ui-scale), resolved the same way from
+the same device rule — it has to be, because this page has no window behind it
+and, for a key gate, it's the first thing a phone user ever sees. It's read once,
+when the page is built (`Set` doesn't re-read it), and auto still re-resolves if
+the phone is rotated.
 
 ```
         ┌──────────────────────────────────────────┐
@@ -2083,6 +2140,7 @@ local tab, controls = Window:CreateSettingsTab({
 ```
 
 A drop-in panel that wires up: accent color picker, the toggle-UI keybind, a
+**UI Scale** picker (`Auto` / 75–200% — see [UI scale](#ui-scale)), a
 **Descriptions** picker (see [Descriptions](#descriptions-desc--info)), a
 **Minimize Hint** switch with a **Hint Style** picker beside it, a notifications switch, a **Keybind HUD** switch (see [Bind HUD](#bind-hud)), and
 config **save / load / delete / refresh** plus an **Auto Load** toggle and an
@@ -2103,8 +2161,8 @@ The second return is every handle the panel built, also on `tab.Controls`:
 
 | Key | What |
 | --- | --- |
-| `Accent` `ToggleKey` `Descriptions` `MinimizeHint` `MinimizeHintStyle` `Notifications` `Hud` | The Interface controls. |
-| `HudMirror` `HudChanges` `TouchWatch` `FolderWatch` | Unsubscribers for the panel's own watches, for a host tearing its settings UI down. |
+| `Accent` `ToggleKey` `Scale` `Descriptions` `MinimizeHint` `MinimizeHintStyle` `Notifications` `Hud` | The Interface controls. |
+| `HudMirror` `HudChanges` `TouchWatch` `ScaleWatch` `FolderWatch` | Unsubscribers for the panel's own watches, for a host tearing its settings UI down. |
 | `Name` `List` `AutoLoad` | The config name box, the saved-config dropdown, the auto-load switch. |
 | `OnSelect(fn)` → `unsub` | `fn(name)` whenever the selection changes. |
 | `Refresh` `Save` `Load` `Delete` | The button callbacks, so you can drive them yourself. |

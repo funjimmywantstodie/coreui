@@ -100,7 +100,9 @@ return function(ctx: any, opts: any): (Frame, Frame)
 	})
 
 	-- Clipping holder owns the body's height so it slides open/closed.
-	local holder, setCollapsed = Collapse.wrap(bodyWrap, collapsed)
+	local holder, setCollapsed = Collapse.wrap(bodyWrap, collapsed, function()
+		return ctx:GetScale()
+	end)
 	holder.LayoutOrder = 2
 	holder.Parent = section
 

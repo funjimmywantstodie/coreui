@@ -605,6 +605,11 @@ function Info.attach(ctx: any, parent: Instance, spec: any): any
 	-- exactly like tapping the glyph. Watched per target, in `Watch`, so the
 	-- label the field hands over gets it as well as the glyph.
 	local LONG_PRESS = 0.5
+	-- How far a finger may travel and still be a press rather than a scroll, in
+	-- LAYOUT px — the same grid the 24px hitbox is sized on, so the gesture is as
+	-- forgiving at 150% as it is at 100% (util/Scale.lua; `input.Position` is
+	-- physical, like every measurement).
+	local PRESS_SLOP = 8
 	local pressSeq = 0
 	local function watchLongPress(target: GuiObject)
 		table.insert(conns, target.InputBegan:Connect(function(input)
@@ -619,7 +624,7 @@ function Info.attach(ctx: any, parent: Instance, spec: any): any
 			conn = input.Changed:Connect(function()
 				-- A finger that travels is scrolling the page, not asking for a
 				-- description; a lift before the delay is a tap, handled elsewhere.
-				if (input.Position - origin).Magnitude > 8 then
+				if (input.Position - origin).Magnitude > PRESS_SLOP * ctx:GetScale() then
 					moved = true
 				end
 				if input.UserInputState == Enum.UserInputState.End

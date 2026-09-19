@@ -280,6 +280,76 @@ return function(opts: any): any
 		Parent = screenGui,
 	})
 
+	-- ── how big the page is drawn ────────────────────────────────────────────
+	-- The same problem the window has (util/Scale.lua) and, on the page a phone
+	-- user meets before the library exists at all, the more urgent half: a phone
+	-- hands Roblox a viewport of roughly 1200×560, so this card is never cramped
+	-- there — it's drawn at desktop metrics on a six-inch screen, and the key
+	-- gate's own input row is 11px type the user is being asked to type into.
+	--
+	-- `Scale` pins it; otherwise it's resolved from the device exactly the way
+	-- util/Scale.lua resolves the window's (the same reference short side, the
+	-- same 5% steps, the same touch-only rule) — the two are written twice
+	-- because this file can't `require` anything, and they must stay in step.
+	--
+	-- The card sits inside a STAGE rather than wearing the UIScale itself: its
+	-- width is a proportion of its parent, so scaling the card directly would
+	-- multiply that proportion and push it off the screen. `fromScale(1/s)` under
+	-- a scale of `s` covers the viewport exactly and measures `vp/s` inside,
+	-- which is the space every offset on the page is written in.
+	local SCALE_REF, SCALE_MAX = 840, 1.6
+	local function autoScale(): number
+		local vp = Vector2.zero
+		-- The camera, not the ScreenGui: this runs before `mountGui`, so the GUI
+		-- has no parent yet and reports no size at all.
+		pcall(function()
+			vp = game:GetService("Workspace").CurrentCamera.ViewportSize
+		end)
+		if vp.X <= 0 then
+			pcall(function()
+				vp = screenGui.AbsoluteSize
+			end)
+		end
+		local touch = false
+		pcall(function()
+			touch = UIS.TouchEnabled == true and UIS.KeyboardEnabled ~= true
+		end)
+		if vp.X <= 0 or vp.Y <= 0 or not touch then
+			return 1
+		end
+		local wanted = math.floor((SCALE_REF / math.min(vp.X, vp.Y)) / 0.05 + 0.5) * 0.05
+		return math.clamp(wanted, 1, SCALE_MAX)
+	end
+	local pinnedScale = tonumber(o.Scale)
+	local SCALE = if pinnedScale then math.clamp(pinnedScale, 0.75, 2) else autoScale()
+	local stageScale = new("UIScale", { Scale = SCALE })
+	local stage = new("Frame", {
+		Name = "Stage",
+		Size = UDim2.fromScale(1 / SCALE, 1 / SCALE),
+		BackgroundTransparency = 1,
+		-- Transparent and not a button: every press still falls through to the
+		-- backdrop, which is what makes the page modal.
+		Parent = backdrop,
+	}, {
+		stageScale,
+	})
+	-- Rotating a phone changes which side is the short one. Only when nothing was
+	-- pinned, and guarded: losing the re-resolve is a page at the wrong size,
+	-- which beats no page. Not tracked in `conns` (which is declared further
+	-- down): it's a signal on the page's OWN ScreenGui, so closing the page
+	-- destroys the instance the connection hangs off.
+	if not pinnedScale then
+		screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			local wanted = autoScale()
+			if math.abs(wanted - SCALE) < 0.001 then
+				return
+			end
+			SCALE = wanted
+			stageScale.Scale = wanted
+			stage.Size = UDim2.fromScale(1 / wanted, 1 / wanted)
+		end)
+	end
+
 	--@lib
 	-- The elevation under the card, same radial image and the same job as the
 	-- window's: it's what stops a flat rectangle from reading as part of the
@@ -303,7 +373,7 @@ return function(opts: any): any
 		ImageTransparency = SHADOW_T,
 		ScaleType = Enum.ScaleType.Stretch,
 		ZIndex = 0,
-		Parent = backdrop,
+		Parent = stage,
 	})
 	--@endlib
 
@@ -317,7 +387,7 @@ return function(opts: any): any
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = C.bg,
 		ZIndex = 1,
-		Parent = backdrop,
+		Parent = stage,
 	}, {
 		corner(RADIUS),
 		stroke(C.border),
@@ -332,7 +402,8 @@ return function(opts: any): any
 		shadow.Position = card.Position + UDim2.fromOffset(0, 6)
 	end)
 	card:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		local size = card.AbsoluteSize
+		-- Measured through the stage's scale, written back as an offset inside it.
+		local size = card.AbsoluteSize / SCALE
 		shadow.Size = UDim2.fromOffset(size.X + SHADOW_PAD, size.Y + SHADOW_PAD)
 	end)
 	--@endlib
@@ -1131,7 +1202,9 @@ return function(opts: any): any
 		-- a stacked button is as wide as the row, so measuring would latch the
 		-- layout into the stacked branch and never come back out of it.
 		local function relayout()
-			local w = row.AbsoluteSize.X
+			-- Layout px: `estW` and MIN_BOX are design numbers, the row is measured
+			-- through the page's UIScale.
+			local w = row.AbsoluteSize.X / SCALE
 			if w > 0 and (w - estW - 8) < MIN_BOX then
 				btn.AutomaticSize = Enum.AutomaticSize.None
 				btn.AnchorPoint = Vector2.new(0, 0)
@@ -1144,7 +1217,7 @@ return function(opts: any): any
 				-- off a width the button is about to stop having.
 				local bw = estW
 				if btn.AutomaticSize == Enum.AutomaticSize.X and btn.AbsoluteSize.X > 0 then
-					bw = btn.AbsoluteSize.X
+					bw = btn.AbsoluteSize.X / SCALE
 				end
 				btn.AutomaticSize = Enum.AutomaticSize.X
 				btn.AnchorPoint = Vector2.new(1, 0)
@@ -1247,7 +1320,10 @@ return function(opts: any): any
 				return
 			end
 			shifted = wanted
-			tw(card, TW.Normal, { Position = UDim2.new(0.5, 0, 0.5, -shifted) })
+			-- `shifted` is measured in physical pixels (the box, the inset and the
+			-- keyboard's own top all are); the Position it's written into is inside
+			-- the stage's scale.
+			tw(card, TW.Normal, { Position = UDim2.new(0.5, 0, 0.5, -shifted / SCALE) })
 		end
 		local function keyboardSoon()
 			task.defer(shiftForKeyboard)

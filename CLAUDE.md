@@ -127,6 +127,7 @@ coreui/
     Tween.lua         shared TweenInfo presets + Tween.play
     Context.lua       per-window object threaded into EVERY component
     Collapse.lua      height-animate a frame open/closed
+    Scale.lua         the global UI scale + the layout-pixel viewport
     Fade.lua          fade a whole subtree — the CanvasGroup replacement
     Bind.lua          keybind router + mode machine (Toggle/Hold/Press/Always)
     Signal.lua        the subscribe/notify registry EVERY watcher list is built on
@@ -181,7 +182,7 @@ children. Stateful controls return a handle with `:Get()` / `:Set(v)`.
 
 **Public API surface** (see `example.loadstring.lua` — it's the spec, written in
 the target API; build until it runs and matches `reference/coreui-demo.html`):
-- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,Descriptions?,OnFlag?,OnFlagChanged?,PersistWindow?,WindowFlag?}` →
+- `Uranium:CreateWindow{Title,Subtitle,Version,ConfigFolder?,ToggleKey?,Logo?,LogoRadius?,LogoZoom?,AllowMultiple?,Splash?,Hud?,Keybinds?,Descriptions?,Scale?,OnFlag?,OnFlagChanged?,PersistWindow?,WindowFlag?}` →
   `:CreateTab` · `:CreateSettingsTab{Name?,Icon?,Sections?,Notify?}` → `tab, controls` · `:Notify` · `:Select(i)` ·
   `:SetAccent(Color3)`/`:GetAccent()` · `:SetLogo(source, zoom?)` ·
   `:SetToggleKey(KeyCode)`/`:GetToggleKey()` ·
@@ -191,6 +192,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:GetPosition()`/`:SetPosition(x,y)` · `:GetSize()`/`:SetSize(w,h)` ·
   `:IsMaximized()`/`:SetMaximized(b, animate?)` · `:GetSelected()` ·
   `:IsTouch()` · `:SetTouch(b?)` · `:OnTouch(fn)` ·
+  `:GetScale()`/`:SetScale(n?)` · `:IsAutoScale()` · `:OnScale(fn)` ·
   `:GetConfig()` · `:ApplyConfig(t, opts?)` · `:GetFlags()` · `:RegisterFlag(n,h,kind)` · `:OnFlag(fn)` ·
   `:OnFlagChanged(fn)` · `:NotifyFlag(name, source?)` ·
   `:SaveConfig(name, meta?)` · `:LoadConfig(name, opts?)` · `:DeleteConfig(name)` ·
@@ -198,7 +200,7 @@ the target API; build until it runs and matches `reference/coreui-demo.html`):
   `:GetConfigFolder()`/`:SetConfigFolder(path)`/`:OnConfigFolder(fn)` ·
   `:Bind(key, fn, mode?)` · `:Destroy(immediate?)`
 - Library-level: `Uranium:IsLoaded()` · `Uranium:Unload()` (see single instance below) ·
-  `Uranium:Screen{Title,Text?,Code?,Icon?,Tone?,Detail?,Footer?,Discord?,Dismissable?,Input?,Actions?,Parent?}`
+  `Uranium:Screen{Title,Text?,Code?,Icon?,Tone?,Detail?,Footer?,Discord?,Dismissable?,Input?,Actions?,Parent?,Scale?}`
   → `:Close()` · `:Set(opts)` · `:Flash(text)` · `.ScreenGui` · `.Input`
   (`:Get/:Set/:Focus/:Clear/:Busy/:Error/:Success`, present only when `Input` was
   passed) (needs no window — see **The status page** below) ·
@@ -365,9 +367,83 @@ desktop chrome. What the touch branch does, and where:
   touch drag (`ctx.Scroller` = the content frame; counted).
 - **Controls.lua** — every mounted handle gets `:SetVisible/:IsVisible` (row +
   its hairline); Settings hides the Toggle UI row with it on touch.
+- ...and on top of all of it, the **global scale** — the touch bumps size the
+  targets, the scale sizes everything. See the section below.
 - The minimized logo tile squashes on press and **long-presses** (0.55s) to
   toggle the HUD; Notify toasts dismiss on tap; Info pins on a long-press of the
   name.
+
+## The global UI scale — and the two coordinate spaces it creates
+
+`util/Scale.lua` owns one `UIScale` over **everything the library draws**, and
+the coordinate space that comes with it. It exists because the touch layout
+above fixes the *shapes* and nothing else: a phone reports a viewport of roughly
+1200×560, so the window is never cramped there — the content clears every width
+threshold in the library and a phone gets the full two-column desktop layout at
+desktop metrics on a six-inch screen. 11px body text at ~210 physical px per inch
+is 1.6mm of cap height, and a 44px target is 0.21in against the ~0.3in every
+phone platform asks for.
+
+- **The scale lives on a STAGE, not on `main`.** A full-screen frame under the
+  ScreenGui holding the one UIScale, and the parent of `main`, the shadow, the
+  minimized hint, the bind HUD and the splash — several of those are *siblings*
+  of the window (minimize hides `main` and the HUD has to survive it), so a
+  UIScale under `main` would scale the window and leave the HUD at 1.0 beside it.
+  Its size is `fromScale(1/s, 1/s)`: the engine resolves that against the raw
+  viewport and the UIScale multiplies it straight back, so the stage covers the
+  screen exactly while measuring `vp / s` in its own units. Nothing to keep in
+  sync, and it's right on the frame it's built.
+- **Two spaces, and every bug in this feature is one crossing into the other.**
+  What you WRITE (Size/Position offsets, `Theme.Metrics`, `MIN_W`, `STACK_BELOW`,
+  `MARGIN`, `CanvasSize`) is *layout* px; what you MEASURE is *physical* px, and
+  `physical = layout × scale`. Measured means every `Absolute*` property —
+  including **`AbsoluteContentSize`** on a UIListLayout — plus
+  **`TextBounds`** (the engine scales the text it draws and reports the bounds of
+  what it drew), `InputObject.Position`, `GetGuiInset`,
+  `OnScreenKeyboardPosition` and `Camera.ViewportSize`. Those last two shapes are
+  the ones that actually shipped broken: the info glyph is placed at
+  `TextBounds.X`, so at 0.75 it landed *inside* the name, and the dropdown's menu
+  height comes off `AbsoluteContentSize`, so its rows clipped. `ctx:Viewport()` / `ctx:LayoutSize(inst)` /
+  `ctx:GetScale()` are the conversions; **`screenGui.AbsoluteSize` is never the
+  viewport a clamp wants** — it stays raw at every scale. A site that mixes them
+  is invisible on a desktop and, on the device this feature is for, is a panel
+  hanging off the bottom of the screen. The converted sites are the window's
+  geometry + drag + keyboard shift + hint, `Hud`'s budget/default/clamp/drag,
+  `Context:AnchorTo` (so every popover), `Tab`'s flyout, `Splash`'s centring,
+  `Collapse`'s fold heights, `Picker`'s virtualisation, `Field`'s info glyph, the
+  menu heights in `Dropdown`/`PlayerSelect`, and the measured-sibling widths in
+  `Field`/`Label`/`Picker`. `ctx:ToLayout(n)` is the scalar form of
+  `ctx:LayoutSize(inst)`, for a measurement that isn't an instance's size.
+- **`Collapse.wrap` takes a scale getter, and it isn't optional decoration.**
+  Every height in it is measured off an AbsoluteSize and written straight back as
+  a Size offset, so without it a fold at 1.5 aims a third too high.
+- **Auto is the half that matters** — a desktop is always 1.0; a touch device is
+  scaled so its short side is worth ~840 layout px, in 5% steps, capped at 1.6,
+  and never so far that a 420×320 window stops fitting. A phone lands at 1.5, a
+  tablet back at 1.0. Nobody should have to find a setting to get a readable
+  window on the device 97% of them are on. `CreateWindow{ Scale = n }` /
+  `Window:SetScale(n or nil)` pin it; `IsAutoScale` is what a control asks to
+  know whether to say "Auto" or "100%". Re-resolved on the two signals the touch
+  layout already re-resolves on (viewport + `OnTouch`), and the first resolve
+  reads the CAMERA, because the window picks its scale before the ScreenGui has
+  been parented and an unparented GUI measures nothing.
+- **The persisted geometry is layout px**, which is what makes a `uranium_window`
+  record portable: the same saved window at 1.0 and at 1.5, rather than one that
+  shrinks every time the setting moves. Same for the HUD's `X`/`Y`.
+- **`components/Screen.lua` carries its own copy of the policy**, because the
+  shared body can't `require` anything — same reference short side, same steps,
+  same touch-only rule, and a stage of its own inside the backdrop (the card's
+  width is a *proportion* of its parent, so scaling the card directly would
+  multiply that proportion straight off the screen). The two copies must stay in
+  step. It's the page a phone user meets before the library exists, so it's the
+  one build where getting this wrong is most visible.
+- The animation `UIScale`s (`Button` 0.96, `BindChip` 1.18, the window's mount,
+  the HUD's entrance) nest under the stage's and multiply, which is what you
+  want — a press is still a 4% dip at any scale. They're all fetched with
+  `FindFirstChildOfClass` **on their own element**, never searched for, so none
+  of them can find the stage's.
+- `Drawing.new` overlays (a hub's ESP, tracers, FOV circle) are not GuiObjects
+  and no UIScale reaches them. Not ours.
 
 ## Boot splash
 
@@ -708,8 +784,8 @@ and a nested one ("uranium/games/12345") silently failed to save on any executor
 whose `makefolder` isn't itself recursive.
 
 `Window:CreateSettingsTab()` is a drop-in panel (accent picker, the toggle
-keybind, the description mode, notifications switch, config save/load/delete +
-auto-load, Unload). Its
+keybind, the UI scale picker, the description mode, notifications switch, config
+save/load/delete + auto-load, Unload). Its
 controls are themselves flagged, so saving a config captures them too. **Call it
 LAST** — its deferred auto-load pass only sees flags registered before it runs
 (`Config = { AutoLoad = false }` opts out). Dropdown gained

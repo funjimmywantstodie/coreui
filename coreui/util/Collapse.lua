@@ -15,7 +15,19 @@ local Collapse = {}
 
 -- `content` must be (1, 0) wide with AutomaticSize.Y. Returns the holder to drop
 -- into the surrounding layout, plus `set(collapsed, animate)`.
-function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (boolean, boolean?) -> ())
+--
+-- `scale` is the global UI scale in force (`function() return ctx:GetScale() end`
+-- — util/Scale.lua), and it is not optional decoration: every height in here is
+-- MEASURED off an AbsoluteSize and written straight back as a Size offset, so
+-- under a scale of 1.5 each fold would aim a third higher than the content it's
+-- folding. Omit it only where there's no Context to ask (it defaults to 1, which
+-- is what the library did before scaling existed).
+function Collapse.wrap(content: GuiObject, startCollapsed: boolean, scale: (() -> number)?): (Frame, (boolean, boolean?) -> ())
+	local function measured(inst: GuiObject): number
+		local height = inst.AbsoluteSize.Y
+		local value = if scale then scale() else 1
+		return if value > 0 then height / value else height
+	end
 	local holder = Create("Frame", {
 		Name = "Collapse",
 		BackgroundTransparency = 1,
@@ -87,7 +99,7 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 			if gen ~= generation then
 				return
 			end
-			local height = content.AbsoluteSize.Y
+			local height = measured(content)
 			-- Sub-pixel churn isn't worth restarting the tween over.
 			if math.abs(height - target) < 0.5 then
 				return
@@ -96,7 +108,7 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 			slideTo(height)
 		end)
 
-		target = content.AbsoluteSize.Y
+		target = measured(content)
 		if target > 0 then
 			slideTo(target)
 		end
@@ -130,7 +142,7 @@ function Collapse.wrap(content: GuiObject, startCollapsed: boolean): (Frame, (bo
 		holder.AutomaticSize = Enum.AutomaticSize.None
 		if value then
 			-- collapse: freeze at the current rendered height, slide to 0
-			holder.Size = UDim2.new(1, 0, 0, holder.AbsoluteSize.Y)
+			holder.Size = UDim2.new(1, 0, 0, measured(holder))
 			activeTween = Tween.play(holder, Tween.Slide, { Size = UDim2.new(1, 0, 0, 0) })
 		else
 			expand()

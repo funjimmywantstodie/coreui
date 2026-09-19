@@ -130,7 +130,10 @@ local function build(ctx: any, opts: any, multi: boolean)
 	-- what gives the overflow something to scroll through.)
 	local optionLayout = scroller:FindFirstChildOfClass("UIListLayout") :: UIListLayout
 	local function fitMenu()
-		scroller.Size = UDim2.new(1, 0, 0, math.min(MENU_MAX_H, optionLayout.AbsoluteContentSize.Y))
+		-- Layout px: the layout MEASURES its content in physical pixels and
+		-- MENU_MAX_H (and the Size written here) are the design's (util/Scale.lua).
+		scroller.Size = UDim2.new(1, 0, 0,
+			math.min(MENU_MAX_H, ctx:ToLayout(optionLayout.AbsoluteContentSize.Y)))
 	end
 	optionLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fitMenu)
 
@@ -297,7 +300,9 @@ local function build(ctx: any, opts: any, multi: boolean)
 		rebuild()
 		fitMenu()
 		scroller.CanvasPosition = Vector2.new(0, 0)
-		menu.Size = UDim2.fromOffset(math.max(box.AbsoluteSize.X, MENU_MIN_W), 0)
+		-- Layout px: the box is measured through the global UIScale and MENU_MIN_W
+		-- (and the Size we write) are not (util/Scale.lua).
+		menu.Size = UDim2.fromOffset(math.max(ctx:LayoutSize(box).X, MENU_MIN_W), 0)
 		setOpenVisual(true)
 		ctx:OpenPopover(menu, box, function()
 			setOpenVisual(false)

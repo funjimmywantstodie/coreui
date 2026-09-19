@@ -15,9 +15,12 @@ local Log = require(script.Parent.Parent.util.Log)
 local Signal = require(script.Parent.Parent.util.Signal)
 local Hud = require(script.Parent.Hud)
 
-return function(window: any, ctx: any, screenGui: ScreenGui, opts: any)
+-- `parent` is the window's SCALE STAGE (util/Scale.lua), not the ScreenGui: the
+-- HUD is a sibling of `main` so that minimize leaves it up, but it still has to
+-- sit inside the one UIScale the whole UI is drawn through.
+return function(window: any, ctx: any, parent: Instance, opts: any)
 	-- The bind HUD, once something asks for one (components/Hud.lua). It's a
-	-- sibling of `main` in the ScreenGui, not a child, so minimize leaves it up.
+	-- sibling of `main`, not a child, so minimize leaves it up.
 	local hud: any = nil
 	-- Anything mirroring the HUD's visibility — the Settings tab's switch is one,
 	-- but a host that builds its own settings UI needs the same signal, so it's a
@@ -83,7 +86,7 @@ return function(window: any, ctx: any, screenGui: ScreenGui, opts: any)
 				merged[key] = value
 			end
 		end
-		hud = Hud(ctx, screenGui, merged)
+		hud = Hud(ctx, parent, merged)
 		-- Keep the Settings tab's switch in step with the HUD however it moved
 		-- (its own :SetVisible, a loaded config, the panel being dismissed).
 		hud.OnVisible = function(value: boolean)

@@ -73,6 +73,40 @@ local HINT_STYLE_LABELS: { [string]: string } = {
 	logo = "Logo",
 }
 
+-- How big the whole UI is drawn. A PICKER rather than a slider, for the same
+-- reason the hub's device setting is one: the user is choosing a size class, not
+-- tuning a number, and "150%" is a thing you can ask for over a voice call.
+-- "Auto" is first and is the default — it resolves from the device, which is the
+-- whole point (util/Scale.lua), so the list exists for the user who disagrees
+-- with it rather than for the user who needs it.
+local SCALE_OPTIONS = { "Auto", "75%", "100%", "125%", "150%", "175%", "200%" }
+local SCALE_VALUES: { [string]: number } = {
+	["75%"] = 0.75,
+	["100%"] = 1,
+	["125%"] = 1.25,
+	["150%"] = 1.5,
+	["175%"] = 1.75,
+	["200%"] = 2,
+}
+
+-- The label for the scale in force. Auto says so; anything else is named by its
+-- NEAREST listed percentage, because a host (or an older config) can pin a value
+-- that isn't on the list and a dropdown showing nothing at all reads as broken.
+local function scaleLabel(window: any): string
+	if window:IsAutoScale() then
+		return "Auto"
+	end
+	local value = window:GetScale()
+	local best, gap = "100%", math.huge
+	for label, n in SCALE_VALUES do
+		local d = math.abs(n - value)
+		if d < gap then
+			best, gap = label, d
+		end
+	end
+	return best
+end
+
 -- ── Interface ────────────────────────────────────────────────────────────────
 -- Accent colour, the toggle keybind, descriptions, the minimize hint,
 -- notifications, the bind HUD switch. Returns
@@ -130,6 +164,48 @@ function Settings.InterfaceGroup(window: any, tab: any, opts: any?): any
 			window:SetDescriptions(mode)
 		end,
 	})
+
+	-- The one setting on a phone that the touch layout can't make up for. Every
+	-- other device difference is a shape — bigger rows, labelled nav tiles, one
+	-- column — and none of them makes 11px type bigger than 11px. See
+	-- Window:SetScale. Flagged like the mode above: the scale is persisted here
+	-- and nowhere else, so there's nothing for a second flag to fight with.
+	-- Set while the mirror below is writing the row, so echoing the live scale
+	-- back into the control can't be mistaken for the user picking it — a host
+	-- that pinned 1.35 would otherwise be talked down to the nearest listed 1.25
+	-- by its own settings panel.
+	local applyingScale = false
+	controls.Scale = g:Dropdown({
+		Name = "UI Scale",
+		Desc = "How big the whole interface is drawn.",
+		Info = {
+			Fields = {
+				{ "Auto", "Picked from the device — bigger on a phone" },
+				{ "75–200%", "Pinned, whatever the device" },
+			},
+		},
+		Flag = o.ScaleFlag or "uranium_scale",
+		Options = SCALE_OPTIONS,
+		Default = scaleLabel(window),
+		Width = 110,
+		Callback = function(label)
+			if applyingScale then
+				return
+			end
+			window:SetScale(SCALE_VALUES[label]) -- nil for "Auto"
+		end,
+	})
+	-- ...and mirror it back, because the scale moves on its own: auto re-resolves
+	-- when a phone is rotated or the device answer arrives late, and a host can
+	-- call SetScale itself. Guarded both ways so the two can't drive each other.
+	controls.ScaleWatch = window:OnScale(function()
+		local label = scaleLabel(window)
+		if controls.Scale:Get() ~= label then
+			applyingScale = true
+			controls.Scale:Set(label)
+			applyingScale = false
+		end
+	end)
 
 	-- `Hud = false` on the switches below: they're preferences about the UI, not
 	-- features running in the game, and the bind HUD lists what's running. Left to

@@ -23,6 +23,7 @@ local Config = require(script.Parent.Parent.util.Config)
 local Asset = require(script.Parent.Parent.util.Asset)
 local Log = require(script.Parent.Parent.util.Log)
 local Gui = require(script.Parent.Parent.util.Gui)
+local Scale = require(script.Parent.Parent.util.Scale)
 local Singleton = require(script.Parent.Parent.util.Singleton)
 local Tab = require(script.Parent.Tab)
 local Info = require(script.Parent.Info)
@@ -59,6 +60,7 @@ local WINDOW_SCHEMA: Log.Schema = {
 	{ "MinimizeHint", "boolean" },
 	{ "MinimizeHintStyle", "string" },
 	{ "Touch", "boolean" },
+	{ "Scale", "number" },
 	{ "OnFlag", "function" },
 	{ "OnFlagChanged", "function" },
 	{ "PersistWindow", "boolean" },
@@ -143,6 +145,54 @@ return function(opts: any)
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	})
 
+	-- ── the device answer, and the global scale ───────────────────────────────
+	-- Both are read by everything below, so they're resolved before a single
+	-- instance exists.
+	--
+	-- `isTouch` is Context:IsTouch — touch AND no keyboard — per call, never
+	-- cached: an executor can run before the input devices have reported
+	-- themselves, and a touchscreen laptop has both. The Context is built further
+	-- down, so this reads it lazily; before it exists the answer is the engine's.
+	local ctx: any = nil
+	local function isTouch(): boolean
+		if ctx then
+			return ctx:IsTouch()
+		end
+		return UserInputService.TouchEnabled == true and UserInputService.KeyboardEnabled ~= true
+	end
+	-- Below this the sidebar and the two columns stop being a layout. In LAYOUT
+	-- pixels, which is why the scale needs to know about it (util/Scale.lua):
+	-- auto must never pick a scale that stops this fitting on the screen.
+	local MIN_W, MIN_H = 420, 320
+
+	-- The stage: a full-screen frame holding ONE UIScale, and the parent of
+	-- everything this file puts on screen — the window, its shadow, the minimized
+	-- hint, and (further down) the bind HUD and the splash. It has to be all of
+	-- them rather than a UIScale under `main`, because several of those are
+	-- siblings of the window rather than children of it: minimize hides `main`,
+	-- and a HUD that stayed at 1.0 beside a scaled window would be the bug this
+	-- feature was supposed to fix.
+	--
+	-- What it buys everything below is a coordinate space: inside the stage,
+	-- `:Viewport()` is the screen measured in the same units Size and Position
+	-- offsets are written in. Every clamp in the library uses that and never
+	-- `screenGui.AbsoluteSize`, which stays the raw viewport at any scale.
+	local scale = Scale.new(screenGui, {
+		isTouch = isTouch,
+		minSize = Vector2.new(MIN_W, MIN_H),
+	})
+	local stage = scale.Stage
+	-- `CreateWindow{ Scale = n }` pins it; without one it's resolved from the
+	-- device and the viewport, and re-resolved whenever either moves.
+	if tonumber(opts.Scale) then
+		scale:Set(tonumber(opts.Scale) :: number)
+	else
+		scale:Refresh()
+	end
+	local function viewport(): Vector2
+		return scale:Viewport()
+	end
+
 	-- A plain Frame, deliberately. This was a CanvasGroup, because one
 	-- GroupTransparency tween fades the whole window for mount / minimize /
 	-- close. The cost was invisible in Studio and glaring in game: a CanvasGroup
@@ -158,7 +208,7 @@ return function(opts: any)
 		Size = UDim2.fromOffset(M.windowWidth, M.windowHeight),
 		BackgroundColor3 = colors.bg,
 		ClipsDescendants = true,
-		Parent = screenGui,
+		Parent = stage,
 	}, {
 		Create.corner(M.windowRadius),
 		Create.stroke(Color3.new(0, 0, 0)),
@@ -194,7 +244,7 @@ return function(opts: any)
 		ImageTransparency = 1, -- faded in on mount, alongside the window
 		ScaleType = Enum.ScaleType.Stretch,
 		ZIndex = 0,
-		Parent = screenGui,
+		Parent = stage,
 	})
 	local function syncShadow()
 		shadow.Position = main.Position + UDim2.fromOffset(0, SHADOW_DROP)
@@ -223,22 +273,10 @@ return function(opts: any)
 	-- viewport, so a size saved on a big monitor survives a session on a laptop
 	-- instead of being permanently shrunk to fit it.
 	local baseWidth, baseHeight = M.windowWidth, M.windowHeight
-	-- Below this the sidebar and the two columns stop being a layout.
-	local MIN_W, MIN_H = 420, 320
-	-- Air left around the window at full size. A phone viewport is ~360 logical px
-	-- tall, so the desktop's 24 on each side is a tenth of the screen spent on
-	-- nothing; touch keeps a hairline of it.
+	-- Air left around the window at full size. A phone's viewport is ~360 layout px
+	-- tall once the scale has had its say, so the desktop's 24 on each side is a
+	-- tenth of the screen spent on nothing; touch keeps a hairline of it.
 	local VIEWPORT_INSET, VIEWPORT_INSET_TOUCH = 24, 8
-	-- The device answer, per call (Context:IsTouch — touch AND no keyboard). The
-	-- Context is built further down, so this reads it lazily; before it exists the
-	-- answer is the engine's own.
-	local ctx: any = nil
-	local function isTouch(): boolean
-		if ctx then
-			return ctx:IsTouch()
-		end
-		return UserInputService.TouchEnabled == true and UserInputService.KeyboardEnabled ~= true
-	end
 	local function viewportInset(): number
 		return if isTouch() then VIEWPORT_INSET_TOUCH else VIEWPORT_INSET
 	end
@@ -253,14 +291,25 @@ return function(opts: any)
 	-- maximized branch too. The floor belongs at MIN_W/MIN_H (the point below
 	-- which the sidebar and two columns stop being a layout), not at whatever the
 	-- window happened to be. Returns nil when the viewport hasn't been measured.
+	--
+	-- The viewport is the scaled one (util/Scale.lua): at 1.5 a 1200px-wide phone
+	-- has 800 LAYOUT pixels to spend, and that is the number MIN_W and `baseWidth`
+	-- are written in. Mixing the two spaces here is the single most expensive
+	-- mistake this feature can make — the window would fit and the HUD wouldn't.
 	local function targetSize(): UDim2?
-		local vp = screenGui.AbsoluteSize
+		local vp = viewport()
 		if vp.X <= 0 or vp.Y <= 0 then
 			return nil
 		end
 		local inset = viewportInset()
-		local availW = math.max(MIN_W, vp.X - inset)
-		local availH = math.max(MIN_H, vp.Y - inset)
+		-- The floor is MIN_W/MIN_H, but capped at the screen itself: the minimum is
+		-- the point below which the layout stops working, and drawing a window
+		-- LARGER than the viewport to honour it is worse than a cramped one. At
+		-- scale 2.0 on a phone there are ~280 layout px of height to work with and
+		-- the floor is 320 — so the window takes the whole screen (the inset goes
+		-- first) rather than hanging off the bottom of it.
+		local availW = math.clamp(vp.X - inset, math.min(MIN_W, vp.X), math.max(MIN_W, vp.X))
+		local availH = math.clamp(vp.Y - inset, math.min(MIN_H, vp.Y), math.max(MIN_H, vp.Y))
 		if maximized then
 			return UDim2.fromOffset(availW, availH)
 		end
@@ -833,6 +882,10 @@ return function(opts: any)
 	})
 
 	ctx = Context.new(Theme, overlay, opts.Accent or colors.accent)
+	-- The global scale, so every component can ask what space it's drawing in
+	-- (ctx:GetScale / ctx:Viewport / ctx:LayoutSize — util/Scale.lua). Installed
+	-- before anything reads it and before the first control exists.
+	ctx:UseScale(scale)
 	-- `Touch = true/false` pins the device answer (nil = per call, from
 	-- UserInputService). Testing the phone layout in Studio needs this: its
 	-- emulator reports a touch screen AND a keyboard, which is a touchscreen laptop
@@ -915,12 +968,23 @@ return function(opts: any)
 			startPos = main.Position
 		end
 	end)
+	-- The window's LAYOUT size, which is not `main.AbsoluteSize`: that one is run
+	-- through the UIScale, which sits at 0.92 through the mount animation and 0.9
+	-- the whole time the window is minimized. Reading the rendered size in those
+	-- states and writing it back later restores the window a few percent off
+	-- centre — so every geometry read below uses the size the layout actually
+	-- asked for. `fitWindow` / `setMaximized` only ever set pure offsets, so the
+	-- two halves of the UDim2 are the answer.
+	local function layoutSize(): Vector2
+		return Vector2.new(main.Size.X.Offset, main.Size.Y.Offset)
+	end
+
 	-- Keep the window reachable: a drag can't push the titlebar off the top or
 	-- shove the window so far past an edge that there's nothing left to grab.
 	local KEEP_ON_SCREEN = 80
 	local function clampToViewport(pos: UDim2): UDim2
-		local vp = screenGui.AbsoluteSize
-		local size = main.AbsoluteSize
+		local vp = viewport()
+		local size = layoutSize()
 		if vp.X <= 0 or size.X <= 0 then
 			return pos
 		end
@@ -943,16 +1007,22 @@ return function(opts: any)
 	-- reads as a soft, faintly smeared version of the same text. Rounding the
 	-- top-left costs nothing and puts the whole tree back on integer coordinates.
 	local function snapToPixels(pos: UDim2): UDim2
-		local vp = screenGui.AbsoluteSize
-		local size = main.AbsoluteSize
+		local vp = viewport()
+		local size = layoutSize()
 		if vp.X <= 0 or size.X <= 0 then
 			return pos
 		end
 		local left = pos.X.Scale * vp.X + pos.X.Offset - size.X / 2
 		local top = pos.Y.Scale * vp.Y + pos.Y.Offset - size.Y / 2
+		-- Snapped in PHYSICAL pixels, then converted back: the display grid is the
+		-- thing being landed on, and under a scale of 1.25 a whole LAYOUT pixel is
+		-- a quarter of one on screen. Both are the same arithmetic at scale 1.
+		local k = scale:Get()
+		local snappedLeft = if k > 0 then math.round(left * k) / k else math.round(left)
+		local snappedTop = if k > 0 then math.round(top * k) / k else math.round(top)
 		return UDim2.new(
-			pos.X.Scale, pos.X.Offset + (math.round(left) - left),
-			pos.Y.Scale, pos.Y.Offset + (math.round(top) - top)
+			pos.X.Scale, pos.X.Offset + (snappedLeft - left),
+			pos.Y.Scale, pos.Y.Offset + (snappedTop - top)
 		)
 	end
 	-- Re-snap whenever the geometry moves under us: viewport resize, the fit
@@ -961,23 +1031,12 @@ return function(opts: any)
 	local function resnap()
 		main.Position = snapToPixels(main.Position)
 	end
-	-- The window's LAYOUT size, which is not `main.AbsoluteSize`: that one is run
-	-- through the UIScale, which sits at 0.92 through the mount animation and 0.9
-	-- the whole time the window is minimized. Reading the rendered size in those
-	-- states and writing it back later restores the window a few percent off
-	-- centre — so every geometry read below uses the size the layout actually
-	-- asked for. `fitWindow` / `setMaximized` only ever set pure offsets, so the
-	-- two halves of the UDim2 are the answer.
-	local function layoutSize(): Vector2
-		return Vector2.new(main.Size.X.Offset, main.Size.Y.Offset)
-	end
-
 	-- The window's TOP-LEFT in screen pixels — the only coordinate worth
 	-- persisting, since the live Position is a scale/offset pair carrying whatever
 	-- the drag left in it and its numbers mean nothing on a viewport of another
 	-- size.
 	local function topLeft(): Vector2
-		local vp = screenGui.AbsoluteSize
+		local vp = viewport()
 		local pos, size = main.Position, layoutSize()
 		return Vector2.new(
 			pos.X.Scale * vp.X + pos.X.Offset - size.X / 2,
@@ -991,7 +1050,7 @@ return function(opts: any)
 	-- guarantees a record saved on a 1440p monitor can't put the window off a
 	-- laptop screen.
 	local function moveTo(x: number, y: number)
-		local vp = screenGui.AbsoluteSize
+		local vp = viewport()
 		local size = layoutSize()
 		if vp.X <= 0 or size.X <= 0 then
 			return
@@ -1010,7 +1069,11 @@ return function(opts: any)
 	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
-			local delta = input.Position - dragStart
+			-- The pointer moves in PHYSICAL pixels and Position is written in LAYOUT
+			-- ones, so the delta is converted before it's applied: at scale 1.5 the
+			-- window would otherwise run away from the finger half as fast again.
+			local k = 1 / scale:Get()
+			local delta = (input.Position - dragStart) * k
 			main.Position = snapToPixels(clampToViewport(UDim2.new(
 				startPos.X.Scale, startPos.X.Offset + delta.X,
 				startPos.Y.Scale, startPos.Y.Offset + delta.Y
@@ -1066,11 +1129,16 @@ return function(opts: any)
 		end)
 		local wanted = 0
 		if focused and keyboardTop > 0 and main.Visible and focused:IsDescendantOf(screenGui) then
-			local bottom = focused.AbsolutePosition.Y + focused.AbsoluteSize.Y + guiInsetY() + KEYBOARD_GAP
+			-- The box, the inset and the keyboard's own top are all MEASURED, and
+			-- `keyboardShift` is applied to a Position offset — so the three of them
+			-- are converted to layout pixels here and the shift is kept in that
+			-- space throughout. The gap is already layout px (it's a design number).
+			local k = 1 / scale:Get()
+			local bottom = (focused.AbsolutePosition.Y + focused.AbsoluteSize.Y + guiInsetY()) * k + KEYBOARD_GAP
 			-- Never push the titlebar off the top: the window's resting top-left is
 			-- the shifted one plus what's already applied.
 			local restingTop = topLeft().Y + keyboardShift
-			wanted = math.clamp(keyboardShift + (bottom - keyboardTop), 0, math.max(0, restingTop - 8))
+			wanted = math.clamp(keyboardShift + (bottom - keyboardTop * k), 0, math.max(0, restingTop - 8))
 		end
 		wanted = math.round(wanted)
 		if wanted == keyboardShift then
@@ -1242,7 +1310,10 @@ return function(opts: any)
 	--
 	-- The window-state flag (components/WindowState.lua) is registered further
 	-- down instead, once the geometry helpers it depends on exist.
-	local hudApi = WindowHud(window, ctx, screenGui, opts)
+	-- `stage`, not `screenGui`: the HUD is a sibling of `main` (minimize must
+	-- leave it up) but it still has to be inside the scale, or it draws at 1.0
+	-- next to a window that isn't.
+	local hudApi = WindowHud(window, ctx, stage, opts)
 	local configApi = WindowConfig(window, ctx, opts)
 
 	local searchOpen = false
@@ -1358,7 +1429,7 @@ return function(opts: any)
 		Size = UDim2.fromOffset(HINT_W, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = colors.pop,
-		Parent = screenGui,
+		Parent = stage,
 	}, {
 		hintPadding,
 		hintCorner,
@@ -1524,13 +1595,14 @@ return function(opts: any)
 	-- a topbar's height above the cursor and stays there for the whole gesture.
 	local hintDrawn = Vector2.zero
 	local function placeHint(p: Vector2?)
-		local vp = screenGui.AbsoluteSize
+		local vp = viewport()
 		-- Width off the LAYOUT, not AbsoluteSize: the rendered size runs through
 		-- `hintScale`, which sits at 0.92 through the pop, and dividing that back
 		-- out lands a frame behind the tween — the card would slide while it popped.
-		-- Only the height is measured, and only the bottom clamp reads it.
+		-- Only the height is measured, and only the bottom clamp reads it (the
+		-- global scale comes back out of it — see Context:LayoutSize).
 		local w = restoreHint.Size.X.Offset
-		local h = restoreHint.AbsoluteSize.Y
+		local h = restoreHint.AbsoluteSize.Y / scale:Get()
 		local target = p
 		if target == nil then
 			if hintStyleInForce() == "logo" then
@@ -1670,7 +1742,8 @@ return function(opts: any)
 		end
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
-			local delta = Vector2.new(input.Position.X, input.Position.Y) - hintDragStart
+			-- Physical pointer delta → the layout offsets `hintDrawn` is kept in.
+			local delta = (Vector2.new(input.Position.X, input.Position.Y) - hintDragStart) / scale:Get()
 			if math.abs(delta.X) + math.abs(delta.Y) > 4 then
 				hintDragMoved = true
 			end
@@ -1840,6 +1913,9 @@ return function(opts: any)
 	-- re-runs them when the engine's answer changes after the window was built.
 	-- Also the path `Window:SetTouch` takes.
 	local function touchChanged()
+		-- Auto reads the device answer, so it moves with it — before the re-layout
+		-- below, which measures against the viewport the new scale defines.
+		scale:Refresh()
 		ctx:TouchChanged() -- the components' own re-layouts (chips, HUD, groups…)
 		applyChrome()
 		fitWindow()
@@ -1856,6 +1932,30 @@ return function(opts: any)
 			table.insert(connections, UserInputService:GetPropertyChangedSignal(prop):Connect(touchChanged))
 		end)
 	end
+
+	-- ── the scale moving under us ─────────────────────────────────────────────
+	-- Everything the window places against the viewport is re-placed, because the
+	-- viewport it measures against just changed size in layout pixels even though
+	-- the screen didn't. The chrome is NOT re-applied: it branches on the device,
+	-- not on the scale.
+	--
+	-- The pages re-fit themselves — `main` is physically bigger, so its content
+	-- frame's AbsoluteSize signal fires and every tab's `fitPage` runs (which is
+	-- also what re-checks STACK_BELOW). Anything drawn outside `main` and placed
+	-- by hand is what's listed here; the HUD and the splash own their own.
+	table.insert(connections, screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		scale:Refresh()
+	end))
+	scale:OnChange(function()
+		fitWindow()
+		fitNav()
+		-- Clamped, not just re-snapped: the screen didn't move but the layout
+		-- viewport did, so a window the user had parked near the right edge at 1.0
+		-- is off the side of a 1.5 one. The clamp is the drag's own, so it lands
+		-- exactly where dragging it back would.
+		main.Position = snapToPixels(clampToViewport(main.Position))
+		placeHint(hintPos)
+	end)
 
 	-- ── close ────────────────────────────────────────────────────────────────
 	-- Close is a real unload, not a hide: same shrink+fade as minimize, but the
@@ -1898,9 +1998,14 @@ return function(opts: any)
 		-- right column keeps its margin regardless of executor quirks.
 		tab.page.Position = UDim2.fromOffset(CONTENT_PAD_X, 0)
 		local function fitPage()
-			local avail = content.AbsoluteWindowSize.X
+			-- Measured (physical) → the layout pixels the page's Size is written in,
+			-- which is also the space STACK_BELOW is expressed in. On a phone at 1.5
+			-- that leaves ~690 layout px of content: two columns of roughly a desktop
+			-- column each, rather than the ~1090 a phone reports raw.
+			local k = 1 / ctx:GetScale()
+			local avail = content.AbsoluteWindowSize.X * k
 			if avail <= 0 then
-				avail = content.AbsoluteSize.X
+				avail = content.AbsoluteSize.X * k
 			end
 			local width = math.max(0, avail - CONTENT_PAD_X * 2)
 			tab.page.Size = UDim2.new(0, width, 0, 0)
@@ -2185,6 +2290,46 @@ return function(opts: any)
 		setMaximized(value ~= false, animate)
 	end
 
+	-- ── settings: the global UI scale ─────────────────────────────────────────
+	-- How big the whole UI is drawn — the window, the bind HUD, the minimized
+	-- card, every popover and toast (util/Scale.lua). `Auto` is the default and
+	-- the case that matters: ~97% of sessions are phones, a phone reports a
+	-- viewport of roughly 1200×560, and at 1.0 that means the full desktop layout
+	-- at desktop metrics on a six-inch screen. Nobody should have to find a
+	-- setting to get a readable window on the device they're on.
+	--
+	-- GEOMETRY IS IN LAYOUT PIXELS, at every scale: `GetSize`/`SetSize`,
+	-- `GetPosition`/`SetPosition`, the HUD's position and the whole
+	-- `uranium_window` record. That's what makes a record portable — the same
+	-- saved window means the same window at 1.0 and at 1.5, rather than one that
+	-- shrinks every time the user changes the setting.
+	function window:GetScale(): number
+		return scale:Get()
+	end
+
+	-- Pin the scale (0.75–2.0, clamped), or `nil` to hand it back to auto.
+	-- Applied live, and returns the number in force afterwards so a caller can
+	-- echo the result into its own control rather than assume the write landed.
+	function window:SetScale(value: number?): number
+		if value ~= nil and tonumber(value) == nil then
+			Log.warn("SetScale", ("expects a number or nil (auto), got %s — ignoring."):format(typeof(value)))
+			return scale:Get()
+		end
+		return scale:Set(if value ~= nil then tonumber(value) else nil)
+	end
+
+	-- Is the scale being resolved from the device, or did someone pin it? The
+	-- number alone can't say — auto lands on 1.0 on every desktop — and a settings
+	-- control has to be able to show "Auto" rather than "100%".
+	function window:IsAutoScale(): boolean
+		return scale:IsAuto()
+	end
+
+	-- `fn(scale)` whenever it changes. No initial call; read GetScale.
+	function window:OnScale(fn: (number) -> ()): () -> ()
+		return scale:OnChange(fn)
+	end
+
 	-- ── settings: the device ──────────────────────────────────────────────────
 	-- "Is this a phone?" as the library decides it: a touch screen AND no keyboard,
 	-- read per call. Everything that lays itself out differently on a phone (the
@@ -2239,8 +2384,10 @@ return function(opts: any)
 		isMaximized = function(): boolean
 			return maximized
 		end,
+		-- Layout pixels, like everything else in the record: a geometry saved at
+		-- one scale has to still mean something at another.
 		viewportWidth = function(): number
-			return screenGui.AbsoluteSize.X
+			return viewport().X
 		end,
 		tabs = function(): { any }
 			return tabs
@@ -2439,7 +2586,7 @@ return function(opts: any)
 			splashZoom = so.LogoZoom
 		end
 		main.Visible = false
-		splash = Splash(ctx, screenGui, {
+		splash = Splash(ctx, stage, {
 			Title = so.Title or brandName,
 			Subtitle = so.Subtitle or opts.Subtitle,
 			Logo = splashLogo,

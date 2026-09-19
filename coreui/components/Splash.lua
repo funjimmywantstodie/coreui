@@ -108,13 +108,21 @@ return function(ctx: any, parent: Instance, opts: any): any
 	-- stack dimensions are even, so a rounded centre gives a whole-pixel
 	-- top-left. (Window.lua snaps itself the same way.)
 	local function centerStack()
-		local vp = root.AbsoluteSize
+		-- Layout pixels: the backdrop fills the screen, but `stack.Position` is an
+		-- offset and the whole tree may be drawn through a global UIScale
+		-- (util/Scale.lua). Measuring physical and writing layout would centre the
+		-- stack a scale-factor off the middle.
+		local vp = ctx:LayoutSize(root)
 		if vp.X <= 0 then
 			return
 		end
 		stack.Position = UDim2.fromOffset(math.round(vp.X / 2), math.round(vp.Y / 2))
 	end
 	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(centerStack)
+	-- The splash is short-lived, but it can easily outlive a device deciding it's
+	-- a phone: that re-resolves the scale, and `root.AbsoluteSize` doesn't change
+	-- when it does (the stage covers the viewport at every scale).
+	ctx:OnScale(centerStack)
 	task.defer(centerStack)
 
 	-- Each element parks 8px low + invisible and is released a beat after the one
