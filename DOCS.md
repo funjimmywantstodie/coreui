@@ -2296,6 +2296,19 @@ Downloading needs executor globals (`getcustomasset`, `writefile`). Where they'r
 missing (Studio, locked-down executors) every call degrades to `""`/`nil` instead
 of erroring, and the component shows its placeholder. Asset ids always work.
 
+**Window startup:** the titlebar and minimized mark start with the accent square
+and glyph. Their optional image resolution begins after `CreateWindow` mounts and
+returns; `Asset.load` and `Asset.preload` defer their resolver work instead of
+calling executor file APIs inline from the window constructor. `Asset.resolve` is a
+**synchronous** API. If a hub calls `Asset.resolve` for its logo before
+`CreateWindow`, that call remains on the hub's boot path. In Uranium's boot
+timings, `brand` covers this pre-window logo work, while `create` covers
+`CreateWindow` (including singleton teardown and `Gui.mount`). A large `brand`
+reading calls for moving or omitting that eager resolve in the hub; a large
+`create` reading calls for inspecting teardown, `protect_gui`, and the selected
+GUI container. The visual fallback lets a hub pass `Logo = false` at creation
+and call `Window:SetLogo(source, zoom)` later when it wants to try the art.
+
 **Uploading your own art:** save the PNG to Roblox (creator dashboard → Decals),
 paste the id straight into `Image = <id>`. No `rbxassetid://` prefix needed.
 

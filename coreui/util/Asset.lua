@@ -403,7 +403,10 @@ function Asset.load(image: ImageLabel, source: any, onDone: ((boolean) -> ())?)
 		return generation[image] == token
 	end
 
-	task.spawn(function()
+	-- Defer the resolver itself. task.spawn starts running immediately, and an
+	-- executor's getcustomasset/HttpGet can block before the caller gets its
+	-- window back. The placeholder is already drawn; art is optional.
+	task.defer(function()
 		local firstContent = ""
 		for i, candidate in chain do
 			-- Resolving can download (an https candidate is fetched to disk on
@@ -471,7 +474,7 @@ end
 -- Pre-warm a set of images (ids, paths or urls) off the caller's thread, so the
 -- first frame that shows them isn't the one that downloads them.
 function Asset.preload(list: { any })
-	task.spawn(function()
+	task.defer(function()
 		local contents = {}
 		for _, item in list do
 			local resolved = Asset.resolve(item)

@@ -493,15 +493,16 @@ return function(opts: any)
 	else
 		logoSource, logoZoom = Theme.Brand.logo, opts.LogoZoom or Theme.Brand.zoom
 	end
-	-- Paints every mark registered so far, and is re-run by `SetLogo`; a mark
-	-- built later (the hint's) applies the current source itself at construction.
+	-- Paints every registered mark. Initial art is kicked off only after mount;
+	-- the accent square + glyph already show while the optional source resolves.
+	local logoApplied = false
 	local function setLogo(source: any, zoom: number?)
 		logoSource, logoZoom = source, zoom
+		logoApplied = true
 		for _, mark in marks do
 			mark.apply(source, zoom)
 		end
 	end
-	setLogo(logoSource, logoZoom)
 
 	-- Wordmark: uppercase with wide letter-spacing. Roblox has no tracking /
 	-- letter-spacing property on TextLabel, so the spacing is literal — a space
@@ -1486,16 +1487,14 @@ return function(opts: any)
 	}, {
 		hintTileCorner,
 	})
-	-- The mark registers in `marks` like the titlebar's, so it follows SetLogo and
-	-- SetAccent from here on — but it's built after both have already run, so it
-	-- paints itself into the window's current state rather than the theme's.
+	-- The mark registers in `marks` like the titlebar's, so the initial deferred
+	-- paint and every later SetLogo/SetAccent update both marks together.
 	local _, hintMark = newMark(hintTile, HINT_MARK, 17, {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
 	})
 	hintMark.square.BackgroundColor3 = ctx.AccentSoft
 	Icons.tint(hintMark.glyph, ctx.Accent)
-	hintMark.apply(logoSource, logoZoom)
 	-- Mark and tile resize together, radius included, so the two styles are one
 	-- shape at two sizes. Returns the tile's outer size — the logo style's whole
 	-- card is that square.
@@ -2640,6 +2639,14 @@ return function(opts: any)
 			end,
 		})
 	end
+	-- Local files and downloads may block inside executor globals. Leave both
+	-- marks on their fallback until the protected GUI is mounted and the handle
+	-- has returned. A caller's immediate SetLogo wins over this initial paint.
+	task.defer(function()
+		if not destroyed and not logoApplied then
+			setLogo(logoSource, logoZoom)
+		end
+	end)
 
 	return window
 end
